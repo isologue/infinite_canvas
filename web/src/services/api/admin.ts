@@ -169,6 +169,7 @@ export type AdminModelChannel = {
 
 export type AdminPublicModelChannelSettings = {
     availableModels: string[];
+    modelCosts: AdminModelCost[];
     defaultModel: string;
     defaultImageModel: string;
     defaultVideoModel: string;
@@ -177,9 +178,15 @@ export type AdminPublicModelChannelSettings = {
     allowCustomChannel: boolean;
 };
 
+export type AdminModelCost = {
+    model: string;
+    credits: number;
+};
+
 export type AdminPublicSettings = {
     modelChannel: AdminPublicModelChannelSettings;
     auth: {
+        allowRegister: boolean;
         linuxDo: {
             enabled: boolean;
         };

@@ -59,6 +59,14 @@ func EnsureDefaultAdmin() error {
 }
 
 func Register(username string, password string) (model.AuthSession, error) {
+	settings, err := repository.GetSettings()
+	if err != nil {
+		return model.AuthSession{}, err
+	}
+	normalizedSettings := normalizeSettings(settings)
+	if normalizedSettings.Public.Auth.AllowRegister != nil && !*normalizedSettings.Public.Auth.AllowRegister {
+		return model.AuthSession{}, safeMessageError{message: "当前未开放注册"}
+	}
 	username = strings.TrimSpace(username)
 	if strings.ContainsAny(username, " \t\r\n") {
 		return model.AuthSession{}, safeMessageError{message: "用户名不能包含空格"}
@@ -163,6 +171,9 @@ func LoginWithLinuxDo(r *http.Request, code string, state string) (model.AuthSes
 		return model.AuthSession{}, redirect, err
 	}
 	if !ok {
+		if settings.Public.Auth.AllowRegister != nil && !*settings.Public.Auth.AllowRegister {
+			return model.AuthSession{}, redirect, safeMessageError{message: "当前未开放注册"}
+		}
 		user = model.User{
 			ID:          newID("user"),
 			Username:    linuxDoUsername(profile.Username, linuxDoID),
@@ -316,6 +327,56 @@ func AdjustUserCredits(id string, credits int) (model.User, error) {
 	}
 	user.Password = ""
 	return user, err
+}
+
+func ConsumeUserCredits(userID string, modelName string, credits int, path string) error {
+	if credits <= 0 {
+		return nil
+	}
+	user, ok, err := repository.ConsumeUserCredits(userID, credits, now())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return safeMessageError{message: "算力点不足"}
+	}
+	extra, _ := json.Marshal(map[string]string{"model": modelName, "path": path})
+	_, err = repository.SaveCreditLog(model.CreditLog{
+		ID:        newID("credit"),
+		UserID:    userID,
+		Type:      model.CreditLogTypeAIConsume,
+		Amount:    -credits,
+		Balance:   user.Credits,
+		Remark:    "调用模型 " + modelName,
+		Extra:     string(extra),
+		CreatedAt: now(),
+	})
+	return err
+}
+
+func RefundUserCredits(userID string, modelName string, credits int, path string) error {
+	if credits <= 0 {
+		return nil
+	}
+	user, ok, err := repository.RefundUserCredits(userID, credits, now())
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return safeMessageError{message: "用户不存在"}
+	}
+	extra, _ := json.Marshal(map[string]string{"model": modelName, "path": path})
+	_, err = repository.SaveCreditLog(model.CreditLog{
+		ID:        newID("credit"),
+		UserID:    userID,
+		Type:      model.CreditLogTypeAIRefund,
+		Amount:    credits,
+		Balance:   user.Credits,
+		Remark:    "模型调用失败返还 " + modelName,
+		Extra:     string(extra),
+		CreatedAt: now(),
+	})
+	return err
 }
 
 func ListCreditLogs(q model.Query) (model.CreditLogList, error) {

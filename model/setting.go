@@ -21,15 +21,22 @@ type ModelChannel struct {
 	Remark   string   `json:"remark"`
 }
 
+// ModelCost 模型算力点配置。
+type ModelCost struct {
+	Model   string `json:"model"`
+	Credits int    `json:"credits"`
+}
+
 // PublicModelChannelSetting 公开模型渠道配置。
 type PublicModelChannelSetting struct {
-	AvailableModels    []string `json:"availableModels"`
-	DefaultModel       string   `json:"defaultModel"`
-	DefaultImageModel  string   `json:"defaultImageModel"`
-	DefaultVideoModel  string   `json:"defaultVideoModel"`
-	DefaultTextModel   string   `json:"defaultTextModel"`
-	SystemPrompt       string   `json:"systemPrompt"`
-	AllowCustomChannel *bool    `json:"allowCustomChannel"`
+	AvailableModels    []string    `json:"availableModels"`
+	ModelCosts         []ModelCost `json:"modelCosts"`
+	DefaultModel       string      `json:"defaultModel"`
+	DefaultImageModel  string      `json:"defaultImageModel"`
+	DefaultVideoModel  string      `json:"defaultVideoModel"`
+	DefaultTextModel   string      `json:"defaultTextModel"`
+	SystemPrompt       string      `json:"systemPrompt"`
+	AllowCustomChannel *bool       `json:"allowCustomChannel"`
 }
 
 // PublicSetting 公开配置。
@@ -39,7 +46,8 @@ type PublicSetting struct {
 }
 
 type PublicAuthSetting struct {
-	LinuxDo PublicLinuxDoAuthSetting `json:"linuxDo"`
+	AllowRegister *bool                    `json:"allowRegister"`
+	LinuxDo       PublicLinuxDoAuthSetting `json:"linuxDo"`
 }
 
 type PublicLinuxDoAuthSetting struct {

@@ -32,10 +32,10 @@ export const defaultConfig: AiConfig = {
     apiKey: "",
     model: "gpt-image-2",
     imageModel: "gpt-image-2",
-    videoModel: "sora-2",
+    videoModel: "grok-imagine-video",
     textModel: "gpt-5.5",
     videoSeconds: "6",
-    vquality: "auto",
+    vquality: "720",
     systemPrompt: "",
     models: [],
     quality: "auto",
@@ -61,14 +61,15 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
     const channelMode = modelChannel?.allowCustomChannel ? config.channelMode : "remote";
     if (channelMode === "local" || !modelChannel) return { ...config, channelMode };
     const models = modelChannel.availableModels;
+    const fallbackModel = modelChannel.defaultModel || models[0] || "";
     return {
         ...config,
         channelMode,
         models,
-        model: models.includes(config.model) ? config.model : modelChannel.defaultModel,
-        imageModel: models.includes(config.imageModel) ? config.imageModel : modelChannel.defaultImageModel || modelChannel.defaultModel,
-        videoModel: models.includes(config.videoModel) ? config.videoModel : modelChannel.defaultVideoModel || modelChannel.defaultModel || "sora-2",
-        textModel: models.includes(config.textModel) ? config.textModel : modelChannel.defaultTextModel || modelChannel.defaultModel,
+        model: models.includes(config.model) ? config.model : fallbackModel,
+        imageModel: models.includes(config.imageModel) ? config.imageModel : modelChannel.defaultImageModel || fallbackModel,
+        videoModel: models.includes(config.videoModel) ? config.videoModel : modelChannel.defaultVideoModel || fallbackModel,
+        textModel: models.includes(config.textModel) ? config.textModel : modelChannel.defaultTextModel || fallbackModel,
         systemPrompt: modelChannel.systemPrompt,
     };
 }
@@ -111,7 +112,7 @@ export const useConfigStore = create<ConfigStore>()(
             partialize: (state) => ({ config: state.config }),
             merge: (persisted, current) => {
                 const config = { ...defaultConfig, ...((persisted as Partial<ConfigStore>).config || {}) };
-                return { ...current, config: { ...config, channelMode: config.channelMode || "remote", imageModel: config.imageModel || config.model, videoModel: config.videoModel || "sora-2", textModel: config.textModel || config.model, videoSeconds: config.videoSeconds || "6", vquality: config.vquality || "auto" } };
+                return { ...current, config: { ...config, channelMode: config.channelMode || "remote", imageModel: config.imageModel || config.model, videoModel: config.videoModel || "grok-imagine-video", textModel: config.textModel || config.model, videoSeconds: config.videoSeconds || "6", vquality: config.vquality || "720" } };
             },
         },
     ),
