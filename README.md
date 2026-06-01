@@ -14,7 +14,7 @@
 ## 核心功能
 
 - 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出。
-- AI 创作：支持 OpenAI 兼容接口的文生图、图生图、参考图编辑和文本问答。
+- AI 创作：支持 OpenAI 兼容接口的文生图、图生图、参考图编辑、文本问答和视频生成；Seedance 2.0 可通过火山方舟 Agent Plan 接入。
 - 画布助手：围绕选中节点和上游节点对话、生图，并把结果插回画布。
 - 提示词库：抓取多个 GitHub 开源项目，按案例整理数百个图片提示词。
 
@@ -50,6 +50,17 @@ docker compose -f docker-compose.local.yml up -d --build
 运行后默认端口3000，可访问 `http://localhost:3000`。
 
 如需要拉取提示词，可前往:`http://localhost:3000/admin/prompts`
+
+## New API 自动配置
+
+如果使用 New API，可在 `系统设置 -> 聊天方式 -> 添加聊天设置` 中填入：
+
+```text
+https://infinite-canvas-cpco.onrender.com?apiKey={key}&baseUrl={address}
+```
+
+跳转后会自动打开配置弹窗并填入 API Key 和 Base URL。
+如果自己部署了，可以把 `https://infinite-canvas-cpco.onrender.com` 替换成你部署的地址。
 
 ## 效果展示
 
@@ -88,7 +99,6 @@ docker compose -f docker-compose.local.yml up -d --build
 ## 开源协议
 
 本项目使用 GNU Affero General Public License v3.0，见 [LICENSE](LICENSE)。
-
 
 ## Star History
 
