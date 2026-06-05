@@ -18,11 +18,12 @@ export enum CanvasNodeType {
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
-export type CanvasGenerationMode = "text" | "image" | "video";
+export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeMetadata = {
     content?: string;
+    composerContent?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;
@@ -37,6 +38,10 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     generateAudio?: string;
     watermark?: string;
+    audioVoice?: string;
+    audioFormat?: string;
+    audioSpeed?: string;
+    audioInstructions?: string;
     references?: string[];
     naturalWidth?: number;
     naturalHeight?: number;
@@ -47,7 +52,6 @@ export type CanvasNodeMetadata = {
     batchUsesReferenceImages?: boolean;
     primaryImageId?: string;
     imageBatchExpanded?: boolean;
-    inputOrder?: string[];
     storageKey?: string;
     mimeType?: string;
     bytes?: number;
@@ -118,9 +122,16 @@ export type SelectionBox = {
     initialSelectedNodeIds: string[];
 };
 
-export type ContextMenuState = {
-    type: "node";
-    x: number;
-    y: number;
-    nodeId: string;
-};
+export type ContextMenuState =
+    | {
+          type: "node";
+          x: number;
+          y: number;
+          nodeId: string;
+      }
+    | {
+          type: "connection";
+          x: number;
+          y: number;
+          connectionId: string;
+      };

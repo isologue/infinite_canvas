@@ -15,18 +15,29 @@ export type AiConfig = {
     imageModel: string;
     videoModel: string;
     textModel: string;
+    audioModel: string;
+    audioVoice: string;
+    audioFormat: string;
+    audioSpeed: string;
+    audioInstructions: string;
     videoSeconds: string;
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
     systemPrompt: string;
     models: string[];
+    imageModels: string[];
+    videoModels: string[];
+    textModels: string[];
+    audioModels: string[];
     quality: string;
     size: string;
     count: string;
+    canvasImageCount: string;
 };
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
+export type ModelCapability = "image" | "video" | "text" | "audio";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -36,15 +47,25 @@ export const defaultConfig: AiConfig = {
     imageModel: "gpt-image-2",
     videoModel: "grok-imagine-video",
     textModel: "gpt-5.5",
+    audioModel: "gpt-4o-mini-tts",
+    audioVoice: "alloy",
+    audioFormat: "mp3",
+    audioSpeed: "1",
+    audioInstructions: "",
     videoSeconds: "6",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
     models: [],
+    imageModels: [],
+    videoModels: [],
+    textModels: [],
+    audioModels: [],
     quality: "auto",
     size: "1:1",
     count: "1",
+    canvasImageCount: "3",
 };
 
 type ConfigStore = {
@@ -65,18 +86,28 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
     const channelMode = modelChannel?.allowCustomChannel ? config.channelMode : "remote";
     if (channelMode === "local" || !modelChannel) return { ...config, channelMode };
     const models = modelChannel.availableModels;
-    const fallbackTextModel = validDefault(modelChannel.defaultTextModel, models) || preferredModel(models, isTextModelName);
-    const fallbackModel = validDefault(modelChannel.defaultModel, models) || fallbackTextModel || models[0] || "";
-    const fallbackImageModel = validDefault(modelChannel.defaultImageModel, models) || preferredModel(models, isImageModelName) || fallbackModel;
-    const fallbackVideoModel = validDefault(modelChannel.defaultVideoModel, models) || preferredModel(models, isVideoModelName) || fallbackModel;
+    const textModels = filterModelsByCapability(models, "text");
+    const imageModels = filterModelsByCapability(models, "image");
+    const videoModels = filterModelsByCapability(models, "video");
+    const audioModels = filterModelsByCapability(models, "audio");
+    const fallbackTextModel = validDefault(modelChannel.defaultTextModel, textModels) || preferredModel(textModels, isTextModelName);
+    const fallbackModel = validDefault(modelChannel.defaultModel, textModels) || fallbackTextModel;
+    const fallbackImageModel = validDefault(modelChannel.defaultImageModel, imageModels) || preferredModel(imageModels, isImageModelName);
+    const fallbackVideoModel = validDefault(modelChannel.defaultVideoModel, videoModels) || preferredModel(videoModels, isVideoModelName);
+    const fallbackAudioModel = preferredModel(audioModels, isAudioModelName);
     return {
         ...config,
         channelMode,
         models,
-        model: models.includes(config.model) ? config.model : fallbackModel,
-        imageModel: models.includes(config.imageModel) ? config.imageModel : fallbackImageModel,
-        videoModel: models.includes(config.videoModel) ? config.videoModel : fallbackVideoModel,
-        textModel: models.includes(config.textModel) ? config.textModel : fallbackTextModel || fallbackModel,
+        imageModels,
+        videoModels,
+        textModels,
+        audioModels,
+        model: textModels.includes(config.model) ? config.model : fallbackModel,
+        imageModel: imageModels.includes(config.imageModel) ? config.imageModel : fallbackImageModel,
+        videoModel: videoModels.includes(config.videoModel) ? config.videoModel : fallbackVideoModel,
+        textModel: textModels.includes(config.textModel) ? config.textModel : fallbackTextModel || fallbackModel,
+        audioModel: audioModels.includes(config.audioModel) ? config.audioModel : fallbackAudioModel,
         systemPrompt: modelChannel.systemPrompt,
     };
 }
@@ -91,16 +122,42 @@ function preferredModel(models: string[], predicate: (model: string) => boolean)
 
 function isVideoModelName(model: string) {
     const value = model.toLowerCase();
-    return value.includes("seedance") || value.includes("video");
+    return value.includes("seedance") || value.includes("video") || value.includes("sora") || value.includes("veo") || value.includes("kling") || value.includes("wan") || value.includes("hailuo");
 }
 
 function isImageModelName(model: string) {
     const value = model.toLowerCase();
-    return value.includes("seedream") || value.includes("gpt-image") || value.includes("image");
+    return !isVideoModelName(model) && !isAudioModelName(model) && (value.includes("seedream") || value.includes("gpt-image") || value.includes("image") || value.includes("dall-e") || value.includes("dalle") || value.includes("imagen") || value.includes("flux") || value.includes("sdxl") || value.includes("stable-diffusion") || value.includes("midjourney"));
+}
+
+function isAudioModelName(model: string) {
+    const value = model.toLowerCase();
+    return value.includes("audio") || value.includes("tts") || value.includes("speech") || value.includes("voice") || value.includes("music") || value.includes("sound");
 }
 
 function isTextModelName(model: string) {
-    return !isImageModelName(model) && !isVideoModelName(model);
+    return !isImageModelName(model) && !isVideoModelName(model) && !isAudioModelName(model);
+}
+
+export function modelMatchesCapability(model: string, capability?: ModelCapability) {
+    if (!capability) return true;
+    if (capability === "image") return isImageModelName(model);
+    if (capability === "video") return isVideoModelName(model);
+    if (capability === "audio") return isAudioModelName(model);
+    return isTextModelName(model);
+}
+
+export function filterModelsByCapability(models: string[], capability?: ModelCapability) {
+    return capability ? models.filter((model) => modelMatchesCapability(model, capability)) : models;
+}
+
+export function selectableModelsByCapability(config: AiConfig, capability?: ModelCapability) {
+    if (!capability) return config.models;
+    return config[modelListKey(capability)];
+}
+
+function modelListKey(capability: ModelCapability) {
+    return `${capability}Models` as "imageModels" | "videoModels" | "textModels" | "audioModels";
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
@@ -140,12 +197,40 @@ export const useConfigStore = create<ConfigStore>()(
             name: CONFIG_STORE_KEY,
             partialize: (state) => ({ config: state.config }),
             merge: (persisted, current) => {
-                const config = { ...defaultConfig, ...((persisted as Partial<ConfigStore>).config || {}) };
-                return { ...current, config: { ...config, channelMode: config.channelMode || "remote", imageModel: config.imageModel || config.model, videoModel: config.videoModel || "grok-imagine-video", textModel: config.textModel || config.model, videoSeconds: config.videoSeconds || "6", vquality: config.vquality || "720", videoGenerateAudio: config.videoGenerateAudio || "true", videoWatermark: config.videoWatermark || "false" } };
+                const persistedConfig = ((persisted as Partial<ConfigStore>).config || {}) as Partial<AiConfig>;
+                const config = { ...defaultConfig, ...persistedConfig };
+                return {
+                    ...current,
+                    config: {
+                        ...config,
+                        channelMode: config.channelMode || "remote",
+                        imageModel: config.imageModel || config.model,
+                        videoModel: config.videoModel || "grok-imagine-video",
+                        textModel: config.textModel || config.model,
+                        audioModel: config.audioModel || defaultConfig.audioModel,
+                        audioVoice: config.audioVoice || defaultConfig.audioVoice,
+                        audioFormat: config.audioFormat || defaultConfig.audioFormat,
+                        audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
+                        audioInstructions: config.audioInstructions || "",
+                        videoSeconds: config.videoSeconds || "6",
+                        vquality: config.vquality || "720",
+                        videoGenerateAudio: config.videoGenerateAudio || "true",
+                        videoWatermark: config.videoWatermark || "false",
+                        canvasImageCount: config.canvasImageCount || "3",
+                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels) : filterModelsByCapability(config.models, "image"),
+                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels) : filterModelsByCapability(config.models, "video"),
+                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels) : filterModelsByCapability(config.models, "text"),
+                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels) : filterModelsByCapability(config.models, "audio"),
+                    },
+                };
             },
         },
     ),
 );
+
+function normalizeModelList(models: string[]) {
+    return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
+}
 
 export function useEffectiveConfig() {
     const config = useConfigStore((state) => state.config);
