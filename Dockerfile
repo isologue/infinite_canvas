@@ -9,7 +9,11 @@ RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lock
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
-RUN bun run build
+# RUN bun run build 
+# 老服务器docker不兼容RUN bun run build 改为下方三行兼容
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN mkdir -p /app/web/.next && chmod -R 755 /app/web
+RUN ./node_modules/.bin/next build
 
 # 构建 Go 后端入口。
 FROM golang:1.25.10-alpine3.23 AS api-build
