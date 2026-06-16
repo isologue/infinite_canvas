@@ -341,7 +341,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
-    return <Renderer {...props} />;
+    return Renderer ? <Renderer {...props} /> : <UnknownNodeContent theme={props.theme} />;
 }
 
 const nodeContentRenderers = {
@@ -382,7 +382,18 @@ function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "
     );
 }
 
+function UnknownNodeContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+    return (
+        <div className="flex h-full w-full items-center justify-center text-sm" style={{ color: theme.node.placeholder }}>
+            未知节点
+        </div>
+    );
+}
+
 function TextContent({ node, theme, isEditingContent, textareaRef, mentionReferences, onContentChange, onStopEditing, onGenerateImage }: NodeContentRendererProps) {
+    const fontSize = node.metadata?.fontSize || 14;
+    const textStyle = { fontSize: `${fontSize}px`, lineHeight: `${Math.round(fontSize * 1.65)}px`, color: theme.node.text, boxSizing: "border-box" } as React.CSSProperties;
+
     return (
         <div className="flex h-full w-full flex-col overflow-hidden pt-8">
             <button
@@ -404,10 +415,11 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
             {isEditingContent ? (
                 <CanvasResourceMentionTextarea
                     ref={textareaRef}
-                    className="thin-scrollbar block h-full w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent pl-4 pr-14 pt-0 pb-4 m-0 font-mono leading-relaxed outline-none select-text appearance-none"
-                    style={{ fontSize: `${node.metadata?.fontSize || 14}px`, color: theme.node.text }}
+                    className="thin-scrollbar block h-full w-full resize-none overflow-y-auto whitespace-pre-wrap break-words border-none bg-transparent pl-4 pr-14 pt-0 pb-4 m-0 font-mono outline-none select-text appearance-none"
+                    style={textStyle}
                     value={node.metadata?.content || ""}
                     references={mentionReferences}
+                    highlightLabels={false}
                     onChange={(value) => onContentChange(node.id, value)}
                     onBlur={onStopEditing}
                     onKeyDown={(event) => {
@@ -419,8 +431,8 @@ function TextContent({ node, theme, isEditingContent, textareaRef, mentionRefere
                 />
             ) : (
                 <div
-                    className="thin-scrollbar block h-full w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent pl-4 pr-14 pt-0 pb-4 font-mono leading-relaxed"
-                    style={{ fontSize: `${node.metadata?.fontSize || 14}px`, color: theme.node.text }}
+                    className="thin-scrollbar block h-full w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent pl-4 pr-14 pt-0 pb-4 font-mono"
+                    style={textStyle}
                     onWheel={(event) => event.stopPropagation()}
                 >
                     {node.metadata?.content || <span style={{ color: theme.node.placeholder }}>双击编辑文字</span>}

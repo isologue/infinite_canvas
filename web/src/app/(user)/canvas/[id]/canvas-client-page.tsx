@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { BookOpen, Home, ImageIcon, Images, List, Menu, MessageSquare, Music2, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
+import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
@@ -19,7 +19,7 @@ import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { cropDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
+import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "../utils/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -31,6 +31,7 @@ import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
 import { CanvasNodeMaskEditDialog, type CanvasImageMaskEditPayload } from "../components/canvas-node-mask-edit-dialog";
+import { CanvasNodeSplitDialog, type CanvasImageSplitParams } from "../components/canvas-node-split-dialog";
 import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "../components/canvas-node-upscale-dialog";
 import { buildNodeChatMessages, buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
@@ -42,7 +43,9 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal, type AssetPickerTab, type InsertAssetPayload } from "../components/asset-picker-modal";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { useCanvasStore } from "../stores/use-canvas-store";
+import { applyCanvasAgentOps, type CanvasAgentOp, type CanvasAgentSnapshot } from "../utils/canvas-agent-ops";
 import { buildCanvasResourceReferences, buildNodeMentionReferences } from "../utils/canvas-resource-references";
+import type { CanvasAgentMode } from "../components/canvas-agent-chat-ui";
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
@@ -282,12 +285,15 @@ function InfiniteCanvasPage() {
     const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
     const [maskEditNodeId, setMaskEditNodeId] = useState<string | null>(null);
+    const [splitNodeId, setSplitNodeId] = useState<string | null>(null);
     const [upscaleNodeId, setUpscaleNodeId] = useState<string | null>(null);
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
     const [assistantCollapsed, setAssistantCollapsed] = useState(true);
     const [assistantMounted, setAssistantMounted] = useState(false);
+    const [agentMode, setAgentMode] = useState<CanvasAgentMode>("online");
+    const [agentUndoSnapshot, setAgentUndoSnapshot] = useState<CanvasAgentSnapshot | null>(null);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -299,6 +305,7 @@ function InfiniteCanvasPage() {
     const connectionsRef = useRef(connections);
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
+    const generateNodeRef = useRef<((nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => Promise<void>) | null>(null);
     const connectingParamsRef = useRef(connectingParams);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
@@ -586,6 +593,7 @@ function InfiniteCanvasPage() {
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
     const maskEditNode = maskEditNodeId ? nodeById.get(maskEditNodeId) || null : null;
+    const splitNode = splitNodeId ? nodeById.get(splitNodeId) || null : null;
     const upscaleNode = upscaleNodeId ? nodeById.get(upscaleNodeId) || null : null;
     const superResolveNode = superResolveNodeId ? nodeById.get(superResolveNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
@@ -645,6 +653,49 @@ function InfiniteCanvasPage() {
         nodes.forEach((node) => map.set(node.id, buildNodeMentionReferences(node, nodes, connections)));
         return map;
     }, [connections, nodes]);
+    const agentSnapshot = useMemo<CanvasAgentSnapshot>(
+        () => ({ projectId, title: currentProject?.title || "未命名画布", nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
+        [connections, currentProject?.title, nodes, projectId, selectedNodeIds, viewport],
+    );
+    const applyAgentOps = useCallback(
+        (ops?: CanvasAgentOp[]) => {
+            const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
+            const before = { projectId, title: currentProject?.title || "未命名画布", nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
+            const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
+            const next = applyCanvasAgentOps(before, safeOps.filter((op) => op.type !== "run_generation"));
+            nodesRef.current = next.nodes;
+            connectionsRef.current = next.connections;
+            selectedNodeIdsRef.current = new Set(next.selectedNodeIds);
+            viewportRef.current = next.viewport;
+            setAgentUndoSnapshot(before);
+            setNodes(next.nodes);
+            setConnections(next.connections);
+            setSelectedNodeIds(new Set(next.selectedNodeIds));
+            setSelectedConnectionId(null);
+            setViewport(next.viewport);
+            setContextMenu(null);
+            if (generationOps.length) {
+                queueMicrotask(() => generationOps.forEach((op) => void generateNodeRef.current?.(op.nodeId, op.mode || "image", op.prompt || "")));
+            }
+            return { ...next, projectId, title: currentProject?.title || "未命名画布" };
+        },
+        [currentProject?.title, projectId],
+    );
+    const undoAgentOps = useCallback(() => {
+        if (!agentUndoSnapshot) return null;
+        nodesRef.current = agentUndoSnapshot.nodes;
+        connectionsRef.current = agentUndoSnapshot.connections;
+        selectedNodeIdsRef.current = new Set(agentUndoSnapshot.selectedNodeIds);
+        viewportRef.current = agentUndoSnapshot.viewport;
+        setNodes(agentUndoSnapshot.nodes);
+        setConnections(agentUndoSnapshot.connections);
+        setSelectedNodeIds(new Set(agentUndoSnapshot.selectedNodeIds));
+        setSelectedConnectionId(null);
+        setViewport(agentUndoSnapshot.viewport);
+        setContextMenu(null);
+        setAgentUndoSnapshot(null);
+        return { ...agentUndoSnapshot, projectId, title: currentProject?.title || "未命名画布" };
+    }, [agentUndoSnapshot, currentProject?.title, projectId]);
     const createNode = useCallback(
         (type: CanvasNodeType, position?: Position) => {
             const targetPosition = position || getCanvasCenter();
@@ -1519,6 +1570,44 @@ function InfiniteCanvasPage() {
         setCropNodeId(null);
     }, []);
 
+    const splitImageNode = useCallback(
+        async (node: CanvasNodeData, params: CanvasImageSplitParams) => {
+            if (!node.metadata?.content) return;
+            setSplitNodeId(null);
+            const pieces = await splitDataUrl(node.metadata.content, params);
+            const gap = 16;
+            const cellWidth = node.width / params.columns;
+            const cellHeight = node.height / params.rows;
+            const startX = node.position.x + node.width + 96;
+            const startY = node.position.y;
+            const childNodes = await Promise.all(
+                pieces.map(async (piece) => {
+                    const image = await uploadImage(piece.dataUrl);
+                    const id = nanoid();
+                    return {
+                        id,
+                        type: CanvasNodeType.Image,
+                        title: `${node.title || "图片"} ${piece.row + 1}-${piece.column + 1}`,
+                        position: { x: startX + piece.column * (cellWidth + gap), y: startY + piece.row * (cellHeight + gap) },
+                        width: cellWidth,
+                        height: cellHeight,
+                        metadata: {
+                            ...imageMetadata(image),
+                            prompt: node.metadata?.prompt,
+                        },
+                    } satisfies CanvasNodeData;
+                }),
+            );
+            setNodes((prev) => [...prev, ...childNodes]);
+            setConnections((prev) => [...prev, ...childNodes.map((child) => ({ id: nanoid(), fromNodeId: node.id, toNodeId: child.id }))]);
+            setSelectedNodeIds(new Set(childNodes.map((child) => child.id)));
+            setSelectedConnectionId(null);
+            setDialogNodeId(null);
+            message.success(`已切分为 ${childNodes.length} 个子节点`);
+        },
+        [message],
+    );
+
     const maskEditImageNode = useCallback(
         async (node: CanvasNodeData, payload: CanvasImageMaskEditPayload) => {
             if (!node.metadata?.content) return;
@@ -2053,6 +2142,9 @@ function InfiniteCanvasPage() {
         },
         [effectiveConfig, openConfigDialog],
     );
+    useEffect(() => {
+        generateNodeRef.current = handleGenerateNode;
+    }, [handleGenerateNode]);
 
     const handleRetryNode = useCallback(
         async (node: CanvasNodeData) => {
@@ -2245,6 +2337,17 @@ function InfiniteCanvasPage() {
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
     );
 
+    const assistantOpen = assistantMounted && !assistantCollapsed;
+    const openAgent = (mode: CanvasAgentMode = agentMode) => {
+        setAgentMode(mode);
+        setAssistantMounted(true);
+        setAssistantCollapsed(false);
+    };
+    const closeAgent = () => {
+        setAssistantCollapsed(true);
+        setAssistantMounted(false);
+    };
+
     if (!projectLoaded) return <CanvasRefreshShell />;
 
     return (
@@ -2267,11 +2370,8 @@ function InfiniteCanvasPage() {
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
-                    assistantCollapsed={assistantCollapsed}
-                    onExpandAssistant={() => {
-                        setAssistantMounted(true);
-                        setAssistantCollapsed(false);
-                    }}
+                    agentOpen={assistantOpen}
+                    onToggleAgent={() => (assistantOpen ? closeAgent() : openAgent())}
                 />
 
                 <InfiniteCanvas
@@ -2437,6 +2537,7 @@ function InfiniteCanvasPage() {
                     onSaveAsset={(node) => void saveNodeAsset(node)}
                     onMaskEdit={(node) => setMaskEditNodeId(node.id)}
                     onCrop={(node) => setCropNodeId(node.id)}
+                    onSplit={(node) => setSplitNodeId(node.id)}
                     onUpscale={(node) => setUpscaleNodeId(node.id)}
                     onSuperResolve={(node) => setSuperResolveNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
@@ -2508,6 +2609,8 @@ function InfiniteCanvasPage() {
 
                 {maskEditNode?.metadata?.content ? <CanvasNodeMaskEditDialog dataUrl={maskEditNode.metadata.content} open={Boolean(maskEditNode)} onClose={() => setMaskEditNodeId(null)} onConfirm={(payload) => void maskEditImageNode(maskEditNode!, payload)} /> : null}
 
+                {splitNode?.metadata?.content ? <CanvasNodeSplitDialog dataUrl={splitNode.metadata.content} open={Boolean(splitNode)} onClose={() => setSplitNodeId(null)} onConfirm={(params) => void splitImageNode(splitNode!, params)} /> : null}
+
                 {upscaleNode?.metadata?.content ? <CanvasNodeUpscaleDialog dataUrl={upscaleNode.metadata.content} open={Boolean(upscaleNode)} onClose={() => setUpscaleNodeId(null)} onConfirm={(params) => void upscaleImageNode(upscaleNode!, params)} /> : null}
 
                 <Modal title="AI 超分" open={Boolean(superResolveNode?.metadata?.content)} centered footer={null} onCancel={() => setSuperResolveNodeId(null)}>
@@ -2557,13 +2660,17 @@ function InfiniteCanvasPage() {
                 <CanvasAssistantPanel
                     nodes={nodes}
                     selectedNodeIds={selectedNodeIds}
+                    snapshot={agentSnapshot}
                     sessions={chatSessions}
                     activeSessionId={activeChatId}
                     onSelectNodeIds={setSelectedNodeIds}
                     onSessionsChange={handleAssistantSessionsChange}
-                    onInsertImage={insertAssistantImage}
-                    onInsertText={insertAssistantText}
+                    onApplyOps={applyAgentOps}
+                    canUndoOps={Boolean(agentUndoSnapshot)}
+                    onUndoOps={undoAgentOps}
                     onPasteImage={pasteAssistantImage}
+                    agentMode={agentMode}
+                    onAgentModeChange={setAgentMode}
                     onCollapseStart={() => setAssistantCollapsed(true)}
                     onCollapse={() => setAssistantMounted(false)}
                 />
@@ -2589,8 +2696,8 @@ function CanvasTopBar({
     onImportImage,
     onUndo,
     onRedo,
-    assistantCollapsed,
-    onExpandAssistant,
+    agentOpen,
+    onToggleAgent,
 }: {
     title: string;
     titleDraft: string;
@@ -2608,8 +2715,8 @@ function CanvasTopBar({
     onImportImage: () => void;
     onUndo: () => void;
     onRedo: () => void;
-    assistantCollapsed: boolean;
-    onExpandAssistant: () => void;
+    agentOpen: boolean;
+    onToggleAgent: () => void;
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -2702,20 +2809,16 @@ function CanvasTopBar({
                             setAccountOpen(false);
                         }}
                     />
-                    {assistantCollapsed ? (
-                        <>
-                            <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
-                            <Button
-                                type="text"
-                                className="!h-10 !rounded-xl !px-3 !font-medium"
-                                style={{ background: theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
-                                icon={<MessageSquare className="size-4" />}
-                                onClick={onExpandAssistant}
-                            >
-                                助手
-                            </Button>
-                        </>
-                    ) : null}
+                    <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
+                    <Button
+                        type="text"
+                        className="!h-10 !rounded-xl !px-3 !font-medium"
+                        style={{ background: agentOpen ? theme.toolbar.activeBg : theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
+                        icon={<Bot className="size-4" />}
+                        onClick={onToggleAgent}
+                    >
+                        Agent
+                    </Button>
                 </div>
             </div>
             <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
@@ -2868,7 +2971,6 @@ async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
                 session.messages.map(async (message) => ({
                     ...message,
                     references: await Promise.all((message.references || []).map(hydrateItem)),
-                    images: await Promise.all((message.images || []).map(hydrateItem)),
                 })),
             ),
         })),
