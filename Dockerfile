@@ -38,7 +38,6 @@ FROM node:22-alpine
 WORKDIR /app
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
-COPY --from=api-build /server /app/server
 COPY --from=web-build /app/web/public /app/web/public
 COPY --from=web-build /app/web/.next/standalone /app/web
 COPY --from=web-build /app/web/.next/static /app/web/.next/static
@@ -50,5 +49,4 @@ RUN apk add --no-cache ca-certificates
 RUN mkdir -p /app/data/prompts
 
 EXPOSE 3000
-# 先启动内部 Go API，再由 Next.js 提供页面并代理 /api/*。
-CMD ["sh", "-c", "PORT=8080 /app/server & cd /app/web && PORT=3000 node server.js"]
+CMD ["sh", "-c", "cd /app/web && PORT=3000 node server.js"]
