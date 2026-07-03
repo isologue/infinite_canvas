@@ -4,6 +4,7 @@ import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, nor
 import { requestCreditCost } from "@/constant/credits";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
+import { reportAiCall } from "@/services/ai-call-log";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type RequestOptions = { signal?: AbortSignal };
@@ -44,10 +45,29 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         );
         await assertAudioBlob(response.data);
         if (reservation) await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
+        void reportAiCall({
+            kind: "audio",
+            model: modelOptionName(selectedModel),
+            status: "success",
+            credits: amount,
+            reason: `audio generation: ${modelOptionName(selectedModel)}`,
+            requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: Number(normalizeAudioSpeedValue(config.audioSpeed)), promptLength: prompt.length },
+            responseResult: { bytes: response.data.size, mimeType: response.data.type },
+        });
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
         if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
-        throw new Error(readAxiosError(error, "audio generation failed"));
+        const messageText = readAxiosError(error, "audio generation failed");
+        void reportAiCall({
+            kind: "audio",
+            model: modelOptionName(selectedModel),
+            status: "failed",
+            credits: amount,
+            reason: `audio generation: ${modelOptionName(selectedModel)}`,
+            requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, promptLength: prompt.length },
+            errorMessage: messageText,
+        });
+        throw new Error(messageText);
     }
 }
 

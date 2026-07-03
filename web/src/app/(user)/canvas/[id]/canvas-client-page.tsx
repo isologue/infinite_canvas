@@ -7,10 +7,12 @@ import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { reportAiCall } from "@/services/ai-call-log";
+import { requestCreditCost } from "@/constant/credits";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
-import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
@@ -109,6 +111,33 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 1. 只输出提示词正文，不要解释。
 2. 覆盖主体、构图、风格、光线、色彩、材质、镜头和氛围。
 3. 尽量写成可直接用于生图模型的完整提示词。`;
+
+// 画布页图片生成上报 AI 调用日志（在拿到 storageKey 之后调用）。失败静默。
+function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number }) {
+    const model = modelOptionName(config.model);
+    const credits = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: config.model, count: 1 });
+    void reportAiCall({
+        kind: "image",
+        model,
+        status: "success",
+        credits,
+        reason: `image generation: ${model}`,
+        requestParams: { prompt, model },
+        responseResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
+    });
+}
+
+function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown) {
+    const model = modelOptionName(config.model);
+    void reportAiCall({
+        kind: "image",
+        model,
+        status: "failed",
+        reason: `image generation: ${model}`,
+        requestParams: { prompt, model },
+        errorMessage: error instanceof Error ? error.message : String(error),
+    });
+}
 
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
@@ -1730,11 +1759,13 @@ function InfiniteCanvasPage() {
             try {
                 const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
+                reportCanvasImageLog(generationConfig, prompt, uploaded);
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "局部修改失败";
+                reportCanvasImageError(generationConfig, prompt, error);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
@@ -1808,11 +1839,13 @@ function InfiniteCanvasPage() {
                     (items) => items[0],
                 );
                 const uploaded = await uploadImage(image.dataUrl);
+                reportCanvasImageLog(generationConfig, prompt, uploaded);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                reportCanvasImageError(generationConfig, prompt, error);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
@@ -2089,6 +2122,7 @@ function InfiniteCanvasPage() {
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl);
+                                reportCanvasImageLog(generationConfig, effectivePrompt, uploaded);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
                                     const root = prev.find((node) => node.id === rootId);
@@ -2121,6 +2155,7 @@ function InfiniteCanvasPage() {
                                 if (isGenerationCanceled(error)) return false;
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 hasFailure = true;
+                                reportCanvasImageError(generationConfig, effectivePrompt, error);
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                             } finally {
                                 finishGenerationRequest(targetId, controller);
@@ -2167,7 +2202,12 @@ function InfiniteCanvasPage() {
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }));
+                        // 通过 onStored 在生成完成后就地存储：只存一次，同时让日志带上 storageKey 以便预览。
+                        let video!: Awaited<ReturnType<typeof storeGeneratedVideo>>;
+                        await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }, async (result) => {
+                            video = await storeGeneratedVideo(result);
+                            return { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs };
+                        });
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                         setNodes((prev) => prev.map((node) => (node.id === videoId ? { ...node, width: videoSize.width, height: videoSize.height, position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 }, metadata: { ...node.metadata, ...videoMetadata(video), prompt: effectivePrompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark, references: generationReferenceUrls(generationContext) } } : node)));
                     } finally {
@@ -2327,7 +2367,11 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    const video = await storeGeneratedVideo(await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }));
+                    let video!: Awaited<ReturnType<typeof storeGeneratedVideo>>;
+                    await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }, async (result) => {
+                        video = await storeGeneratedVideo(result);
+                        return { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs };
+                    });
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, width: videoSize.width, height: videoSize.height, position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 }, metadata: { ...item.metadata, ...videoMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality, generateAudio: generationConfig.videoGenerateAudio, watermark: generationConfig.videoWatermark } } : item)));
                     return;
@@ -2340,6 +2384,7 @@ function InfiniteCanvasPage() {
 
                 const image = useReferenceImages ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl);
+                reportCanvasImageLog(generationConfig, prompt, uploadedImage);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
@@ -2361,6 +2406,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
+                reportCanvasImageError(generationConfig, prompt, error);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {

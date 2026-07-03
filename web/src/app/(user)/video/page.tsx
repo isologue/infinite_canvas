@@ -313,7 +313,9 @@ export default function VideoPage() {
                     };
                     setResults([{ id: nextVideo.id, status: "success", video: nextVideo }]);
                     await saveLog({ ...log, status: "成功", durationMs: nextVideo.durationMs, video: nextVideo, error: undefined });
-                    await settleVideoTaskCredits(log.task, "success");
+                    await settleVideoTaskCredits(log.task, "success", {
+                        result: { storageKey: nextVideo.storageKey, mimeType: nextVideo.mimeType, width: nextVideo.width, height: nextVideo.height, bytes: nextVideo.bytes, durationMs: nextVideo.durationMs },
+                    });
                     message.success("视频已生成");
                     return;
                 }
@@ -324,7 +326,7 @@ export default function VideoPage() {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
-            await settleVideoTaskCredits(log.task, "failed");
+            await settleVideoTaskCredits(log.task, "failed", { errorMessage });
             await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
         } finally {
@@ -530,7 +532,7 @@ export default function VideoPage() {
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <AssetPickerModal open={assetPickerOpen} onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
             </Modal>
@@ -685,7 +687,7 @@ async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
         const logs: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
+        await logStore.iterate((value) => {
             logs.push(value);
         });
         return (await Promise.all(logs.map(normalizeLog))).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));

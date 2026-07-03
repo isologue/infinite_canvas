@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, Users } from "lucide-react";
+import { Menu, ScrollText, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -79,6 +79,20 @@ export function AppTopNav() {
                                     >
                                         <Users className="size-4" />
                                         <span className="truncate">用户管理</span>
+                                    </Link>
+                                ) : null}
+                                {user?.role === "admin" ? (
+                                    <Link
+                                        href="/admin/ai-logs"
+                                        className={cn(
+                                            "relative flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                                            pathname.startsWith("/admin/ai-logs")
+                                                ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"
+                                                : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
+                                        )}
+                                    >
+                                        <ScrollText className="size-4" />
+                                        <span className="truncate">调用日志</span>
                                     </Link>
                                 ) : null}
                             </nav>

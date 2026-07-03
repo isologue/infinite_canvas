@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
 }
 
 function imageResponse(content: Buffer, contentType: string, bytes: number, cached: boolean) {
-    return new Response(content, {
+    return new Response(new Uint8Array(content), {
         headers: {
             "content-type": contentType,
             "content-length": String(bytes),

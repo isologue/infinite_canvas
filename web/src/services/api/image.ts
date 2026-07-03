@@ -7,6 +7,7 @@ import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { requestCreditCost } from "@/constant/credits";
 import { imageToDataUrl } from "@/services/image-storage";
 import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
+import { reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -241,17 +242,42 @@ function aiHeaders(config: AiConfig, contentType?: string) {
     };
 }
 
+function aiLogKindFromReason(kind: string): AiCallLogKind {
+    if (kind.startsWith("image")) return "image";
+    if (kind.startsWith("text")) return "text";
+    return "other";
+}
+
+// 从生成参数里挑出适合入日志的字段（不含 base64 图片，避免日志膨胀）。
+function buildImageRequestParams(config: AiConfig) {
+    return {
+        model: modelOptionName(config.model),
+        count: config.count,
+        size: (config as { size?: unknown }).size,
+        quality: (config as { quality?: unknown }).quality,
+        prompt: (config as { prompt?: unknown }).prompt,
+    };
+}
+
 async function withCreditCharge<T>(config: AiConfig, kind: string, run: () => Promise<T>) {
     const amount = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: config.model, count: config.count });
-    if (amount <= 0) return run();
     const model = modelOptionName(config.model);
-    const reservation = await reserveUserCredits(amount, `${kind}: ${model}`);
+    const logKind = aiLogKindFromReason(kind);
+    const requestParams = buildImageRequestParams(config);
+    const reservation = amount > 0 ? await reserveUserCredits(amount, `${kind}: ${model}`) : null;
     try {
         const result = await run();
-        await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
+        if (reservation) await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
+        // 图片类日志由页面层在拿到 storageKey 后上报（这里拿不到，只有 base64），此处只报文本等非图片类型。
+        if (logKind !== "image") {
+            void reportAiCall({ kind: logKind, model, status: "success", credits: amount, reason: kind, requestParams });
+        }
         return result;
     } catch (error) {
-        await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
+        if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
+        if (logKind !== "image") {
+            void reportAiCall({ kind: logKind, model, status: "failed", credits: amount, reason: kind, requestParams, errorMessage: error instanceof Error ? error.message : String(error) });
+        }
         throw error;
     }
 }
@@ -394,8 +420,8 @@ function consumeResponseStreamText(state: ResponseStreamState, text: string, onD
     for (;;) {
         const match = state.buffer.match(/\r?\n\r?\n/);
         if (!match) break;
-        consumeResponseStreamBlock(state.buffer.slice(0, match.index), state, onDelta);
-        state.buffer = state.buffer.slice(match.index + match[0].length);
+        consumeResponseStreamBlock(state.buffer.slice(0, match.index ?? 0), state, onDelta);
+        state.buffer = state.buffer.slice((match.index ?? 0) + match[0].length);
     }
     if (flush && state.buffer.trim()) {
         consumeResponseStreamBlock(state.buffer, state, onDelta);
@@ -542,8 +568,8 @@ function consumeGeminiStreamText(state: GeminiStreamState, text: string, onDelta
     for (;;) {
         const match = state.buffer.match(/\r?\n\r?\n/);
         if (!match) break;
-        consumeGeminiStreamBlock(state.buffer.slice(0, match.index), state, onDelta);
-        state.buffer = state.buffer.slice(match.index + match[0].length);
+        consumeGeminiStreamBlock(state.buffer.slice(0, match.index ?? 0), state, onDelta);
+        state.buffer = state.buffer.slice((match.index ?? 0) + match[0].length);
     }
     if (flush && state.buffer.trim()) {
         consumeGeminiStreamBlock(state.buffer, state, onDelta);
@@ -705,7 +731,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    return withCreditCharge({ ...config, model: config.model || config.textModel, count: 1 }, "text generation", async () => {
+    return withCreditCharge({ ...config, model: config.model || config.textModel, count: "1" }, "text generation", async () => {
         try {
             if (requestConfig.apiFormat === "gemini") {
                 const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "No response";
@@ -726,7 +752,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    return withCreditCharge({ ...config, model: config.model || config.textModel, count: 1 }, "text tool call", async () => {
+    return withCreditCharge({ ...config, model: config.model || config.textModel, count: "1" }, "text tool call", async () => {
         try {
             if (requestConfig.apiFormat === "gemini") {
                 return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);

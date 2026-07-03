@@ -6,6 +6,7 @@ import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { requestCreditCost } from "@/constant/credits";
 import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
+import { reportAiCall } from "@/services/ai-call-log";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
@@ -22,7 +23,7 @@ type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string; creditAmount?: number; reservationId?: string; creditSettled?: boolean };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string; creditAmount?: number; reservationId?: string; creditSettled?: boolean; logModel?: string; logParams?: unknown; logReported?: boolean };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -40,13 +41,38 @@ function videoCreditAmount(config: AiConfig, model: string) {
     return requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model, count: 1 });
 }
 
-export async function settleVideoTaskCredits(task: VideoGenerationTask, status: "success" | "failed") {
-    if (!task.reservationId || task.creditSettled) return;
-    await settleUserCreditReservation(task.reservationId, status).catch(() => null);
-    task.creditSettled = true;
+export async function settleVideoTaskCredits(task: VideoGenerationTask, status: "success" | "failed", extra?: { errorMessage?: string; result?: unknown }) {
+    if (task.reservationId && !task.creditSettled) {
+        await settleUserCreditReservation(task.reservationId, status).catch(() => null);
+        task.creditSettled = true;
+    }
+    // 上报一条 AI 调用日志（无论收费与否，每个任务只报一次）。
+    if (!task.logReported) {
+        task.logReported = true;
+        void reportAiCall({
+            kind: "video",
+            model: task.logModel || task.model,
+            status,
+            credits: task.creditAmount || 0,
+            reason: `video generation: ${task.logModel || task.model}`,
+            requestParams: task.logParams,
+            responseResult: status === "success" ? extra?.result : undefined,
+            errorMessage: status === "failed" ? extra?.errorMessage : undefined,
+        });
+    }
 }
 
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationResult> {
+// onStored（可选）：调用方在拿到生成结果后把它存进存储并返回 storageKey 等摘要，
+// 用于让日志带上 storageKey 以便预览。画布页会传它；不传则日志不含 storageKey（行为同以前）。
+export async function requestVideoGeneration(
+    config: AiConfig,
+    prompt: string,
+    references: ReferenceImage[] = [],
+    videoReferences: ReferenceVideo[] = [],
+    audioReferences: ReferenceAudio[] = [],
+    options?: RequestOptions,
+    onStored?: (result: VideoGenerationResult) => Promise<{ storageKey?: string; width?: number; height?: number; bytes?: number; mimeType?: string; durationMs?: number }>,
+): Promise<VideoGenerationResult> {
     let task: VideoGenerationTask | null = null;
     try {
         task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
@@ -55,7 +81,9 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const state = await pollVideoGenerationTask(config, task, options);
             if (state.status === "completed") {
-                await settleVideoTaskCredits(task, "success");
+                // 若调用方提供了 onStored，先存储拿到 storageKey，再让日志带上它。存储只在此发生一次。
+                const stored = onStored ? await onStored(state.result).catch(() => undefined) : undefined;
+                await settleVideoTaskCredits(task, "success", stored ? { result: stored } : undefined);
                 return state.result;
             }
             if (state.status === "failed") throw new Error(state.error);
@@ -64,7 +92,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         }
         throw new Error("video generation timeout, please try again later");
     } catch (error) {
-        if (task) await settleVideoTaskCredits(task, "failed");
+        if (task) await settleVideoTaskCredits(task, "failed", { errorMessage: error instanceof Error ? error.message : String(error) });
         throw error;
     }
 }
@@ -75,7 +103,18 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     assertVideoConfig(requestConfig, requestConfig.model);
     const creditAmount = videoCreditAmount({ ...config, model: selectedModel }, selectedModel);
     const reservation = creditAmount > 0 ? await reserveUserCredits(creditAmount, `video generation: ${modelOptionName(selectedModel)}`, 120) : null;
-    const reservationExtras = { creditAmount, reservationId: reservation?.reservationId };
+    const reservationExtras = {
+        creditAmount,
+        reservationId: reservation?.reservationId,
+        logModel: modelOptionName(selectedModel),
+        logParams: {
+            model: modelOptionName(selectedModel),
+            promptLength: prompt.length,
+            references: references.length,
+            videoReferences: videoReferences.length,
+            audioReferences: audioReferences.length,
+        },
+    };
     try {
         if (isSeedanceVideoConfig(requestConfig)) {
             return { ...(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...reservationExtras };

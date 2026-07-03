@@ -7,7 +7,7 @@ export async function GET(_request: Request, context: { params: Promise<{ key: s
     const { key } = await context.params;
     const file = await readUserFile(user.id, decodeURIComponent(key));
     if (!file) return new Response("Not Found", { status: 404 });
-    return new Response(file.content, {
+    return new Response(new Uint8Array(file.content), {
         headers: {
             "content-type": file.mime_type,
             "content-length": file.bytes,

@@ -12,10 +12,11 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/c
 import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
+import { reportAiCall } from "@/services/ai-call-log";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { requestEdit, requestGeneration } from "@/services/api/image";
@@ -190,6 +191,22 @@ export default function ImagePage() {
                     images: logImages,
                 }),
             );
+            // 上报 AI 调用日志（此时已拿到 storageKey，日志详情能预览图片）。
+            // 点数按成功张数计（失败的那部分会退款，不计入实际消耗）。
+            const logModel = modelOptionName(model);
+            const logCredits = requestCreditCost({ channelMode: effectiveConfig.channelMode, modelCosts: effectiveConfig.modelCosts, model, count: successCount || generationCount });
+            void reportAiCall({
+                kind: "image",
+                model: logModel,
+                status: successCount ? "success" : "failed",
+                credits: logCredits,
+                reason: `image generation: ${logModel}`,
+                requestParams: { prompt: text, model: logModel, count: generationCount },
+                responseResult: successCount
+                    ? { count: logImages.length, items: logImages.map((img) => ({ storageKey: img.storageKey, width: img.width, height: img.height, mimeType: img.mimeType, bytes: img.bytes })) }
+                    : undefined,
+                errorMessage: successCount ? undefined : failed?.reason instanceof Error ? failed.reason.message : "生成失败",
+            });
             successCount ? message.success("图片已生成") : message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");
         } finally {
             setRunning(false);
@@ -481,7 +498,7 @@ export default function ImagePage() {
                 </div>
             </Drawer>
             <PromptSelectDialog open={promptDialogOpen} onOpenChange={setPromptDialogOpen} onSelect={setPrompt} />
-            <AssetPickerModal open={assetPickerOpen} defaultTab="my-assets" onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
+            <AssetPickerModal open={assetPickerOpen} onInsert={(payload) => void insertPickedAsset(payload)} onClose={() => setAssetPickerOpen(false)} />
             <Modal title="删除生成记录" open={deleteConfirmOpen} onCancel={() => setDeleteConfirmOpen(false)} onOk={deleteSelectedLogs} okText="删除" okButtonProps={{ danger: true }} cancelText="取消">
                 确定删除选中的 {selectedLogIds.length} 条生成记录吗？
             </Modal>
@@ -700,7 +717,7 @@ async function readStoredLogs() {
     if (typeof window === "undefined") return [];
     try {
         const values: GenerationLog[] = [];
-        await logStore.iterate<GenerationLog, void>((value) => {
+        await logStore.iterate((value) => {
             values.push(value);
         });
         const logs = await Promise.all(values.map(normalizeLog));

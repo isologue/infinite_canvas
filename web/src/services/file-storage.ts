@@ -2,7 +2,7 @@
 
 import { nanoid } from "nanoid";
 
-type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const objectUrls = new Map<string, string>();
 
