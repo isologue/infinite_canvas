@@ -2,14 +2,15 @@
 
 import { App, Button, Form, Input, Modal, Progress, Segmented, Select, Tabs } from "antd";
 import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { CreditSymbol } from "@/constant/credits";
 import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelCosts, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -60,6 +61,9 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
 export function AppConfigModal() {
     const { message } = App.useApp();
     const [activeTab, setActiveTab] = useState("channels");
+    const [modelCostRenderKey, setModelCostRenderKey] = useState(0);
+    const modelCostDraftRef = useRef<Record<string, number>>({});
+    const modelCostInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -68,7 +72,9 @@ export function AppConfigModal() {
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
+    const replaceSharedConfig = useConfigStore((state) => state.replaceSharedConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
+    const canManageConfig = useConfigStore((state) => state.canManageConfig);
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
@@ -80,11 +86,77 @@ export function AppConfigModal() {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
     };
 
-    const finishConfig = () => {
-        const ready = config.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
+    useEffect(() => {
+        if (!isConfigOpen) {
+            modelCostDraftRef.current = {};
+            modelCostInputRefs.current = {};
+            return;
+        }
+        const nextDraft = Object.fromEntries(normalizeModelCosts(config.modelCosts, config.models).map((item) => [item.model, item.credits]));
+        modelCostDraftRef.current = nextDraft;
+        modelCostInputRefs.current = {};
+        setModelCostRenderKey((value) => value + 1);
+    }, [isConfigOpen]);
+
+    useEffect(() => {
+        if (!isConfigOpen) return;
+        modelCostDraftRef.current = Object.fromEntries(
+            normalizeModelCosts(
+                config.models.map((model) => ({ model, credits: modelCostDraftRef.current[model] ?? (config.modelCosts.find((item) => item.model === model)?.credits || 0) })),
+                config.models,
+            ).map((item) => [item.model, item.credits]),
+        );
+    }, [config.models, isConfigOpen]);
+
+    const readModelCostDraftFromDom = () => {
+        const nextDraft = { ...modelCostDraftRef.current };
+        for (const [model, input] of Object.entries(modelCostInputRefs.current)) {
+            if (!input) continue;
+            if (!model) continue;
+            nextDraft[model] = Math.max(0, Math.floor(Number(input.value || 0) || 0));
+        }
+        modelCostDraftRef.current = nextDraft;
+        return nextDraft;
+    };
+
+    const finishConfig = async () => {
+        if (!canManageConfig) {
+            setConfigDialogOpen(false);
+            return;
+        }
+        const latestDraft = readModelCostDraftFromDom();
+        const nextConfig = {
+            ...config,
+            modelCosts: normalizeModelCosts(
+                Object.entries(latestDraft).map(([model, credits]) => ({ model, credits })),
+                config.models,
+            ),
+        };
+        const ready = nextConfig.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
+        try {
+            const response = await fetch("/api/shared-config", {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ config: nextConfig, webdav }),
+            });
+            const payload = (await response.json()) as { code?: number; msg?: string; data?: { config?: AiConfig; webdav?: typeof webdav } };
+            if (!response.ok || payload.code !== 0) throw new Error(payload.msg || "保存失败");
+            if (payload.data?.config && payload.data?.webdav) {
+                replaceSharedConfig({
+                    config: payload.data.config,
+                    webdav: payload.data.webdav,
+                    canManage: true,
+                });
+            } else {
+                saveConfig(nextConfig);
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "保存失败");
+            return;
+        }
         setConfigDialogOpen(false);
         if (!ready) return;
-        message.success(shouldPromptContinue ? "配置已保存，请继续刚才的请求" : "配置已保存");
+        message.success(shouldPromptContinue ? "配置已保存，可以继续操作" : "配置已保存");
         clearPromptContinue();
     };
 
@@ -156,6 +228,14 @@ export function AppConfigModal() {
         if (!next.includes(config[group.modelKey])) updateConfig(group.modelKey, next[0] || "");
     };
 
+    const onUpdateModelCost = (model: string, value: number | null) => {
+        const nextCredits = Math.max(0, Math.floor(Number(value) || 0));
+        modelCostDraftRef.current = {
+            ...modelCostDraftRef.current,
+            [model]: nextCredits,
+        };
+    };
+
     const testWebdav = async () => {
         if (!webdavReady) {
             message.error("请先填写 WebDAV 地址");
@@ -198,7 +278,7 @@ export function AppConfigModal() {
         try {
             const result = await syncAppDataToWebdav(webdav, updateWebdavProgress);
             updateWebdavConfig("lastSyncedAt", result.syncedAt);
-            message.success(`同步完成：${result.projects} 个画布，${result.assets} 个素材，${result.imageLogs + result.videoLogs} 条记录，本次上传 ${result.uploadedFiles} 个文件 ${formatBytes(result.uploadedBytes)}`);
+            message.success(`同步完成：${result.projects} 个画布，${result.assets} 个素材，${result.imageLogs + result.videoLogs} 条记录，本次上传 ${result.uploadedFiles} 个文件，${formatBytes(result.uploadedBytes)}`);
         } catch (error) {
             setWebdavSyncStatus(error instanceof Error ? error.message : "WebDAV 同步失败");
             message.error(error instanceof Error ? error.message : "WebDAV 同步失败");
@@ -221,11 +301,12 @@ export function AppConfigModal() {
             onCancel={() => setConfigDialogOpen(false)}
             styles={{ body: { maxHeight: "72vh", overflowY: "auto", paddingRight: 12 } }}
             footer={
-                <Button type="primary" onClick={finishConfig}>
+                <Button type="primary" onClick={() => void finishConfig()}>
                     完成
                 </Button>
             }
         >
+            {!canManageConfig ? <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">当前为共享配置，只有 admin 可以修改。</div> : null}
             <Tabs
                 activeKey={activeTab}
                 onChange={setActiveTab}
@@ -302,7 +383,7 @@ export function AppConfigModal() {
                             <Form layout="vertical" requiredMark={false}>
                                 <div className="mb-4 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
                                     <div className="text-sm font-semibold">默认模型和可选项</div>
-                                    <div className="mt-1 text-xs leading-5 text-stone-500">可选项决定各处下拉框展示哪些模型；同名模型会以括号里的渠道名区分。</div>
+                                    <div className="mt-1 text-xs leading-5 text-stone-500">可选项决定各处下拉框显示哪些模型；同名模型会以括号里的渠道名区分。</div>
                                 </div>
                                 <div className="grid gap-4 md:grid-cols-2">
                                     {modelGroups.map((group) => (
@@ -312,7 +393,7 @@ export function AppConfigModal() {
                                                 showSearch
                                                 allowClear
                                                 maxTagCount="responsive"
-                                                placeholder={config.models.length ? `请选择或输入${group.optionsLabel}` : "先到渠道里填写或拉取模型"}
+                                                placeholder={config.models.length ? `请选择或输入 ${group.optionsLabel}` : "先到渠道里填写或拉取模型"}
                                                 value={config[group.modelsKey]}
                                                 options={modelOptions}
                                                 onChange={(models) => updateCapabilityModels(group, models)}
@@ -368,8 +449,66 @@ export function AppConfigModal() {
                                     <Input.TextArea rows={2} value={config.audioInstructions} placeholder="例如：自然、温暖、适合旁白。" onChange={(event) => updateConfig("audioInstructions", event.target.value)} />
                                 </Form.Item>
                                 <Form.Item label="系统提示词" className="mb-0">
-                                    <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
+                                    <Input.TextArea rows={4} value={config.systemPrompt} placeholder="例如：你是一位擅长视觉叙事的创作者。" onChange={(event) => updateConfig("systemPrompt", event.target.value)} />
                                 </Form.Item>
+                            </Form>
+                        ),
+                    },
+                    {
+                        key: "credits",
+                        label: "点数",
+                        children: (
+                            <Form layout="vertical" requiredMark={false}>
+                                <div className="mb-4 rounded-lg border border-stone-200 p-3 text-sm text-stone-600 dark:border-stone-800 dark:text-stone-300">
+                                    <div className="font-semibold text-stone-900 dark:text-stone-100">模型点数配置</div>
+                                    <div className="mt-1 leading-6">图片模型按“单张点数 × 张数”扣除；文本、视频、音频按单次请求扣除。未配置的模型默认按 0 点处理。</div>
+                                </div>
+                                <div className="space-y-4">
+                                    {modelGroups.map((group) => {
+                                        const models = filterModelsByCapability(config.models, group.capability);
+                                        return (
+                                            <section key={`credits-${group.capability}`} className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                                                <div className="mb-3">
+                                                    <div className="text-sm font-semibold">{creditGroupTitle(group.capability)}</div>
+                                                    <div className="mt-1 text-xs text-stone-500">{group.capability === "image" ? "按单张计费，可叠加生成张数。" : "按单次请求计费。"}</div>
+                                                </div>
+                                                {models.length ? (
+                                                    <div className="space-y-2">
+                                                        {models.map((model) => (
+                                                            <div key={model} className="grid gap-3 rounded-lg border border-stone-200 px-3 py-3 md:grid-cols-[minmax(0,1fr)_150px] dark:border-stone-800">
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-medium">{modelOptionLabel(config, model)}</div>
+                                                                    <div className="mt-1 truncate text-xs text-stone-500">{model}</div>
+                                                                </div>
+                                                                <Form.Item label={<span className="inline-flex items-center gap-1"><CreditSymbol /> 点数</span>} className="mb-0">
+                                                                    <input
+                                                                        key={`${modelCostRenderKey}-${model}`}
+                                                                        ref={(element) => {
+                                                                            modelCostInputRefs.current[model] = element;
+                                                                        }}
+                                                                        name={`model-cost-${model}`}
+                                                                        type="number"
+                                                                        min={0}
+                                                                        step={1}
+                                                                        inputMode="numeric"
+                                                                        data-model-cost-input="true"
+                                                                        data-model={model}
+                                                                        className="h-8 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none transition focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
+                                                                        defaultValue={String(modelCostDraftRef.current[model] ?? (config.modelCosts.find((item) => item.model === model)?.credits || 0))}
+                                                                        onChange={(event) => onUpdateModelCost(model, Number((event.currentTarget as HTMLInputElement).value || 0))}
+                                                                        onBlur={(event) => onUpdateModelCost(model, Number((event.currentTarget as HTMLInputElement).value || 0))}
+                                                                    />
+                                                                </Form.Item>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="rounded-lg border border-dashed border-stone-200 px-3 py-4 text-sm text-stone-500 dark:border-stone-800">先到“模型”页签配置可选模型，这里才会出现对应的点数项。</div>
+                                                )}
+                                            </section>
+                                        );
+                                    })}
+                                </div>
                             </Form>
                         ),
                     },
@@ -404,7 +543,7 @@ export function AppConfigModal() {
                                         <Form.Item label="WebDAV 地址" className="mb-4">
                                             <Input value={webdav.url} placeholder="https://nas.example.com/webdav" onChange={(event) => updateWebdavConfig("url", event.target.value)} />
                                         </Form.Item>
-                                        <Form.Item label="远程目录" extra={`会在该目录下分业务目录保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/`} className="mb-4">
+                                        <Form.Item label="远程目录" extra={`会在该目录下按业务目录保存，每个目录包含 ${WEBDAV_MANIFEST_FILE_NAME} 和 files/`} className="mb-4">
                                             <Input value={webdav.directory} placeholder="infinite-canvas" onChange={(event) => updateWebdavConfig("directory", event.target.value)} />
                                         </Form.Item>
                                         <Form.Item label="用户名" className="mb-0">
@@ -451,11 +590,19 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         videoModels,
         textModels,
         audioModels,
+        modelCosts: normalizeModelCosts(config.modelCosts, models),
         imageModel: normalizeDefaultModel(config.imageModel, imageModels),
         videoModel: normalizeDefaultModel(config.videoModel, videoModels),
         textModel: normalizeDefaultModel(config.textModel, textModels),
         audioModel: normalizeDefaultModel(config.audioModel, audioModels),
     };
+}
+
+function creditGroupTitle(capability: ModelCapability) {
+    if (capability === "image") return "图片模型";
+    if (capability === "video") return "视频模型";
+    if (capability === "audio") return "音频模型";
+    return "文本模型";
 }
 
 function keepOrSuggest(current: string[], suggested: string[], allModels: string[]) {

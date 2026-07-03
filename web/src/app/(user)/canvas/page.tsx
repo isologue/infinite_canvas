@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { App, Button } from "antd";
 import { Download, FileUp, Plus } from "lucide-react";
 
+import { AuthRequired } from "@/components/layout/auth-required";
 import { readZip } from "@/lib/zip";
 import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
@@ -15,7 +16,7 @@ import { useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "./utils/canvas-export";
 
-export default function CanvasPage() {
+function CanvasPageContent() {
     const { message } = App.useApp();
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -35,6 +36,7 @@ export default function CanvasPage() {
         router.push(`/canvas/${id}${agentQuery}`);
     };
     const createAndEnter = () => enterProject(createProject(`无限画布 ${projects.length + 1}`));
+
     const importCanvas = async (file?: File) => {
         if (!file) return;
         try {
@@ -75,7 +77,7 @@ export default function CanvasPage() {
                 <header className="flex flex-wrap items-end justify-between gap-4 border-b border-stone-200 pb-6 dark:border-stone-800">
                     <div>
                         <p className="text-xs text-stone-500">画布库</p>
-                        <h1 className="mt-3 text-3xl font-semibold">无限画布</h1>
+                        <h1 className="mt-3 text-3xl font-semibold">我的画布</h1>
                     </div>
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
@@ -124,5 +126,15 @@ export default function CanvasPage() {
             <input ref={inputRef} type="file" accept="application/zip,.zip" className="hidden" onChange={(event) => void importCanvas(event.target.files?.[0])} />
             <CanvasDeleteProjectsDialog />
         </main>
+    );
+}
+
+export default function CanvasPage() {
+    return (
+        <AuthRequired title="请先登录后使用我的画布">
+            <Suspense fallback={<main className="flex h-full items-center justify-center bg-background text-sm text-stone-500">正在加载画布...</main>}>
+                <CanvasPageContent />
+            </Suspense>
+        </AuthRequired>
     );
 }

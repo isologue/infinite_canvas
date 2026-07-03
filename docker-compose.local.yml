@@ -1,9 +1,38 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: infinite-canvas-postgres
+    environment:
+      POSTGRES_DB: infinite_canvas
+      POSTGRES_USER: infinite_canvas
+      POSTGRES_PASSWORD: infinite_canvas
+    volumes:
+      - infinite-canvas-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infinite_canvas -d infinite_canvas"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
   app:
     image: infinite-canvas:local
     build:
-      context: .
+      context: . 
       dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://infinite_canvas:infinite_canvas@postgres:5432/infinite_canvas?sslmode=disable
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      JWT_SECRET: ${JWT_SECRET:-infinite-canvas}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
+      NEXT_PUBLIC_DOC_URL: ${NEXT_PUBLIC_DOC_URL:-https://docs.canvas.best}
     restart: unless-stopped
+
+volumes:
+  infinite-canvas-postgres-data:

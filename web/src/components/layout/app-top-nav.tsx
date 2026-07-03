@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { Menu, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -10,10 +10,12 @@ import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { useUserStore } from "@/stores/use-user-store";
 
 export function AppTopNav() {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
+    const user = useUserStore((state) => state.user);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
@@ -65,6 +67,20 @@ export function AppTopNav() {
                                         </Link>
                                     );
                                 })}
+                                {user?.role === "admin" ? (
+                                    <Link
+                                        href="/admin/users"
+                                        className={cn(
+                                            "relative flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                                            pathname.startsWith("/admin/users")
+                                                ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"
+                                                : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
+                                        )}
+                                    >
+                                        <Users className="size-4" />
+                                        <span className="truncate">用户管理</span>
+                                    </Link>
+                                ) : null}
                             </nav>
                         </div>
 

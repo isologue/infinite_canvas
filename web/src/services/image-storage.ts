@@ -1,8 +1,7 @@
 "use client";
 
-import localforage from "localforage";
-
 import { nanoid } from "nanoid";
+
 import { readImageMeta } from "@/lib/image-utils";
 
 export type UploadedImage = {
@@ -14,13 +13,12 @@ export type UploadedImage = {
     mimeType: string;
 };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "image_files" });
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `image:${nanoid()}`;
-    await store.setItem(storageKey, blob);
+    await uploadFile(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
@@ -31,7 +29,7 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
-    const blob = await store.getItem<Blob>(storageKey);
+    const blob = await downloadFile(storageKey);
     if (!blob) return fallback;
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -39,11 +37,11 @@ export async function resolveImageUrl(storageKey?: string, fallback = "") {
 }
 
 export async function getImageBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    return downloadFile(storageKey);
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
+    await uploadFile(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
@@ -56,23 +54,28 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
+    const list = Array.from(new Set(keys));
     await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
+        list.map(async (key) => {
             const url = objectUrls.get(key);
             if (url) URL.revokeObjectURL(url);
             objectUrls.delete(key);
-            await store.removeItem(key);
         }),
     );
+    await fetch("/api/storage/files", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ keys: list }),
+    }).catch(() => null);
 }
 
 export async function cleanupUnusedImages(usedData: unknown) {
-    const usedKeys = collectImageStorageKeys(usedData);
-    const unused: string[] = [];
-    await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
-    });
-    await deleteStoredImages(unused);
+    const usedKeys = Array.from(collectImageStorageKeys(usedData));
+    await fetch("/api/storage/files/cleanup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ usedKeys, prefixes: ["image:"] }),
+    }).catch(() => null);
 }
 
 export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {
@@ -80,6 +83,25 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.startsWith("image:")) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectImageStorageKeys(child, keys)) : collectImageStorageKeys(item, keys)));
     return keys;
+}
+
+async function uploadFile(storageKey: string, blob: Blob) {
+    const arrayBuffer = await blob.arrayBuffer();
+    await fetch("/api/storage/files", {
+        method: "POST",
+        headers: {
+            "content-type": "application/octet-stream",
+            "x-storage-key": storageKey,
+            "x-storage-mime-type": blob.type || "application/octet-stream",
+        },
+        body: arrayBuffer,
+    });
+}
+
+async function downloadFile(storageKey: string) {
+    const response = await fetch(`/api/storage/files/${encodeURIComponent(storageKey)}`, { cache: "no-store" }).catch(() => null);
+    if (!response || !response.ok) return null;
+    return response.blob();
 }
 
 function blobToDataUrl(blob: Blob) {

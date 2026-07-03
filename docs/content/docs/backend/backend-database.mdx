@@ -1,0 +1,143 @@
+---
+title: 后端数据库
+description: 当前项目的 Postgres 持久化结构
+---
+
+# 后端数据库
+
+当前项目默认使用 Postgres。
+
+## 主要表
+
+### 1. 用户与点数
+
+- `app_users`
+  - 用户账号
+  - 角色：`admin` / `user`
+  - 点数余额：`credit_balance`
+  - 点数额度：`credit_quota`
+- `credit_transactions`
+  - 点数流水
+  - 类型：`consume` / `refund` / `admin_adjust`
+
+### 2. 共享配置
+
+- `shared_configs`
+  - 全局 AI 渠道配置
+  - 全局模型列表与默认模型
+  - 全局模型点数配置 `modelCosts`
+  - 全局 WebDAV 配置
+  - 只有超级管理员可修改
+
+### 3. 用户业务数据
+
+- `user_canvas_data`
+  - 每个用户的画布项目 JSON
+- `user_asset_data`
+  - 每个用户的素材库 JSON
+- `user_generation_logs`
+  - 每个用户的生成记录
+  - 当前 `kind` 支持：`image`、`video`
+- `user_files`
+  - 每个用户关联的图片、视频、音频等二进制文件
+
+### 4. 提示词封面缓存
+
+- `prompt_cover_cache`
+  - 提示词库封面缓存
+  - 用于减少外部图片重复请求
+  - 带过期清理与数量上限清理
+
+## 当前数据隔离方式
+
+当前和用户相关的数据，按 `user_id` 做隔离：
+
+- 登录态：Cookie Session
+- 画布：`user_canvas_data`
+- 素材：`user_asset_data`
+- 生成记录：`user_generation_logs`
+- 文件内容：`user_files`
+- 点数余额/额度/流水：`app_users` + `credit_transactions`
+
+共享数据只有一份：
+
+- AI 配置
+- 模型点数配置
+- WebDAV 配置
+
+这些共享配置保存在 `shared_configs`，仅 `admin` 可编辑。
+
+## 表结构摘要
+
+```sql
+CREATE TABLE IF NOT EXISTS app_users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  avatar_url TEXT NOT NULL DEFAULT '',
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+  credit_balance BIGINT NOT NULL DEFAULT 0,
+  credit_quota BIGINT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS credit_transactions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  amount BIGINT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('consume', 'refund', 'admin_adjust')),
+  reason TEXT NOT NULL DEFAULT '',
+  balance_after BIGINT NOT NULL DEFAULT 0,
+  quota_after BIGINT NOT NULL DEFAULT 0,
+  operator_user_id TEXT REFERENCES app_users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS shared_configs (
+  config_key TEXT PRIMARY KEY,
+  config_json JSONB NOT NULL,
+  webdav_json JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_canvas_data (
+  user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+  data_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_asset_data (
+  user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
+  data_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_generation_logs (
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'video')),
+  data_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, kind)
+);
+
+CREATE TABLE IF NOT EXISTS user_files (
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  storage_key TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  bytes BIGINT NOT NULL DEFAULT 0,
+  content BYTEA NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, storage_key)
+);
+
+CREATE TABLE IF NOT EXISTS prompt_cover_cache (
+  source_url TEXT PRIMARY KEY,
+  mime_type TEXT NOT NULL,
+  bytes BIGINT NOT NULL DEFAULT 0,
+  content BYTEA NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```

@@ -4,6 +4,7 @@ import { Copy } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button, Card, Tag } from "antd";
 
+import { PromptCover } from "@/components/prompts/prompt-cover";
 import { formatPromptDate, type Prompt } from "@/services/api/prompts";
 
 export function PromptCard({
@@ -30,7 +31,7 @@ export function PromptCard({
             styles={{ body: { padding: 0 } }}
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>
-                    <img src={item.coverUrl} alt={item.title} className="aspect-[4/3] w-full object-cover" />
+                    <PromptCover src={item.coverUrl} alt={item.title} className="aspect-[4/3] w-full object-cover" />
                 </button>
             }
         >

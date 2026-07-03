@@ -1,21 +1,15 @@
-# 构建 Next.js 前端产物。
 FROM node:22-alpine AS web-build
 
-RUN npm install -g bun@1.3.13
-
 WORKDIR /app/web
-COPY web/package.json web/bun.lock ./
-RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --cache-dir=/root/.bun/install/cache
+COPY web/package.json web/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm npm ci --legacy-peer-deps --cache=/root/.npm --prefer-offline
 COPY VERSION /app/VERSION
 COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
-# RUN bun run build 
-# 老服务器docker不兼容RUN bun run build 改为下方三行兼容
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN mkdir -p /app/web/.next && chmod -R 755 /app/web
-RUN ./node_modules/.bin/next build
+# 给 .next/cache 挂 BuildKit 缓存，即使本层缓存失效重跑，next 也能复用上次的编译产物加速。
+RUN --mount=type=cache,target=/app/web/.next/cache npm run build
 
-# 构建 Go 后端入口。
 FROM golang:1.25.10-alpine3.23 AS api-build
 
 ENV GOPROXY=https://goproxy.cn,direct
@@ -32,7 +26,6 @@ COPY service ./service
 COPY main.go ./
 RUN go build -o /server .
 
-# 运行镜像：Next.js 对外监听 3000，Go 只在容器内部监听 8080。
 FROM node:22-alpine
 
 WORKDIR /app
@@ -45,7 +38,6 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 ENV PORT=3000
 ENV PROMPT_DATA_DIR=/app/data/prompts
-RUN apk add --no-cache ca-certificates
 RUN mkdir -p /app/data/prompts
 
 EXPOSE 3000

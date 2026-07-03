@@ -1,17 +1,15 @@
 "use client";
 
-import localforage from "localforage";
 import { nanoid } from "nanoid";
 
-export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
+type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
-const store = localforage.createInstance({ name: "infinite-canvas", storeName: "media_files" });
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file"): Promise<UploadedFile> {
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `${prefix}:${nanoid()}`;
-    await store.setItem(storageKey, blob);
+    await uploadFile(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
@@ -22,7 +20,7 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
-    const blob = await store.getItem<Blob>(storageKey);
+    const blob = await downloadFile(storageKey);
     if (!blob) return fallback;
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
@@ -30,34 +28,39 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
 }
 
 export async function getMediaBlob(storageKey: string) {
-    return store.getItem<Blob>(storageKey);
+    return downloadFile(storageKey);
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob) {
-    await store.setItem(storageKey, blob);
+    await uploadFile(storageKey, blob);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function deleteStoredMedia(keys: Iterable<string>) {
+    const list = Array.from(new Set(keys));
     await Promise.all(
-        Array.from(new Set(keys)).map(async (key) => {
+        list.map(async (key) => {
             const url = objectUrls.get(key);
             if (url) URL.revokeObjectURL(url);
             objectUrls.delete(key);
-            await store.removeItem(key);
         }),
     );
+    await fetch("/api/storage/files", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ keys: list }),
+    }).catch(() => null);
 }
 
 export async function cleanupUnusedMedia(usedData: unknown) {
-    const usedKeys = collectMediaStorageKeys(usedData);
-    const unused: string[] = [];
-    await store.iterate((_value, key) => {
-        if (!usedKeys.has(key)) unused.push(key);
-    });
-    await Promise.all(unused.map((key) => store.removeItem(key)));
+    const usedKeys = Array.from(collectMediaStorageKeys(usedData));
+    await fetch("/api/storage/files/cleanup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ usedKeys, prefixes: ["file:", "video-reference:", "audio-reference:"] }),
+    }).catch(() => null);
 }
 
 export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()) {
@@ -65,6 +68,25 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectMediaStorageKeys(child, keys)) : collectMediaStorageKeys(item, keys)));
     return keys;
+}
+
+async function uploadFile(storageKey: string, blob: Blob) {
+    const arrayBuffer = await blob.arrayBuffer();
+    await fetch("/api/storage/files", {
+        method: "POST",
+        headers: {
+            "content-type": "application/octet-stream",
+            "x-storage-key": storageKey,
+            "x-storage-mime-type": blob.type || "application/octet-stream",
+        },
+        body: arrayBuffer,
+    });
+}
+
+async function downloadFile(storageKey: string) {
+    const response = await fetch(`/api/storage/files/${encodeURIComponent(storageKey)}`, { cache: "no-store" }).catch(() => null);
+    if (!response || !response.ok) return null;
+    return response.blob();
 }
 
 function readVideoMeta(url: string) {

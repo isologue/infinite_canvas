@@ -5,6 +5,8 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
+import type { ModelCreditCost } from "@/constant/credits";
+
 export type ApiCallFormat = "openai" | "gemini";
 
 export type ModelChannel = {
@@ -41,6 +43,7 @@ export type AiConfig = {
     videoModels: string[];
     textModels: string[];
     audioModels: string[];
+    modelCosts: ModelCreditCost[];
     quality: string;
     size: string;
     count: string;
@@ -61,6 +64,12 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+const DEFAULT_MODEL_COSTS: ModelCreditCost[] = [
+    { model: "default::gpt-image-2", credits: 1 },
+    { model: "default::grok-imagine-video", credits: 1 },
+    { model: "default::gpt-5.5", credits: 0 },
+    { model: "default::gpt-4o-mini-tts", credits: 1 },
+];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -96,6 +105,7 @@ export const defaultConfig: AiConfig = {
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
     audioModels: ["default::gpt-4o-mini-tts"],
+    modelCosts: DEFAULT_MODEL_COSTS,
     quality: "auto",
     size: "1:1",
     count: "1",
@@ -116,8 +126,12 @@ type ConfigStore = {
     webdav: WebdavSyncConfig;
     isConfigOpen: boolean;
     shouldPromptContinue: boolean;
+    configLoaded: boolean;
+    canManageConfig: boolean;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    updateModelCost: (model: string, credits: number) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
+    replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean }) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
@@ -176,6 +190,8 @@ export const useConfigStore = create<ConfigStore>()(
             webdav: defaultWebdavSyncConfig,
             isConfigOpen: false,
             shouldPromptContinue: false,
+            configLoaded: false,
+            canManageConfig: false,
             updateConfig: (key, value) =>
                 set((state) => ({
                     config: {
@@ -183,6 +199,17 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
+            updateModelCost: (model, credits) =>
+                set((state) => {
+                    const nextModels = Array.from(new Set(state.config.models.map((item) => item.trim()).filter(Boolean)));
+                    const nextCosts = normalizeModelCosts(state.config.modelCosts, nextModels).map((item) => (item.model === model ? { ...item, credits: Math.max(0, Math.floor(Number(credits) || 0)) } : item));
+                    return {
+                        config: {
+                            ...state.config,
+                            modelCosts: nextCosts,
+                        },
+                    };
+                }),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {
@@ -190,51 +217,31 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
+            replaceSharedConfig: ({ config, webdav, canManage }) =>
+                set({
+                    config: normalizeConfig({ ...defaultConfig, ...config }),
+                    webdav: { ...defaultWebdavSyncConfig, ...webdav },
+                    configLoaded: true,
+                    canManageConfig: canManage,
+                }),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
-            openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),
+            openConfigDialog: (shouldPromptContinue = false) => {
+                if (!get().canManageConfig) return;
+                set({ isConfigOpen: true, shouldPromptContinue });
+            },
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
         }),
         {
             name: CONFIG_STORE_KEY,
-            partialize: (state) => ({ config: state.config, webdav: state.webdav }),
-            merge: (persisted, current) => {
-                const persistedState = (persisted || {}) as Partial<ConfigStore>;
-                const persistedConfig = (persistedState.config || {}) as Partial<AiConfig>;
-                const persistedWebdav = (persistedState.webdav || {}) as Partial<WebdavSyncConfig>;
-                const config = { ...defaultConfig, ...persistedConfig };
-                if (!Array.isArray(persistedConfig.channels)) config.channels = [];
-                const channels = normalizeChannels(config);
-                const models = modelOptionsFromChannels(channels);
-                return {
-                    ...current,
-                    webdav: { ...defaultWebdavSyncConfig, ...persistedWebdav },
-                    config: {
-                        ...config,
-                        channelMode: "local",
-                        apiFormat: normalizeApiFormat(config.apiFormat),
-                        channels,
-                        models,
-                        imageModel: normalizeModelOptionValue(config.imageModel || config.model, channels),
-                        videoModel: normalizeModelOptionValue(config.videoModel || "grok-imagine-video", channels),
-                        textModel: normalizeModelOptionValue(config.textModel || config.model, channels),
-                        audioModel: normalizeModelOptionValue(config.audioModel || defaultConfig.audioModel, channels),
-                        audioVoice: config.audioVoice || defaultConfig.audioVoice,
-                        audioFormat: config.audioFormat || defaultConfig.audioFormat,
-                        audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
-                        audioInstructions: config.audioInstructions || "",
-                        videoSeconds: config.videoSeconds || "6",
-                        vquality: config.vquality || "720",
-                        videoGenerateAudio: config.videoGenerateAudio || "true",
-                        videoWatermark: config.videoWatermark || "false",
-                        canvasImageCount: config.canvasImageCount || "3",
-                        imageModels: Array.isArray(persistedConfig.imageModels) ? normalizeModelList(config.imageModels, channels) : filterModelsByCapability(models, "image"),
-                        videoModels: Array.isArray(persistedConfig.videoModels) ? normalizeModelList(config.videoModels, channels) : filterModelsByCapability(models, "video"),
-                        textModels: Array.isArray(persistedConfig.textModels) ? normalizeModelList(config.textModels, channels) : filterModelsByCapability(models, "text"),
-                        audioModels: Array.isArray(persistedConfig.audioModels) ? normalizeModelList(config.audioModels, channels) : filterModelsByCapability(models, "audio"),
-                    },
-                };
-            },
+            partialize: () => ({}),
+            merge: (_, current) => ({
+                ...current,
+                config: defaultConfig,
+                webdav: defaultWebdavSyncConfig,
+                configLoaded: false,
+                canManageConfig: false,
+            }),
         },
     ),
 );
@@ -244,6 +251,18 @@ function normalizeModelList(models: string[], channels: ModelChannel[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)))
         .map((model) => normalizeModelOptionValue(model, channels))
         .filter((model) => !allModelOptions.length || allModelOptions.includes(model) || !isChannelModelValue(model));
+}
+
+export function normalizeModelCosts(modelCosts: ModelCreditCost[] | undefined, models: string[]) {
+    const costMap = new Map<string, number>(
+        (modelCosts || [])
+            .map((item) => [item.model.trim(), Math.max(0, Math.floor(Number(item.credits) || 0))] as [string, number])
+            .filter(([model]) => model),
+    );
+    return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean))).map((model) => ({
+        model,
+        credits: costMap.get(model) ?? 0,
+    }));
 }
 
 export function useEffectiveConfig() {
@@ -300,8 +319,8 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
         const channel = channels.find((item) => item.id === decoded.channelId);
         return channel && channel.models.includes(decoded.model) ? model : "";
     }
-    const channel = channels.find((item) => item.models.includes(decoded?.model || model)) || channels[0];
-    return channel && channel.models.includes(decoded?.model || model) ? encodeChannelModel(channel.id, decoded?.model || model) : model;
+    const channel = channels.find((item) => item.models.includes(model)) || channels[0];
+    return channel && channel.models.includes(model) ? encodeChannelModel(channel.id, model) : model;
 }
 
 export function resolveModelChannel(config: AiConfig, value: string) {
@@ -319,6 +338,32 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+    };
+}
+
+function normalizeConfig(config: AiConfig) {
+    const channels = normalizeChannels(config);
+    const models = modelOptionsFromChannels(channels);
+    const imageModels = keepOrSuggest(config.imageModels, filterModelsByCapability(models, "image"), models);
+    const videoModels = keepOrSuggest(config.videoModels, filterModelsByCapability(models, "video"), models);
+    const textModels = keepOrSuggest(config.textModels, filterModelsByCapability(models, "text"), models);
+    const audioModels = keepOrSuggest(config.audioModels, filterModelsByCapability(models, "audio"), models);
+    return {
+        ...config,
+        channels,
+        models,
+        baseUrl: channels[0]?.baseUrl || config.baseUrl,
+        apiKey: channels[0]?.apiKey || config.apiKey,
+        apiFormat: channels[0]?.apiFormat || config.apiFormat,
+        imageModels,
+        videoModels,
+        textModels,
+        audioModels,
+        modelCosts: normalizeModelCosts(config.modelCosts, models),
+        imageModel: normalizeDefaultModel(config.imageModel, imageModels),
+        videoModel: normalizeDefaultModel(config.videoModel, videoModels),
+        textModel: normalizeDefaultModel(config.textModel, textModels),
+        audioModel: normalizeDefaultModel(config.audioModel, audioModels),
     };
 }
 
@@ -368,6 +413,21 @@ function uniqueRawModels(models: string[]) {
 
 function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
+}
+
+function keepOrSuggest(current: string[], suggested: string[], allModels: string[]) {
+    const available = new Set(allModels);
+    const kept = uniqueModels(current).filter((model) => available.has(model));
+    return kept.length ? kept : suggested;
+}
+
+function normalizeDefaultModel(value: string, options: string[]) {
+    if (options.includes(value)) return value;
+    return options[0] || value;
+}
+
+function uniqueModels(models: string[]) {
+    return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
 }
 
 export function buildApiUrl(baseUrl: string, path: string) {

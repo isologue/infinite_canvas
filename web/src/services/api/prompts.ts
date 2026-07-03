@@ -22,6 +22,13 @@ export type PromptListResponse = {
     total: number;
 };
 
+export function promptCoverSrc(url: string) {
+    const value = (url || "").trim();
+    if (!value) return "";
+    if (!/^https?:\/\//i.test(value)) return value;
+    return `/api/prompts/cover?url=${encodeURIComponent(value)}`;
+}
+
 export async function fetchPrompts({ keyword = "", tag = [], category = ALL_PROMPTS_OPTION, page, pageSize }: { keyword?: string; tag?: string[]; category?: string; page?: number; pageSize?: number } = {}) {
     const params = serializeApiParams(
         compactApiParams({

@@ -4,47 +4,49 @@ import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
 
-import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { migrateLocalDataToServer } from "@/services/local-data-migration";
+import { useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { useUserStore, type LocalUser } from "@/stores/use-user-store";
+
+type SessionResponse = { code: number; data?: { user?: LocalUser | null } };
+type SharedConfigResponse = { code: number; data?: { config?: AiConfig; webdav?: WebdavSyncConfig; canManage?: boolean } };
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
-    const handledConfigParams = useRef(false);
-    const updateConfig = useConfigStore((state) => state.updateConfig);
-    const config = useConfigStore((state) => state.config);
-    const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
+    const booted = useRef(false);
+    const replaceSharedConfig = useConfigStore((state) => state.replaceSharedConfig);
+    const setUser = useUserStore((state) => state.setUser);
+    const setUserHydrated = useUserStore((state) => state.setHydrated);
 
     useEffect(() => {
-        if (handledConfigParams.current) return;
-        const searchParams = new URLSearchParams(window.location.search);
-        const baseUrl = searchParams.get("baseUrl") || searchParams.get("baseurl");
-        const apiKey = searchParams.get("apiKey") || searchParams.get("apikey");
-        if (!baseUrl && !apiKey) return;
-        handledConfigParams.current = true;
-        searchParams.delete("baseUrl");
-        searchParams.delete("baseurl");
-        searchParams.delete("apiKey");
-        searchParams.delete("apikey");
-        window.history.replaceState(null, "", `${window.location.pathname}${searchParams.size ? `?${searchParams}` : ""}${window.location.hash}`);
-        const firstChannel = config.channels[0];
-        updateConfig(
-            "channels",
-            firstChannel
-                ? config.channels.map((channel, index) =>
-                      index === 0
-                          ? {
-                                ...channel,
-                                ...(baseUrl ? { baseUrl } : {}),
-                                ...(apiKey ? { apiKey } : {}),
-                            }
-                          : channel,
-                  )
-                : [createModelChannel({ id: "default", name: "默认渠道", baseUrl: baseUrl || undefined, apiKey: apiKey || "" })],
-        );
-        if (baseUrl) updateConfig("baseUrl", baseUrl);
-        if (apiKey) updateConfig("apiKey", apiKey);
-        openConfigDialog(false);
-        message.success("已导入本地直连配置");
-    }, [config.channels, message, openConfigDialog, updateConfig]);
+        if (booted.current) return;
+        booted.current = true;
+        void (async () => {
+            try {
+                const [sessionRes, configRes] = await Promise.all([fetch("/api/auth/session", { cache: "no-store" }), fetch("/api/shared-config", { cache: "no-store" })]);
+                const session = (await sessionRes.json()) as SessionResponse;
+                const shared = (await configRes.json()) as SharedConfigResponse;
+
+                if (session.data?.user) {
+                    const migration = await migrateLocalDataToServer(session.data.user);
+                    if (migration.migrated) message.success(`已迁移本地数据：${migration.projects} 个画布，${migration.assets} 个素材，${migration.imageLogs + migration.videoLogs} 条记录`);
+                }
+
+                setUser(session.data?.user || null);
+                if (shared.data?.config && shared.data?.webdav) {
+                    replaceSharedConfig({
+                        config: shared.data.config,
+                        webdav: shared.data.webdav,
+                        canManage: Boolean(shared.data.canManage),
+                    });
+                }
+            } catch {
+                message.error("读取共享配置失败");
+            } finally {
+                setUserHydrated(true);
+            }
+        })();
+    }, [message, replaceSharedConfig, setUser, setUserHydrated]);
 
     return <>{children}</>;
 }

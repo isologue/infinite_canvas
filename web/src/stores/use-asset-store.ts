@@ -4,7 +4,6 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
-import { localForageStorage } from "@/lib/localforage-storage";
 import { cleanupUnusedImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
@@ -38,31 +37,44 @@ type AssetStore = {
 };
 
 const ASSET_STORE_KEY = "infinite-canvas:asset_store";
+let assetPersistSuspended = false;
+
+// 切换账号/退出时暂停写入，避免清空内存的空状态被写回服务端覆盖真实素材。
+export function suspendAssetPersist() {
+    assetPersistSuspended = true;
+}
+
+export function resumeAssetPersist() {
+    assetPersistSuspended = false;
+}
 
 const assetStorage: PersistStorage<AssetStore> = {
-    getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
-        if (!value) return null;
-        const parsed = JSON.parse(value) as StorageValue<AssetStore>;
-        parsed.state.assets = await Promise.all(
-            parsed.state.assets.map(async (asset) => {
-                if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
-                if (asset.kind !== "image") return asset;
-                if (asset.data.storageKey)
-                    return {
-                        ...asset,
-                        coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
-                        data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
-                    };
-                if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
-                const image = await uploadImage(asset.data.dataUrl);
-                return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
-            }),
-        );
-        return parsed;
+    getItem: async () => {
+        if (typeof window === "undefined") return null;
+        try {
+            const payload = (await fetch("/api/user/assets", { cache: "no-store" }).then((res) => (res.ok ? res.json() : null))) as { data?: { assets?: Asset[] } } | null;
+            const assets = await Promise.all(((payload?.data?.assets || []) as Asset[]).map(hydrateAsset));
+            return { state: { assets }, version: 0 } as StorageValue<AssetStore>;
+        } catch {
+            return { state: { assets: [] as Asset[] }, version: 0 } as StorageValue<AssetStore>;
+        }
     },
-    setItem: (name, value) => localForageStorage.setItem(name, JSON.stringify(value)),
-    removeItem: (name) => localForageStorage.removeItem(name),
+    setItem: async (_name, value) => {
+        if (assetPersistSuspended) return;
+        const assets = ((value.state as StorageValue<AssetStore>["state"]).assets || []) as Asset[];
+        await fetch("/api/user/assets", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ assets: assets.map(serializeAsset) }),
+        }).catch(() => null);
+    },
+    removeItem: async () => {
+        await fetch("/api/user/assets", {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ assets: [] }),
+        }).catch(() => null);
+    },
 };
 
 export const useAssetStore = create<AssetStore>()(
@@ -105,3 +117,23 @@ export const useAssetStore = create<AssetStore>()(
         },
     ),
 );
+
+async function hydrateAsset(asset: Asset): Promise<Asset> {
+    if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+    if (asset.kind !== "image") return asset;
+    if (asset.data.storageKey)
+        return {
+            ...asset,
+            coverUrl: asset.coverUrl.startsWith("blob:") ? await resolveImageUrl(asset.data.storageKey, asset.coverUrl) : asset.coverUrl,
+            data: { ...asset.data, dataUrl: await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl) },
+        };
+    if (!asset.data.dataUrl.startsWith("data:image/")) return asset;
+    const image = await uploadImage(asset.data.dataUrl);
+    return { ...asset, coverUrl: asset.coverUrl.startsWith("data:image/") ? image.url : asset.coverUrl, data: { ...asset.data, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes, mimeType: image.mimeType } };
+}
+
+function serializeAsset(asset: Asset): Asset {
+    if (asset.kind === "video") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
+    if (asset.kind === "image") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, dataUrl: "" } } : asset;
+    return asset;
+}

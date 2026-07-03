@@ -1,8 +1,10 @@
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { requestCreditCost } from "@/constant/credits";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
+import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
+import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 type RequestOptions = { signal?: AbortSignal };
 
@@ -23,7 +25,10 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     assertAudioConfig(requestConfig, model);
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
+    const selectedModel = config.model || config.audioModel;
+    const amount = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: selectedModel, count: 1 });
 
+    const reservation = amount > 0 ? await reserveUserCredits(amount, `audio generation: ${modelOptionName(selectedModel)}`) : null;
     try {
         const response = await axios.post<Blob>(
             aiApiUrl(requestConfig, "/audio/speech"),
@@ -38,9 +43,11 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             { headers: aiHeaders(requestConfig), responseType: "blob", signal: options?.signal },
         );
         await assertAudioBlob(response.data);
+        if (reservation) await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
-        throw new Error(readAxiosError(error, "音频生成失败"));
+        if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
+        throw new Error(readAxiosError(error, "audio generation failed"));
     }
 }
 
