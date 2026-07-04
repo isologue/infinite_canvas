@@ -138,9 +138,11 @@ async function ensureUserConfigSchema() {
         CREATE TABLE IF NOT EXISTS user_configs (
             user_id TEXT PRIMARY KEY,
             config_json JSONB NOT NULL,
+            webdav_json JSONB NOT NULL DEFAULT '{}'::jsonb,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     `);
+    await db.query(`ALTER TABLE user_configs ADD COLUMN IF NOT EXISTS webdav_json JSONB NOT NULL DEFAULT '{}'::jsonb`);
 }
 
 // 普通用户渠道 baseUrl 的默认/锁定值，可用 env 配置。
@@ -148,58 +150,69 @@ export function lockedChannelBaseUrl() {
     return process.env.LOCKED_CHANNEL_BASE_URL?.trim() || process.env.NEXT_PUBLIC_LOCKED_CHANNEL_BASE_URL?.trim() || "https://moai.wiki";
 }
 
-// 普通用户渠道只锁 baseUrl，apiKey 归用户自己管：
-// - 和全局同名的渠道 → 用全局 baseUrl
-// - 用户自建的渠道（全局没有）→ 一律锁成 env 默认中转地址，用户改不了
-function enforceGlobalChannelSecrets(userConfig: Record<string, unknown>, globalConfig: Record<string, unknown>) {
+// 普通用户所有渠道的 baseUrl 一律强制成锁定的中转地址；apiKey/模型等归用户自己。
+// 只锁 URL，绝不读取或下发全局的 key（普通用户看不到 admin 的任何配置）。
+function enforceLockedBaseUrl(userConfig: Record<string, unknown>) {
     const locked = lockedChannelBaseUrl();
-    const globalChannels = Array.isArray(globalConfig.channels) ? (globalConfig.channels as ChannelLike[]) : [];
-    const globalById = new Map(globalChannels.filter((c) => typeof c.id === "string").map((c) => [c.id as string, c]));
     const userChannels = Array.isArray(userConfig.channels) ? (userConfig.channels as ChannelLike[]) : [];
-    const mergedChannels = userChannels.map((channel) => {
-        const globalMatch = channel.id ? globalById.get(channel.id as string) : undefined;
-        // 只回填 baseUrl（超管控制或锁定中转地址）；apiKey 保留用户自己填的。
-        return {
-            ...channel,
-            baseUrl: globalMatch ? globalMatch.baseUrl : locked,
-        };
-    });
+    const mergedChannels = userChannels.map((channel) => ({ ...channel, baseUrl: locked }));
     const result: Record<string, unknown> = { ...userConfig, channels: mergedChannels };
-    // 顶层 baseUrl 是 channels[0] 的镜像。
-    result.baseUrl = mergedChannels[0]?.baseUrl ?? locked;
+    result.baseUrl = locked;
     return result;
+}
+
+// 普通用户首次进来的空白配置：一个渠道（URL 锁定、key 空、无模型），其余取代码默认。
+// 绝不包含 admin 全局配置的任何内容。
+function emptyUserConfig(): Record<string, unknown> {
+    const locked = lockedChannelBaseUrl();
+    return {
+        ...defaultConfig,
+        channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", models: [] }],
+        model: "",
+        imageModel: "",
+        videoModel: "",
+        textModel: "",
+        audioModel: "",
+        models: [],
+        imageModels: [],
+        videoModels: [],
+        textModels: [],
+        audioModels: [],
+    };
 }
 
 export async function readUserConfig(userId: string): Promise<SharedConfigRecord> {
     await ensureSchema();
     await ensureUserConfigSchema();
     const db = pool();
-    const [globalRecord, userRow] = await Promise.all([
-        readSharedConfig(),
-        db.query<{ config_json: Record<string, unknown> }>("SELECT config_json FROM user_configs WHERE user_id = $1 LIMIT 1", [userId]),
-    ]);
-    // 用户没存过配置：给一份默认（渠道 URL/key 用全局的）。
-    const base = userRow.rows[0]?.config_json || { ...defaultConfig, channels: (globalRecord.config as { channels?: unknown }).channels };
+    // 普通用户完全读自己那份（config + webdav），不碰全局，看不到 admin 的任何配置。
+    const userRow = await db.query<{ config_json: Record<string, unknown>; webdav_json: Record<string, unknown> }>(
+        "SELECT config_json, webdav_json FROM user_configs WHERE user_id = $1 LIMIT 1",
+        [userId],
+    );
+    const row = userRow.rows[0];
+    // 存过就用自己的；没存过给空白默认（绝不用全局配置当模板，避免泄露 admin 的渠道/key）。
+    const base = row?.config_json ? { ...defaultConfig, ...row.config_json } : emptyUserConfig();
     return {
-        config: enforceGlobalChannelSecrets({ ...defaultConfig, ...base }, globalRecord.config),
-        webdav: globalRecord.webdav,
+        config: enforceLockedBaseUrl(base),
+        webdav: { ...defaultWebdavConfig, ...(row?.webdav_json || {}) },
     };
 }
 
-export async function writeUserConfig(userId: string, config: Record<string, unknown>) {
+export async function writeUserConfig(userId: string, config: Record<string, unknown>, webdav?: Record<string, unknown>) {
     await ensureSchema();
     await ensureUserConfigSchema();
     const db = pool();
-    const globalRecord = await readSharedConfig();
-    // 保存前强制回填全局渠道 URL/key，丢弃用户提交里对这两项的任何改动（绕过前端也无效）。
-    const safeConfig = enforceGlobalChannelSecrets(config, globalRecord.config);
+    // 保存前强制把所有渠道 baseUrl 锁成中转地址，丢弃用户对 URL 的任何改动（绕过前端也无效）。其余（key/模型/webdav）全是用户自己的。
+    const safeConfig = enforceLockedBaseUrl(config);
+    const safeWebdav = { ...defaultWebdavConfig, ...(webdav || {}) };
     await db.query(
         `
-        INSERT INTO user_configs (user_id, config_json, updated_at)
-        VALUES ($1, $2::jsonb, NOW())
-        ON CONFLICT (user_id) DO UPDATE SET config_json = EXCLUDED.config_json, updated_at = NOW()
+        INSERT INTO user_configs (user_id, config_json, webdav_json, updated_at)
+        VALUES ($1, $2::jsonb, $3::jsonb, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET config_json = EXCLUDED.config_json, webdav_json = EXCLUDED.webdav_json, updated_at = NOW()
         `,
-        [userId, JSON.stringify(safeConfig)],
+        [userId, JSON.stringify(safeConfig), JSON.stringify(safeWebdav)],
     );
-    return { config: safeConfig, webdav: globalRecord.webdav };
+    return { config: safeConfig, webdav: safeWebdav };
 }

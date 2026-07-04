@@ -42,9 +42,11 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
             const payload = (await response.json()) as AuthResponse;
             if (!response.ok || payload.code !== 0 || !payload.data?.user) throw new Error(payload.msg || (mode === "login" ? "登录失败" : "注册失败"));
 
-            const migration = await migrateLocalDataToServer(payload.data.user);
+            // 注册的新账号绝不迁移本地遗留数据（那是本浏览器上其他账号/游客残留的，迁移会串号）。
+            // 登录保留迁移，兼容老单机用户升级。
+            const migration = mode === "login" ? await migrateLocalDataToServer(payload.data.user) : { migrated: false, projects: 0, assets: 0, imageLogs: 0, videoLogs: 0, files: 0 };
             setUser(payload.data.user);
-            // 换账号后重新拉取该用户的画布/素材/余额，否则会残留上一个账号的数据。
+            // 换账号后重新拉取该用户的画布/素材，否则会残留上一个账号的数据。
             await reloadUserScopedData();
 
             const shared = await fetch("/api/shared-config", { cache: "no-store" }).then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string } }>);

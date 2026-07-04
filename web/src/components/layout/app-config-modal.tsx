@@ -104,6 +104,8 @@ export function AppConfigModal() {
                     config: payload.data.config,
                     webdav: payload.data.webdav,
                     canManage: true,
+                    canManageUrl,
+                    lockedBaseUrl,
                 });
             } else {
                 saveConfig(nextConfig);

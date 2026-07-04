@@ -37,8 +37,8 @@ export async function PUT(request: NextRequest) {
             const saved = await writeSharedConfig({ config: body.config, webdav: body.webdav });
             return Response.json({ code: 0, msg: "配置已保存", data: saved });
         }
-        // 普通用户：只存自己那份，服务端强制回填全局渠道 URL/key，忽略提交里的 URL/key 改动。
-        const saved = await writeUserConfig(user.id, body.config);
+        // 普通用户：存自己那份（config + webdav），服务端只强制锁定渠道 URL，其余全是用户自己的。
+        const saved = await writeUserConfig(user.id, body.config, body.webdav);
         return Response.json({ code: 0, msg: "配置已保存", data: saved });
     } catch (error) {
         return Response.json({ code: 500, msg: error instanceof Error ? error.message : "保存配置失败" }, { status: 500 });
