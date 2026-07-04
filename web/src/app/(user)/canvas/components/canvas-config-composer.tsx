@@ -130,6 +130,13 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                     suppressContentEditableWarning
                     className="thin-scrollbar max-h-60 min-h-28 w-full overflow-y-auto whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
                     style={{ color: theme.node.text }}
+                    onWheel={(event) => {
+                        // 画布容器注册了非 passive 的 wheel 监听并 preventDefault，
+                        // 会取消浏览器对本编辑器的默认滚动，这里改为手动滚动。
+                        const editor = event.currentTarget;
+                        const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
+                        editor.scrollTop += step;
+                    }}
                     onInput={() => {
                         if (!composingRef.current) syncFromEditor();
                     }}
