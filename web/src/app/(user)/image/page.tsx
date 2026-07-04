@@ -9,7 +9,6 @@ import { ImageSettingsPanel } from "@/components/image-settings-panel";
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
@@ -97,7 +96,6 @@ export default function ImagePage() {
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
     const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
-    const generationCredits = requestCreditCost({ channelMode: effectiveConfig.channelMode, modelCosts: effectiveConfig.modelCosts, model, count: generationCount });
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -113,7 +111,7 @@ export default function ImagePage() {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
-                const image = await uploadImage(file);
+                const image = await uploadImage(file, { compress: true });
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
@@ -130,7 +128,7 @@ export default function ImagePage() {
             }
             const nextReferences = await Promise.all(
                 blobs.map(async (blob, index) => {
-                    const image = await uploadImage(blob);
+                    const image = await uploadImage(blob, { compress: true });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
@@ -192,14 +190,11 @@ export default function ImagePage() {
                 }),
             );
             // 上报 AI 调用日志（此时已拿到 storageKey，日志详情能预览图片）。
-            // 点数按成功张数计（失败的那部分会退款，不计入实际消耗）。
             const logModel = modelOptionName(model);
-            const logCredits = requestCreditCost({ channelMode: effectiveConfig.channelMode, modelCosts: effectiveConfig.modelCosts, model, count: successCount || generationCount });
             void reportAiCall({
                 kind: "image",
                 model: logModel,
                 status: successCount ? "success" : "failed",
-                credits: logCredits,
                 reason: `image generation: ${logModel}`,
                 requestParams: { prompt: text, model: logModel, count: generationCount },
                 responseResult: successCount
@@ -431,13 +426,7 @@ export default function ImagePage() {
 
                         <div className="mt-auto pt-6">
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                <span className="inline-flex items-center gap-2">
-                                    <span className="inline-flex items-center gap-1 tabular-nums">
-                                        <CreditSymbol />
-                                        {generationCredits.toLocaleString()}
-                                    </span>
-                                    <span>开始生成</span>
-                                </span>
+                                开始生成
                             </Button>
                         </div>
                     </div>

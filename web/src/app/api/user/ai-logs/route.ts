@@ -28,7 +28,6 @@ export async function POST(request: NextRequest) {
         kind?: string;
         model?: string;
         status?: string;
-        credits?: number;
         reason?: string;
         requestParams?: unknown;
         responseResult?: unknown;
@@ -45,7 +44,6 @@ export async function POST(request: NextRequest) {
             kind,
             model: (body.model || "").toString().slice(0, 200),
             status,
-            credits: Math.floor(Number(body.credits) || 0),
             reason: (body.reason || "").toString().slice(0, 500),
             requestParams: clampJson(body.requestParams),
             responseResult: clampJson(body.responseResult),

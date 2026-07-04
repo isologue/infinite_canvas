@@ -18,7 +18,6 @@ type AuthResponse = {
             displayName: string;
             avatarUrl: string;
             role: "admin" | "user";
-            creditBalance: number;
         };
     };
 };
@@ -48,12 +47,14 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
             // 换账号后重新拉取该用户的画布/素材/余额，否则会残留上一个账号的数据。
             await reloadUserScopedData();
 
-            const shared = await fetch("/api/shared-config", { cache: "no-store" }).then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean } }>);
+            const shared = await fetch("/api/shared-config", { cache: "no-store" }).then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string } }>);
             if (shared.data?.config && shared.data?.webdav) {
                 replaceSharedConfig({
                     config: shared.data.config as never,
                     webdav: shared.data.webdav as never,
                     canManage: Boolean(shared.data.canManage),
+                    canManageUrl: Boolean(shared.data.canManageUrl),
+                    lockedBaseUrl: shared.data.lockedBaseUrl,
                 });
             }
 

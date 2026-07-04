@@ -5,12 +5,11 @@ import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react"
 import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
-import { CreditSymbol } from "@/constant/credits";
 import { fetchChannelModels } from "@/services/api/image";
 import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent } from "@/services/app-sync";
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
-import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelCosts, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { createModelChannel, defaultBaseUrlForApiFormat, filterModelsByCapability, modelOptionLabel, modelOptionsFromChannels, normalizeModelOptionValue, useConfigStore, type AiConfig, type ApiCallFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -61,9 +60,6 @@ function createWebdavDomainProgress(): Record<AppSyncDomainKey, WebdavDomainProg
 export function AppConfigModal() {
     const { message } = App.useApp();
     const [activeTab, setActiveTab] = useState("channels");
-    const [modelCostRenderKey, setModelCostRenderKey] = useState(0);
-    const modelCostDraftRef = useRef<Record<string, number>>({});
-    const modelCostInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
     const [loadingChannelId, setLoadingChannelId] = useState("");
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -75,6 +71,8 @@ export function AppConfigModal() {
     const replaceSharedConfig = useConfigStore((state) => state.replaceSharedConfig);
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
     const canManageConfig = useConfigStore((state) => state.canManageConfig);
+    const canManageUrl = useConfigStore((state) => state.canManageUrl);
+    const lockedBaseUrl = useConfigStore((state) => state.lockedBaseUrl);
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
@@ -86,52 +84,12 @@ export function AppConfigModal() {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
     };
 
-    useEffect(() => {
-        if (!isConfigOpen) {
-            modelCostDraftRef.current = {};
-            modelCostInputRefs.current = {};
-            return;
-        }
-        const nextDraft = Object.fromEntries(normalizeModelCosts(config.modelCosts, config.models).map((item) => [item.model, item.credits]));
-        modelCostDraftRef.current = nextDraft;
-        modelCostInputRefs.current = {};
-        setModelCostRenderKey((value) => value + 1);
-    }, [isConfigOpen]);
-
-    useEffect(() => {
-        if (!isConfigOpen) return;
-        modelCostDraftRef.current = Object.fromEntries(
-            normalizeModelCosts(
-                config.models.map((model) => ({ model, credits: modelCostDraftRef.current[model] ?? (config.modelCosts.find((item) => item.model === model)?.credits || 0) })),
-                config.models,
-            ).map((item) => [item.model, item.credits]),
-        );
-    }, [config.models, isConfigOpen]);
-
-    const readModelCostDraftFromDom = () => {
-        const nextDraft = { ...modelCostDraftRef.current };
-        for (const [model, input] of Object.entries(modelCostInputRefs.current)) {
-            if (!input) continue;
-            if (!model) continue;
-            nextDraft[model] = Math.max(0, Math.floor(Number(input.value || 0) || 0));
-        }
-        modelCostDraftRef.current = nextDraft;
-        return nextDraft;
-    };
-
     const finishConfig = async () => {
         if (!canManageConfig) {
             setConfigDialogOpen(false);
             return;
         }
-        const latestDraft = readModelCostDraftFromDom();
-        const nextConfig = {
-            ...config,
-            modelCosts: normalizeModelCosts(
-                Object.entries(latestDraft).map(([model, credits]) => ({ model, credits })),
-                config.models,
-            ),
-        };
+        const nextConfig = { ...config };
         const ready = nextConfig.channels.some((channel) => channel.baseUrl.trim() && channel.apiKey.trim() && channel.models.length);
         try {
             const response = await fetch("/api/shared-config", {
@@ -175,7 +133,9 @@ export function AppConfigModal() {
     };
 
     const addChannel = () => {
-        updateChannels([...config.channels, createModelChannel({ name: `渠道 ${config.channels.length + 1}` })]);
+        // 普通用户新建渠道时锁定 baseUrl（超管可自由填）。服务端保存时还会再强制回填一次。
+        const overrides = canManageUrl ? {} : { baseUrl: lockedBaseUrl };
+        updateChannels([...config.channels, createModelChannel({ name: `渠道 ${config.channels.length + 1}`, ...overrides })]);
     };
 
     const deleteChannel = (id: string) => {
@@ -226,14 +186,6 @@ export function AppConfigModal() {
         const next = uniqueModels(models.map((model) => normalizeModelOptionValue(model, config.channels)).filter(Boolean));
         updateConfig(group.modelsKey, next);
         if (!next.includes(config[group.modelKey])) updateConfig(group.modelKey, next[0] || "");
-    };
-
-    const onUpdateModelCost = (model: string, value: number | null) => {
-        const nextCredits = Math.max(0, Math.floor(Number(value) || 0));
-        modelCostDraftRef.current = {
-            ...modelCostDraftRef.current,
-            [model]: nextCredits,
-        };
     };
 
     const testWebdav = async () => {
@@ -306,7 +258,7 @@ export function AppConfigModal() {
                 </Button>
             }
         >
-            {!canManageConfig ? <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">当前为共享配置，只有 admin 可以修改。</div> : null}
+            {!canManageUrl ? <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700/60 dark:bg-amber-950/30 dark:text-amber-100">渠道地址（Base URL）由管理员统一配置，不可修改；API Key 和其他参数你可以自行调整。</div> : null}
             <Tabs
                 activeKey={activeTab}
                 onChange={setActiveTab}
@@ -360,8 +312,8 @@ export function AppConfigModal() {
                                                 <Form.Item label="调用格式" className="mb-0">
                                                     <Select value={channel.apiFormat} options={apiFormatOptions} onChange={(value: ApiCallFormat) => updateChannelApiFormat(channel, value)} />
                                                 </Form.Item>
-                                                <Form.Item label="Base URL" className="mb-0">
-                                                    <Input value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
+                                                <Form.Item label="Base URL" className="mb-0" extra={!canManageUrl ? "由管理员统一配置" : undefined}>
+                                                    <Input value={channel.baseUrl} disabled={!canManageUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
                                                 </Form.Item>
                                                 <Form.Item label="API Key" className="mb-0">
                                                     <Input.Password value={channel.apiKey} onChange={(event) => updateChannel(channel.id, { apiKey: event.target.value })} />
@@ -455,64 +407,6 @@ export function AppConfigModal() {
                         ),
                     },
                     {
-                        key: "credits",
-                        label: "点数",
-                        children: (
-                            <Form layout="vertical" requiredMark={false}>
-                                <div className="mb-4 rounded-lg border border-stone-200 p-3 text-sm text-stone-600 dark:border-stone-800 dark:text-stone-300">
-                                    <div className="font-semibold text-stone-900 dark:text-stone-100">模型点数配置</div>
-                                    <div className="mt-1 leading-6">图片模型按“单张点数 × 张数”扣除；文本、视频、音频按单次请求扣除。未配置的模型默认按 0 点处理。</div>
-                                </div>
-                                <div className="space-y-4">
-                                    {modelGroups.map((group) => {
-                                        const models = filterModelsByCapability(config.models, group.capability);
-                                        return (
-                                            <section key={`credits-${group.capability}`} className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">
-                                                <div className="mb-3">
-                                                    <div className="text-sm font-semibold">{creditGroupTitle(group.capability)}</div>
-                                                    <div className="mt-1 text-xs text-stone-500">{group.capability === "image" ? "按单张计费，可叠加生成张数。" : "按单次请求计费。"}</div>
-                                                </div>
-                                                {models.length ? (
-                                                    <div className="space-y-2">
-                                                        {models.map((model) => (
-                                                            <div key={model} className="grid gap-3 rounded-lg border border-stone-200 px-3 py-3 md:grid-cols-[minmax(0,1fr)_150px] dark:border-stone-800">
-                                                                <div className="min-w-0">
-                                                                    <div className="truncate text-sm font-medium">{modelOptionLabel(config, model)}</div>
-                                                                    <div className="mt-1 truncate text-xs text-stone-500">{model}</div>
-                                                                </div>
-                                                                <Form.Item label={<span className="inline-flex items-center gap-1"><CreditSymbol /> 点数</span>} className="mb-0">
-                                                                    <input
-                                                                        key={`${modelCostRenderKey}-${model}`}
-                                                                        ref={(element) => {
-                                                                            modelCostInputRefs.current[model] = element;
-                                                                        }}
-                                                                        name={`model-cost-${model}`}
-                                                                        type="number"
-                                                                        min={0}
-                                                                        step={1}
-                                                                        inputMode="numeric"
-                                                                        data-model-cost-input="true"
-                                                                        data-model={model}
-                                                                        className="h-8 w-full rounded-md border border-stone-300 bg-white px-3 text-sm outline-none transition focus:border-stone-500 dark:border-stone-700 dark:bg-stone-950"
-                                                                        defaultValue={String(modelCostDraftRef.current[model] ?? (config.modelCosts.find((item) => item.model === model)?.credits || 0))}
-                                                                        onChange={(event) => onUpdateModelCost(model, Number((event.currentTarget as HTMLInputElement).value || 0))}
-                                                                        onBlur={(event) => onUpdateModelCost(model, Number((event.currentTarget as HTMLInputElement).value || 0))}
-                                                                    />
-                                                                </Form.Item>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                ) : (
-                                                    <div className="rounded-lg border border-dashed border-stone-200 px-3 py-4 text-sm text-stone-500 dark:border-stone-800">先到“模型”页签配置可选模型，这里才会出现对应的点数项。</div>
-                                                )}
-                                            </section>
-                                        );
-                                    })}
-                                </div>
-                            </Form>
-                        ),
-                    },
-                    {
                         key: "webdav",
                         label: "WebDAV",
                         children: (
@@ -590,19 +484,11 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         videoModels,
         textModels,
         audioModels,
-        modelCosts: normalizeModelCosts(config.modelCosts, models),
         imageModel: normalizeDefaultModel(config.imageModel, imageModels),
         videoModel: normalizeDefaultModel(config.videoModel, videoModels),
         textModel: normalizeDefaultModel(config.textModel, textModels),
         audioModel: normalizeDefaultModel(config.audioModel, audioModels),
     };
-}
-
-function creditGroupTitle(capability: ModelCapability) {
-    if (capability === "image") return "图片模型";
-    if (capability === "video") return "视频模型";
-    if (capability === "audio") return "音频模型";
-    return "文本模型";
 }
 
 function keepOrSuggest(current: string[], suggested: string[], allModels: string[]) {

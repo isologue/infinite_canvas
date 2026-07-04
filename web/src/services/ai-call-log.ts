@@ -7,7 +7,6 @@ export type ReportAiCallInput = {
     kind: AiCallLogKind;
     model: string;
     status: AiCallLogStatus;
-    credits?: number;
     reason?: string;
     requestParams?: unknown;
     responseResult?: unknown;

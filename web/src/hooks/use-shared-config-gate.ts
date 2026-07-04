@@ -14,6 +14,6 @@ export function useSharedConfigGate() {
             openConfigDialog(shouldPromptContinue);
             return;
         }
-        message.warning("当前为共享配置模式，只有 admin 可以进入配置页面，请联系管理员修改全局配置。");
+        message.warning("请先登录后再进行配置。");
     };
 }

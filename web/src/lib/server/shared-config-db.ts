@@ -39,12 +39,6 @@ const defaultConfig = {
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
     audioModels: ["default::gpt-4o-mini-tts"],
-    modelCosts: [
-        { model: "default::gpt-image-2", credits: 1 },
-        { model: "default::grok-imagine-video", credits: 1 },
-        { model: "default::gpt-5.5", credits: 0 },
-        { model: "default::gpt-4o-mini-tts", credits: 1 },
-    ],
     quality: "auto",
     size: "1:1",
     count: "1",
@@ -130,4 +124,82 @@ export async function writeSharedConfig(record: SharedConfigRecord) {
         [JSON.stringify(record.config), JSON.stringify(record.webdav)],
     );
     return readSharedConfig();
+}
+
+// ---- 每用户配置（方案 B）----
+// 全局配置是渠道 URL/key 的唯一权威来源；普通用户各存一份自己的配置，
+// 但渠道的 baseUrl/apiKey 始终被服务端用全局值回填，普通用户改不了（只能走超管配的中转）。
+
+type ChannelLike = { id?: unknown; baseUrl?: unknown; apiKey?: unknown; [key: string]: unknown };
+
+async function ensureUserConfigSchema() {
+    const db = pool();
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS user_configs (
+            user_id TEXT PRIMARY KEY,
+            config_json JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    `);
+}
+
+// 普通用户渠道 baseUrl 的默认/锁定值，可用 env 配置。
+export function lockedChannelBaseUrl() {
+    return process.env.LOCKED_CHANNEL_BASE_URL?.trim() || process.env.NEXT_PUBLIC_LOCKED_CHANNEL_BASE_URL?.trim() || "https://moai.wiki";
+}
+
+// 普通用户渠道只锁 baseUrl，apiKey 归用户自己管：
+// - 和全局同名的渠道 → 用全局 baseUrl
+// - 用户自建的渠道（全局没有）→ 一律锁成 env 默认中转地址，用户改不了
+function enforceGlobalChannelSecrets(userConfig: Record<string, unknown>, globalConfig: Record<string, unknown>) {
+    const locked = lockedChannelBaseUrl();
+    const globalChannels = Array.isArray(globalConfig.channels) ? (globalConfig.channels as ChannelLike[]) : [];
+    const globalById = new Map(globalChannels.filter((c) => typeof c.id === "string").map((c) => [c.id as string, c]));
+    const userChannels = Array.isArray(userConfig.channels) ? (userConfig.channels as ChannelLike[]) : [];
+    const mergedChannels = userChannels.map((channel) => {
+        const globalMatch = channel.id ? globalById.get(channel.id as string) : undefined;
+        // 只回填 baseUrl（超管控制或锁定中转地址）；apiKey 保留用户自己填的。
+        return {
+            ...channel,
+            baseUrl: globalMatch ? globalMatch.baseUrl : locked,
+        };
+    });
+    const result: Record<string, unknown> = { ...userConfig, channels: mergedChannels };
+    // 顶层 baseUrl 是 channels[0] 的镜像。
+    result.baseUrl = mergedChannels[0]?.baseUrl ?? locked;
+    return result;
+}
+
+export async function readUserConfig(userId: string): Promise<SharedConfigRecord> {
+    await ensureSchema();
+    await ensureUserConfigSchema();
+    const db = pool();
+    const [globalRecord, userRow] = await Promise.all([
+        readSharedConfig(),
+        db.query<{ config_json: Record<string, unknown> }>("SELECT config_json FROM user_configs WHERE user_id = $1 LIMIT 1", [userId]),
+    ]);
+    // 用户没存过配置：给一份默认（渠道 URL/key 用全局的）。
+    const base = userRow.rows[0]?.config_json || { ...defaultConfig, channels: (globalRecord.config as { channels?: unknown }).channels };
+    return {
+        config: enforceGlobalChannelSecrets({ ...defaultConfig, ...base }, globalRecord.config),
+        webdav: globalRecord.webdav,
+    };
+}
+
+export async function writeUserConfig(userId: string, config: Record<string, unknown>) {
+    await ensureSchema();
+    await ensureUserConfigSchema();
+    const db = pool();
+    const globalRecord = await readSharedConfig();
+    // 保存前强制回填全局渠道 URL/key，丢弃用户提交里对这两项的任何改动（绕过前端也无效）。
+    const safeConfig = enforceGlobalChannelSecrets(config, globalRecord.config);
+    await db.query(
+        `
+        INSERT INTO user_configs (user_id, config_json, updated_at)
+        VALUES ($1, $2::jsonb, NOW())
+        ON CONFLICT (user_id) DO UPDATE SET config_json = EXCLUDED.config_json, updated_at = NOW()
+        `,
+        [userId, JSON.stringify(safeConfig)],
+    );
+    return { config: safeConfig, webdav: globalRecord.webdav };
 }

@@ -8,7 +8,6 @@ import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { reportAiCall } from "@/services/ai-call-log";
-import { requestCreditCost } from "@/constant/credits";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
@@ -115,12 +114,10 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 // 画布页图片生成上报 AI 调用日志（在拿到 storageKey 之后调用）。失败静默。
 function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number }) {
     const model = modelOptionName(config.model);
-    const credits = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: config.model, count: 1 });
     void reportAiCall({
         kind: "image",
         model,
         status: "success",
-        credits,
         reason: `image generation: ${model}`,
         requestParams: { prompt, model },
         responseResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
@@ -1298,7 +1295,7 @@ function InfiniteCanvasPage() {
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
-        const image = await uploadImage(file);
+        const image = await uploadImage(file, { compress: true });
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newNode: CanvasNodeData = {
@@ -1892,7 +1889,7 @@ function InfiniteCanvasPage() {
                     event.target.value = "";
                     return;
                 }
-                const image = await uploadImage(file);
+                const image = await uploadImage(file, { compress: true });
                 const size = fitNodeSize(image.width, image.height);
                 setNodes((prev) =>
                     prev.map((node) =>

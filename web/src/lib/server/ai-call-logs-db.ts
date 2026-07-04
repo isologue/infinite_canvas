@@ -12,9 +12,7 @@ export type AiCallLog = {
     kind: AiCallKind;
     model: string;
     status: AiCallStatus;
-    credits: number;
     reason: string;
-    // 以下三个字段为服务端代理（层次 B）预留：当前浏览器直连 provider，服务端拿不到，暂为 null。
     requestParams: unknown | null;
     responseResult: unknown | null;
     errorMessage: string | null;
@@ -34,19 +32,16 @@ export async function ensureAiCallLogsTable() {
             kind TEXT NOT NULL CHECK (kind IN ('image', 'video', 'audio', 'text', 'other')),
             model TEXT NOT NULL DEFAULT '',
             status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'failed')),
-            credits BIGINT NOT NULL DEFAULT 0,
             reason TEXT NOT NULL DEFAULT '',
             request_params JSONB,
             response_result JSONB,
             error_message TEXT,
-            reservation_id TEXT,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     `);
     await db.query(`CREATE INDEX IF NOT EXISTS ai_call_logs_created_idx ON ai_call_logs(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS ai_call_logs_user_idx ON ai_call_logs(user_id)`);
-    await db.query(`CREATE INDEX IF NOT EXISTS ai_call_logs_reservation_idx ON ai_call_logs(reservation_id)`);
     initialized = true;
 }
 
@@ -57,7 +52,6 @@ export async function recordAiCall(input: {
     kind: AiCallKind;
     model: string;
     status: AiCallStatus;
-    credits: number;
     reason: string;
     requestParams?: unknown;
     responseResult?: unknown;
@@ -68,8 +62,8 @@ export async function recordAiCall(input: {
     const id = randomUUID();
     await db.query(
         `
-        INSERT INTO ai_call_logs (id, user_id, kind, model, status, credits, reason, request_params, response_result, error_message)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10)
+        INSERT INTO ai_call_logs (id, user_id, kind, model, status, reason, request_params, response_result, error_message)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
         `,
         [
             id,
@@ -77,7 +71,6 @@ export async function recordAiCall(input: {
             input.kind,
             input.model,
             input.status,
-            Math.floor(input.credits || 0),
             input.reason,
             input.requestParams === undefined ? null : JSON.stringify(input.requestParams),
             input.responseResult === undefined ? null : JSON.stringify(input.responseResult),
@@ -94,7 +87,6 @@ type AiCallLogRow = {
     kind: AiCallKind;
     model: string;
     status: AiCallStatus;
-    credits: string | number;
     reason: string;
     request_params: unknown | null;
     response_result: unknown | null;
@@ -111,7 +103,6 @@ function mapRow(row: AiCallLogRow): AiCallLog {
         kind: row.kind,
         model: row.model,
         status: row.status,
-        credits: Number(row.credits || 0),
         reason: row.reason,
         requestParams: row.request_params,
         responseResult: row.response_result,
@@ -161,7 +152,7 @@ export async function listAiCallLogs(filter: ListAiCallLogsFilter): Promise<{ lo
     const offsetParam = params.length + 2;
     const result = await db.query<AiCallLogRow>(
         `
-        SELECT l.id, l.user_id, u.username, l.kind, l.model, l.status, l.credits, l.reason,
+        SELECT l.id, l.user_id, u.username, l.kind, l.model, l.status, l.reason,
                l.request_params, l.response_result, l.error_message, l.created_at, l.updated_at
         FROM ai_call_logs l
         JOIN app_users u ON u.id = l.user_id

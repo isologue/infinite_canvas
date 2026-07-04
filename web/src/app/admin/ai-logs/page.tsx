@@ -17,7 +17,6 @@ type AiCallLog = {
     kind: AiCallKind;
     model: string;
     status: AiCallStatus;
-    credits: number;
     reason: string;
     requestParams: unknown | null;
     responseResult: unknown | null;
@@ -96,7 +95,6 @@ export default function AdminAiLogsPage() {
             width: 100,
             render: (value: AiCallStatus) => <Tag color={STATUS_META[value].color}>{STATUS_META[value].label}</Tag>,
         },
-        { title: "点数", dataIndex: "credits", key: "credits", width: 80 },
         {
             title: "操作",
             key: "actions",
@@ -187,7 +185,6 @@ export default function AdminAiLogsPage() {
                             <DetailRow label="类型" value={KIND_META[detail.kind].label} />
                             <DetailRow label="模型" value={detail.model || "—"} />
                             <DetailRow label="状态" value={STATUS_META[detail.status].label} />
-                            <DetailRow label="点数" value={String(detail.credits)} />
                             <DetailRow label="原因" value={detail.reason || "—"} />
                             {detail.errorMessage ? <DetailRow label="错误信息" value={detail.errorMessage} /> : null}
                             <MediaPreview userId={detail.userId} kind={detail.kind} result={detail.responseResult} />

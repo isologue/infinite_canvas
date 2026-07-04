@@ -50,6 +50,48 @@ export function readImageMeta(dataUrl: string) {
     });
 }
 
+// 超过阈值的图片做等比压缩：限制最大边长并重编码，控制存储和上传体积。
+// 只对用户上传的图片调用（生成结果不压，避免损失质量）。
+export async function compressImageIfLarge(file: Blob, options?: { thresholdBytes?: number; maxEdge?: number; quality?: number }): Promise<Blob> {
+    const threshold = options?.thresholdBytes ?? 10 * 1024 * 1024;
+    if (file.size <= threshold) return file;
+    if (typeof document === "undefined") return file;
+
+    const maxEdge = options?.maxEdge ?? 2048;
+    const quality = options?.quality ?? 0.85;
+    const objectUrl = URL.createObjectURL(file);
+    try {
+        const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("读取图片失败"));
+            img.src = objectUrl;
+        });
+        const width = image.naturalWidth || 0;
+        const height = image.naturalHeight || 0;
+        if (!width || !height) return file;
+
+        const scale = Math.min(1, maxEdge / Math.max(width, height));
+        const targetWidth = Math.max(1, Math.round(width * scale));
+        const targetHeight = Math.max(1, Math.round(height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return file;
+        ctx.drawImage(image, 0, 0, targetWidth, targetHeight);
+
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((result) => resolve(result), "image/jpeg", quality));
+        // 压缩后反而更大（少见）或失败，就用原图。
+        if (!blob || blob.size >= file.size) return file;
+        return blob;
+    } catch {
+        return file;
+    } finally {
+        URL.revokeObjectURL(objectUrl);
+    }
+}
+
 export function dataUrlToFile(image: ReferenceImage) {
     const [header, content] = image.dataUrl.split(",", 2);
     const mimeType = header.match(/data:(.*?);base64/)?.[1] || image.type || "image/png";

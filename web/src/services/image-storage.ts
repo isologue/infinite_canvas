@@ -2,7 +2,7 @@
 
 import { nanoid } from "nanoid";
 
-import { readImageMeta } from "@/lib/image-utils";
+import { compressImageIfLarge, readImageMeta } from "@/lib/image-utils";
 
 export type UploadedImage = {
     url: string;
@@ -15,8 +15,10 @@ export type UploadedImage = {
 
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob): Promise<UploadedImage> {
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+export async function uploadImage(input: string | Blob, options?: { compress?: boolean }): Promise<UploadedImage> {
+    const raw = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    // 仅对用户上传的大图压缩（超过 10MB 等比缩放重编码）；生成结果不传 compress，保持原图。
+    const blob = options?.compress ? await compressImageIfLarge(raw) : raw;
     const storageKey = `image:${nanoid()}`;
     await uploadFile(storageKey, blob);
     const url = URL.createObjectURL(blob);

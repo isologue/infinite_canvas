@@ -4,9 +4,7 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig,
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { requestCreditCost } from "@/constant/credits";
 import { imageToDataUrl } from "@/services/image-storage";
-import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
 import { reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
@@ -259,24 +257,20 @@ function buildImageRequestParams(config: AiConfig) {
     };
 }
 
-async function withCreditCharge<T>(config: AiConfig, kind: string, run: () => Promise<T>) {
-    const amount = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: config.model, count: config.count });
+// 包裹生成调用并上报 AI 调用日志。图片类日志由页面层在拿到 storageKey 后上报（这里只有 base64），此处只报文本等非图片类型。
+async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => Promise<T>) {
     const model = modelOptionName(config.model);
     const logKind = aiLogKindFromReason(kind);
     const requestParams = buildImageRequestParams(config);
-    const reservation = amount > 0 ? await reserveUserCredits(amount, `${kind}: ${model}`) : null;
     try {
         const result = await run();
-        if (reservation) await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
-        // 图片类日志由页面层在拿到 storageKey 后上报（这里拿不到，只有 base64），此处只报文本等非图片类型。
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "success", credits: amount, reason: kind, requestParams });
+            void reportAiCall({ kind: logKind, model, status: "success", reason: kind, requestParams });
         }
         return result;
     } catch (error) {
-        if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "failed", credits: amount, reason: kind, requestParams, errorMessage: error instanceof Error ? error.message : String(error) });
+            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, requestParams, errorMessage: error instanceof Error ? error.message : String(error) });
         }
         throw error;
     }
@@ -653,7 +647,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    return withCreditCharge({ ...config, model: config.model || config.imageModel, count: String(n) }, "image generation", async () => {
+    return withGenerationLog({ ...config, model: config.model || config.imageModel, count: String(n) }, "image generation", async () => {
         if (requestConfig.apiFormat === "gemini") {
             try {
                 return await requestGeminiImages(requestConfig, prompt, [], n, options);
@@ -692,7 +686,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
-    return withCreditCharge({ ...config, model: config.model || config.imageModel, count: String(n) }, "image edit", async () => {
+    return withGenerationLog({ ...config, model: config.model || config.imageModel, count: String(n) }, "image edit", async () => {
         if (requestConfig.apiFormat === "gemini") {
             if (mask) throw new Error("Gemini does not support mask editing yet");
             try {
@@ -731,7 +725,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    return withCreditCharge({ ...config, model: config.model || config.textModel, count: "1" }, "text generation", async () => {
+    return withGenerationLog({ ...config, model: config.model || config.textModel, count: "1" }, "text generation", async () => {
         try {
             if (requestConfig.apiFormat === "gemini") {
                 const answer = (await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages), onDelta, options)).content || "No response";
@@ -752,7 +746,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
 
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
-    return withCreditCharge({ ...config, model: config.model || config.textModel, count: "1" }, "text tool call", async () => {
+    return withGenerationLog({ ...config, model: config.model || config.textModel, count: "1" }, "text tool call", async () => {
         try {
             if (requestConfig.apiFormat === "gemini") {
                 return await requestGeminiStreamingResponse(requestConfig, toGeminiBody(requestConfig, messages, toGeminiToolOptions(tools, toolChoice)), onDelta, options);

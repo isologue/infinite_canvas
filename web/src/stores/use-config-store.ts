@@ -5,8 +5,6 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
-import type { ModelCreditCost } from "@/constant/credits";
-
 export type ApiCallFormat = "openai" | "gemini";
 
 export type ModelChannel = {
@@ -43,7 +41,6 @@ export type AiConfig = {
     videoModels: string[];
     textModels: string[];
     audioModels: string[];
-    modelCosts: ModelCreditCost[];
     quality: string;
     size: string;
     count: string;
@@ -64,12 +61,6 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
-const DEFAULT_MODEL_COSTS: ModelCreditCost[] = [
-    { model: "default::gpt-image-2", credits: 1 },
-    { model: "default::grok-imagine-video", credits: 1 },
-    { model: "default::gpt-5.5", credits: 0 },
-    { model: "default::gpt-4o-mini-tts", credits: 1 },
-];
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -105,7 +96,6 @@ export const defaultConfig: AiConfig = {
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
     audioModels: ["default::gpt-4o-mini-tts"],
-    modelCosts: DEFAULT_MODEL_COSTS,
     quality: "auto",
     size: "1:1",
     count: "1",
@@ -128,10 +118,11 @@ type ConfigStore = {
     shouldPromptContinue: boolean;
     configLoaded: boolean;
     canManageConfig: boolean;
+    canManageUrl: boolean;
+    lockedBaseUrl: string;
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-    updateModelCost: (model: string, credits: number) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
-    replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean }) => void;
+    replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean; canManageUrl?: boolean; lockedBaseUrl?: string }) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
@@ -192,6 +183,8 @@ export const useConfigStore = create<ConfigStore>()(
             shouldPromptContinue: false,
             configLoaded: false,
             canManageConfig: false,
+            canManageUrl: false,
+            lockedBaseUrl: "",
             updateConfig: (key, value) =>
                 set((state) => ({
                     config: {
@@ -199,17 +192,6 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
-            updateModelCost: (model, credits) =>
-                set((state) => {
-                    const nextModels = Array.from(new Set(state.config.models.map((item) => item.trim()).filter(Boolean)));
-                    const nextCosts = normalizeModelCosts(state.config.modelCosts, nextModels).map((item) => (item.model === model ? { ...item, credits: Math.max(0, Math.floor(Number(credits) || 0)) } : item));
-                    return {
-                        config: {
-                            ...state.config,
-                            modelCosts: nextCosts,
-                        },
-                    };
-                }),
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {
@@ -217,12 +199,14 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
-            replaceSharedConfig: ({ config, webdav, canManage }) =>
+            replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl }) =>
                 set({
                     config: normalizeConfig({ ...defaultConfig, ...config }),
                     webdav: { ...defaultWebdavSyncConfig, ...webdav },
                     configLoaded: true,
                     canManageConfig: canManage,
+                    canManageUrl: Boolean(canManageUrl),
+                    lockedBaseUrl: lockedBaseUrl || "",
                 }),
             isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false) => {
@@ -241,6 +225,8 @@ export const useConfigStore = create<ConfigStore>()(
                 webdav: defaultWebdavSyncConfig,
                 configLoaded: false,
                 canManageConfig: false,
+                canManageUrl: false,
+                lockedBaseUrl: "",
             }),
         },
     ),
@@ -251,18 +237,6 @@ function normalizeModelList(models: string[], channels: ModelChannel[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)))
         .map((model) => normalizeModelOptionValue(model, channels))
         .filter((model) => !allModelOptions.length || allModelOptions.includes(model) || !isChannelModelValue(model));
-}
-
-export function normalizeModelCosts(modelCosts: ModelCreditCost[] | undefined, models: string[]) {
-    const costMap = new Map<string, number>(
-        (modelCosts || [])
-            .map((item) => [item.model.trim(), Math.max(0, Math.floor(Number(item.credits) || 0))] as [string, number])
-            .filter(([model]) => model),
-    );
-    return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean))).map((model) => ({
-        model,
-        credits: costMap.get(model) ?? 0,
-    }));
 }
 
 export function useEffectiveConfig() {
@@ -359,7 +333,6 @@ function normalizeConfig(config: AiConfig) {
         videoModels,
         textModels,
         audioModels,
-        modelCosts: normalizeModelCosts(config.modelCosts, models),
         imageModel: normalizeDefaultModel(config.imageModel, imageModels),
         videoModel: normalizeDefaultModel(config.videoModel, videoModels),
         textModel: normalizeDefaultModel(config.textModel, textModels),

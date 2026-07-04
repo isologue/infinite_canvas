@@ -10,7 +10,6 @@ import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/c
 import { ModelPicker } from "@/components/model-picker";
 import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { VideoSettingsPanel, normalizeVideoResolutionValue, normalizeVideoSizeValue, videoSizeLabel } from "@/components/video-settings-panel";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceReferenceLabel, seedanceVideoReferenceError, seedanceVideoReferenceHint, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
@@ -100,7 +99,6 @@ export default function VideoPage() {
 
     const model = effectiveConfig.videoModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
-    const generationCredits = requestCreditCost({ channelMode: effectiveConfig.channelMode, modelCosts: effectiveConfig.modelCosts, model, count: 1 });
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -124,7 +122,7 @@ export default function VideoPage() {
         if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
-                const image = await uploadImage(file);
+                const image = await uploadImage(file, { compress: true });
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
@@ -159,7 +157,7 @@ export default function VideoPage() {
             }
             const nextReferences = await Promise.all(
                 blobs.slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length).map(async (blob, index) => {
-                    const image = await uploadImage(blob);
+                    const image = await uploadImage(blob, { compress: true });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
@@ -483,13 +481,7 @@ export default function VideoPage() {
 
                         <div className="mt-auto pt-6">
                             <Button type="primary" size="large" block icon={<Sparkles className="size-4" />} loading={running} disabled={!canGenerate || running} onClick={() => void generate()}>
-                                <span className="inline-flex items-center gap-2">
-                                    <span className="inline-flex items-center gap-1 tabular-nums">
-                                        <CreditSymbol />
-                                        {generationCredits.toLocaleString()}
-                                    </span>
-                                    <span>开始生成</span>
-                                </span>
+                                开始生成
                             </Button>
                         </div>
                     </div>

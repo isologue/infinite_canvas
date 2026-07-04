@@ -1,9 +1,7 @@
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
-import { requestCreditCost } from "@/constant/credits";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
 import { reportAiCall } from "@/services/ai-call-log";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
@@ -27,9 +25,6 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     const format = normalizeAudioFormatValue(config.audioFormat);
     const instructions = config.audioInstructions.trim();
     const selectedModel = config.model || config.audioModel;
-    const amount = requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model: selectedModel, count: 1 });
-
-    const reservation = amount > 0 ? await reserveUserCredits(amount, `audio generation: ${modelOptionName(selectedModel)}`) : null;
     try {
         const response = await axios.post<Blob>(
             aiApiUrl(requestConfig, "/audio/speech"),
@@ -44,25 +39,21 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             { headers: aiHeaders(requestConfig), responseType: "blob", signal: options?.signal },
         );
         await assertAudioBlob(response.data);
-        if (reservation) await settleUserCreditReservation(reservation.reservationId, "success").catch(() => null);
         void reportAiCall({
             kind: "audio",
             model: modelOptionName(selectedModel),
             status: "success",
-            credits: amount,
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: Number(normalizeAudioSpeedValue(config.audioSpeed)), promptLength: prompt.length },
             responseResult: { bytes: response.data.size, mimeType: response.data.type },
         });
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
     } catch (error) {
-        if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
         const messageText = readAxiosError(error, "audio generation failed");
         void reportAiCall({
             kind: "audio",
             model: modelOptionName(selectedModel),
             status: "failed",
-            credits: amount,
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, promptLength: prompt.length },
             errorMessage: messageText,

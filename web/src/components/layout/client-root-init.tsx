@@ -9,7 +9,7 @@ import { useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/u
 import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 type SessionResponse = { code: number; data?: { user?: LocalUser | null } };
-type SharedConfigResponse = { code: number; data?: { config?: AiConfig; webdav?: WebdavSyncConfig; canManage?: boolean } };
+type SharedConfigResponse = { code: number; data?: { config?: AiConfig; webdav?: WebdavSyncConfig; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string } };
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -38,6 +38,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                         config: shared.data.config,
                         webdav: shared.data.webdav,
                         canManage: Boolean(shared.data.canManage),
+                        canManageUrl: Boolean(shared.data.canManageUrl),
+                        lockedBaseUrl: shared.data.lockedBaseUrl,
                     });
                 }
             } catch {

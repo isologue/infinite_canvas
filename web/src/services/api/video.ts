@@ -4,8 +4,6 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { requestCreditCost } from "@/constant/credits";
-import { reserveUserCredits, settleUserCreditReservation } from "@/services/user-credits";
 import { reportAiCall } from "@/services/ai-call-log";
 import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
@@ -23,7 +21,7 @@ type ApiEnvelope<T> = T | { code?: number; data?: T | null; msg?: string };
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string; creditAmount?: number; reservationId?: string; creditSettled?: boolean; logModel?: string; logParams?: unknown; logReported?: boolean };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string; logModel?: string; logParams?: unknown; logReported?: boolean };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
 
 function aiApiUrl(config: AiConfig, path: string) {
@@ -37,23 +35,14 @@ function aiHeaders(config: AiConfig, contentType?: string) {
     };
 }
 
-function videoCreditAmount(config: AiConfig, model: string) {
-    return requestCreditCost({ channelMode: config.channelMode, modelCosts: config.modelCosts, model, count: 1 });
-}
-
+// 视频任务结束时上报一条 AI 调用日志（每个任务只报一次）。函数名沿用以兼容调用方。
 export async function settleVideoTaskCredits(task: VideoGenerationTask, status: "success" | "failed", extra?: { errorMessage?: string; result?: unknown }) {
-    if (task.reservationId && !task.creditSettled) {
-        await settleUserCreditReservation(task.reservationId, status).catch(() => null);
-        task.creditSettled = true;
-    }
-    // 上报一条 AI 调用日志（无论收费与否，每个任务只报一次）。
     if (!task.logReported) {
         task.logReported = true;
         void reportAiCall({
             kind: "video",
             model: task.logModel || task.model,
             status,
-            credits: task.creditAmount || 0,
             reason: `video generation: ${task.logModel || task.model}`,
             requestParams: task.logParams,
             responseResult: status === "success" ? extra?.result : undefined,
@@ -101,11 +90,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     assertVideoConfig(requestConfig, requestConfig.model);
-    const creditAmount = videoCreditAmount({ ...config, model: selectedModel }, selectedModel);
-    const reservation = creditAmount > 0 ? await reserveUserCredits(creditAmount, `video generation: ${modelOptionName(selectedModel)}`, 120) : null;
-    const reservationExtras = {
-        creditAmount,
-        reservationId: reservation?.reservationId,
+    const logExtras = {
         logModel: modelOptionName(selectedModel),
         logParams: {
             model: modelOptionName(selectedModel),
@@ -115,18 +100,13 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             audioReferences: audioReferences.length,
         },
     };
-    try {
-        if (isSeedanceVideoConfig(requestConfig)) {
-            return { ...(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...reservationExtras };
-        }
-        if (videoReferences.length || audioReferences.length) {
-            throw new Error("current video API does not support reference video or audio; switch to a Seedance 2.0 / Volcano Agent Plan model, or remove reference media");
-        }
-        return { ...(await createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options)), ...reservationExtras };
-    } catch (error) {
-        if (reservation) await settleUserCreditReservation(reservation.reservationId, "failed").catch(() => null);
-        throw error;
+    if (isSeedanceVideoConfig(requestConfig)) {
+        return { ...(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...logExtras };
     }
+    if (videoReferences.length || audioReferences.length) {
+        throw new Error("current video API does not support reference video or audio; switch to a Seedance 2.0 / Volcano Agent Plan model, or remove reference media");
+    }
+    return { ...(await createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options)), ...logExtras };
 }
 
 export async function pollVideoGenerationTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
