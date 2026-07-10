@@ -119,11 +119,13 @@ type ConfigStore = {
     configLoaded: boolean;
     canManageConfig: boolean;
     canManageUrl: boolean;
-    lockedBaseUrl: string;
-    updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+   lockedBaseUrl: string;
+     lockedBaseUrls: string[];
+   updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
-    replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean; canManageUrl?: boolean; lockedBaseUrl?: string }) => void;
-    isAiConfigReady: (config: AiConfig, model: string) => boolean;
+   replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean; canManageUrl?: boolean; lockedBaseUrl?: string }) => void;
+     replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean; canManageUrl?: boolean; lockedBaseUrl?: string; lockedBaseUrls?: string[] }) => void;
+   isAiConfigReady: (config: AiConfig, model: string) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
@@ -184,8 +186,9 @@ export const useConfigStore = create<ConfigStore>()(
             configLoaded: false,
             canManageConfig: false,
             canManageUrl: false,
-            lockedBaseUrl: "",
-            updateConfig: (key, value) =>
+           lockedBaseUrl: "",
+             lockedBaseUrls: [],
+           updateConfig: (key, value) =>
                 set((state) => ({
                     config: {
                         ...state.config,
@@ -199,16 +202,18 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
-            replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl }) =>
-                set({
-                    config: normalizeConfig({ ...defaultConfig, ...config }),
-                    webdav: { ...defaultWebdavSyncConfig, ...webdav },
-                    configLoaded: true,
-                    canManageConfig: canManage,
-                    canManageUrl: Boolean(canManageUrl),
-                    lockedBaseUrl: lockedBaseUrl || "",
-                }),
-            isAiConfigReady: (config, model) => isAiConfigReady(config, model),
+           replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl }) =>
+             replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl, lockedBaseUrls }) =>
+               set({
+                   config: normalizeConfig({ ...defaultConfig, ...config }),
+                   webdav: { ...defaultWebdavSyncConfig, ...webdav },
+                   configLoaded: true,
+                   canManageConfig: canManage,
+                   canManageUrl: Boolean(canManageUrl),
+                   lockedBaseUrl: lockedBaseUrl || "",
+                   lockedBaseUrls: lockedBaseUrls || [],
+               }),
+           isAiConfigReady: (config, model) => isAiConfigReady(config, model),
             openConfigDialog: (shouldPromptContinue = false) => {
                 if (!get().canManageConfig) return;
                 set({ isConfigOpen: true, shouldPromptContinue });
@@ -226,9 +231,10 @@ export const useConfigStore = create<ConfigStore>()(
                 configLoaded: false,
                 canManageConfig: false,
                 canManageUrl: false,
-                lockedBaseUrl: "",
-            }),
-        },
+               lockedBaseUrl: "",
+                 lockedBaseUrls: [],
+           }),
+       },
     ),
 );
 

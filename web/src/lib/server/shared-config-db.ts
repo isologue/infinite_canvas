@@ -146,26 +146,36 @@ async function ensureUserConfigSchema() {
 }
 
 // 普通用户渠道 baseUrl 的默认/锁定值，可用 env 配置。
-export function lockedChannelBaseUrl() {
-    return process.env.LOCKED_CHANNEL_BASE_URL?.trim() || process.env.NEXT_PUBLIC_LOCKED_CHANNEL_BASE_URL?.trim() || "https://moai.wiki";
-}
+ export function lockedChannelBaseUrls(): string[] {
+     const raw = process.env.LOCKED_CHANNEL_BASE_URLS?.trim() || process.env.LOCKED_CHANNEL_BASE_URL?.trim() || process.env.NEXT_PUBLIC_LOCKED_CHANNEL_BASE_URLS?.trim() || process.env.NEXT_PUBLIC_LOCKED_CHANNEL_BASE_URL?.trim() || "https://moai.wiki";
+     return raw.split(",").map((s) => s.trim()).filter(Boolean);
+ }
+ 
+ // 向后兼容：取第一个锁定 URL，或 https://moai.wiki
+ export function lockedChannelBaseUrl() {
+     return lockedChannelBaseUrls()[0] || "https://moai.wiki";
+ }
 
 // 普通用户所有渠道的 baseUrl 一律强制成锁定的中转地址；apiKey/模型等归用户自己。
 // 只锁 URL，绝不读取或下发全局的 key（普通用户看不到 admin 的任何配置）。
-function enforceLockedBaseUrl(userConfig: Record<string, unknown>) {
-    const locked = lockedChannelBaseUrl();
-    const userChannels = Array.isArray(userConfig.channels) ? (userConfig.channels as ChannelLike[]) : [];
-    const mergedChannels = userChannels.map((channel) => ({ ...channel, baseUrl: locked }));
-    const result: Record<string, unknown> = { ...userConfig, channels: mergedChannels };
-    result.baseUrl = locked;
-    return result;
-}
+ function enforceLockedBaseUrl(userConfig: Record<string, unknown>) {
+     const lockedUrls = lockedChannelBaseUrls();
+     const defaultLocked = lockedUrls[0] || "https://moai.wiki";
+     const userChannels = Array.isArray(userConfig.channels) ? (userConfig.channels as ChannelLike[]) : [];
+     const mergedChannels = userChannels.map((channel) => ({
+         ...channel,
+         baseUrl: lockedUrls.includes(channel.baseUrl as string) ? channel.baseUrl : defaultLocked,
+     }));
+     const result: Record<string, unknown> = { ...userConfig, channels: mergedChannels };
+     result.baseUrl = defaultLocked;
+     return result;
+ }
 
 // 普通用户首次进来的空白配置：一个渠道（URL 锁定、key 空、无模型），其余取代码默认。
 // 绝不包含 admin 全局配置的任何内容。
-function emptyUserConfig(): Record<string, unknown> {
-    const locked = lockedChannelBaseUrl();
-    return {
+ function emptyUserConfig(): Record<string, unknown> {
+     const locked = lockedChannelBaseUrls()[0] || "https://moai.wiki";
+     return {
         ...defaultConfig,
         channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", models: [] }],
         model: "",

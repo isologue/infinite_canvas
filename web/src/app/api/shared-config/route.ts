@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { readSessionUser } from "@/lib/server/auth";
-import { lockedChannelBaseUrl, readSharedConfig, readUserConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
+ import { lockedChannelBaseUrl, lockedChannelBaseUrls, readSharedConfig, readUserConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
 
 export async function GET() {
     try {
@@ -18,7 +18,8 @@ export async function GET() {
                 canManage: Boolean(user),
                 canManageUrl: isAdmin,
                 // 普通用户新建渠道时锁定的 baseUrl（超管不受此限）。
-                lockedBaseUrl: lockedChannelBaseUrl(),
+                 lockedBaseUrl: lockedChannelBaseUrl(),
+                 lockedBaseUrls: lockedChannelBaseUrls(),
             },
         });
     } catch (error) {
