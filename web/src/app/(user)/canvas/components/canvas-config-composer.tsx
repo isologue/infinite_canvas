@@ -57,6 +57,23 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
         });
     }, [inputs, referenceById, theme, tokens]);
 
+    useEffect(() => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        // 画布容器注册了非 passive 的原生 wheel 监听并 preventDefault，会吞掉浏览器
+        // 对本编辑器的默认滚动。这里用原生监听器抢先处理：阻止冒泡到画布，并手动滚动。
+        const handleWheel = (event: WheelEvent) => {
+            const canScroll = editor.scrollHeight > editor.clientHeight;
+            if (!canScroll) return;
+            event.stopPropagation();
+            event.preventDefault();
+            const step = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaMode === 2 ? event.deltaY * editor.clientHeight : event.deltaY;
+            editor.scrollTop += step;
+        };
+        editor.addEventListener("wheel", handleWheel, { passive: false });
+        return () => editor.removeEventListener("wheel", handleWheel);
+    }, []);
+
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
@@ -128,7 +145,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
                     ref={editorRef}
                     contentEditable
                     suppressContentEditableWarning
-                    className="thin-scrollbar min-h-28 w-full overflow-y-auto whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
+                    className="thin-scrollbar max-h-60 min-h-28 w-full overflow-y-auto whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
                     style={{ color: theme.node.text }}
                     onInput={() => {
                         if (!composingRef.current) syncFromEditor();
