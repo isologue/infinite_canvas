@@ -202,7 +202,6 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
-           replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl }) =>
              replaceSharedConfig: ({ config, webdav, canManage, canManageUrl, lockedBaseUrl, lockedBaseUrls }) =>
                set({
                    config: normalizeConfig({ ...defaultConfig, ...config }),
