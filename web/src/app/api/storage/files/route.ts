@@ -1,6 +1,7 @@
-import { NextRequest } from "next/server";
+import { after, NextRequest } from "next/server";
 
 import { readSessionUser } from "@/lib/server/auth";
+import { getUserImagePreview } from "@/lib/server/image-preview";
 import { deleteUserFiles, upsertUserFile } from "@/lib/server/user-data-db";
 
 export async function POST(request: NextRequest) {
@@ -11,6 +12,7 @@ export async function POST(request: NextRequest) {
     if (!storageKey) return Response.json({ code: 400, msg: "缺少 storageKey" }, { status: 400 });
     const content = Buffer.from(await request.arrayBuffer());
     await upsertUserFile(user.id, { storageKey, mimeType, bytes: content.length, content });
+    if (mimeType.startsWith("image/")) after(() => getUserImagePreview(user.id, storageKey).then(() => undefined).catch(() => undefined));
     return Response.json({ code: 0, msg: "保存成功" });
 }
 

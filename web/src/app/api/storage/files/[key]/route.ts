@@ -1,4 +1,5 @@
 import { readSessionUser } from "@/lib/server/auth";
+import { getUserImagePreview } from "@/lib/server/image-preview";
 import { readUserFile, readUserFileInfo, readUserFileRange } from "@/lib/server/user-data-db";
 
 const MAX_RANGE_BYTES = 4 * 1024 * 1024;
@@ -8,6 +9,18 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
     if (!user) return new Response("Unauthorized", { status: 401 });
     const { key } = await context.params;
     const storageKey = decodeURIComponent(key);
+    if (new URL(request.url).searchParams.get("preview") === "1") {
+        const preview = await getUserImagePreview(user.id, storageKey);
+        if (!preview) return new Response("Not Found", { status: 404 });
+        return new Response(new Uint8Array(preview.content), {
+            headers: {
+                "content-type": preview.mimeType,
+                "content-length": String(preview.content.length),
+                "cache-control": "private, max-age=86400, stale-while-revalidate=604800",
+                vary: "cookie",
+            },
+        });
+    }
     const rangeHeader = request.headers.get("range");
     if (rangeHeader) {
         const info = await readUserFileInfo(user.id, storageKey);
@@ -25,6 +38,7 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
                 "content-range": `bytes ${range.start}-${range.end}/${total}`,
                 "accept-ranges": "bytes",
                 "cache-control": "private, max-age=3600",
+                vary: "cookie",
             },
         });
     }
@@ -36,6 +50,7 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
             "content-length": file.bytes,
             "accept-ranges": "bytes",
             "cache-control": "private, max-age=3600",
+            vary: "cookie",
         },
     });
 }

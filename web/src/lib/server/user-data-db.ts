@@ -264,8 +264,8 @@ export async function upsertUserFile(userId: string, input: { storageKey: string
 export async function readUserFile(userId: string, storageKey: string) {
     await ensureUserDataTables();
     const db = getPgPool();
-    const result = await db.query<{ mime_type: string; bytes: string; content: Buffer }>(
-        `SELECT mime_type, bytes, content FROM user_files WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
+    const result = await db.query<{ mime_type: string; bytes: string; content: Buffer; updated_at: Date | string }>(
+        `SELECT mime_type, bytes, content, updated_at FROM user_files WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
         [userId, storageKey],
     );
     return result.rows[0] || null;
@@ -273,8 +273,8 @@ export async function readUserFile(userId: string, storageKey: string) {
 
 export async function readUserFileInfo(userId: string, storageKey: string) {
     await ensureUserDataTables();
-    const result = await getPgPool().query<{ mime_type: string; bytes: string }>(
-        `SELECT mime_type, bytes FROM user_files WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
+    const result = await getPgPool().query<{ mime_type: string; bytes: string; updated_at: Date | string }>(
+        `SELECT mime_type, bytes, updated_at FROM user_files WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
         [userId, storageKey],
     );
     return result.rows[0] || null;
@@ -293,7 +293,7 @@ export async function deleteUserFiles(userId: string, keys: string[]) {
     await ensureUserDataTables();
     if (!keys.length) return;
     const db = getPgPool();
-    await db.query(`DELETE FROM user_files WHERE user_id = $1 AND storage_key = ANY($2::text[])`, [userId, keys]);
+    await db.query(`DELETE FROM user_files WHERE user_id = $1 AND storage_key = ANY($2::text[])`, [userId, [...keys, ...keys.map((key) => `preview:${key}`)]]);
 }
 
 export async function cleanupUserFiles(userId: string, usedKeys: string[], prefixes: string[]) {
@@ -313,16 +313,20 @@ export async function cleanupUserFiles(userId: string, usedKeys: string[], prefi
             `DELETE FROM user_files WHERE user_id = $1 AND (${prefixes.map((_, index) => `storage_key LIKE $${index + 2}`).join(" OR ")})`,
             [userId, ...prefixes.map((prefix) => `${prefix}%`)],
         );
-        return;
+    } else {
+        await db.query(
+            `
+            DELETE FROM user_files
+            WHERE user_id = $1
+              AND storage_key <> ALL($2::text[])
+              AND (${prefixes.map((_, index) => `storage_key LIKE $${index + 3}`).join(" OR ")})
+            `,
+            [userId, allUsedKeys, ...prefixes.map((prefix) => `${prefix}%`)],
+        );
     }
     await db.query(
-        `
-        DELETE FROM user_files
-        WHERE user_id = $1
-          AND storage_key <> ALL($2::text[])
-          AND (${prefixes.map((_, index) => `storage_key LIKE $${index + 3}`).join(" OR ")})
-        `,
-        [userId, allUsedKeys, ...prefixes.map((prefix) => `${prefix}%`)],
+        `DELETE FROM user_files AS preview WHERE preview.user_id = $1 AND preview.storage_key LIKE 'preview:image:%' AND NOT EXISTS (SELECT 1 FROM user_files AS original WHERE original.user_id = preview.user_id AND original.storage_key = substring(preview.storage_key FROM 9))`,
+        [userId],
     );
 }
 

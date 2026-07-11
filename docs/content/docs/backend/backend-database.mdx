@@ -40,6 +40,7 @@ description: 当前项目的 Postgres 持久化结构
   - 当前 `kind` 支持：`image`、`video`
 - `user_files`
   - 每个用户关联的图片、视频、音频等二进制文件
+  - 画布图片预览以 `preview:image:...` 派生键缓存，删除原图时同步删除
 
 ### 4. 提示词封面缓存
 

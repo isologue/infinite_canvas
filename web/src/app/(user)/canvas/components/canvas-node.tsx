@@ -6,6 +6,7 @@ import { ChevronRight, Image as ImageIcon, Music2, RefreshCw, Star, Video } from
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
+import { storageImagePreviewUrl } from "@/services/storage-url";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasResourceMentionTextarea } from "./canvas-resource-mention-textarea";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
@@ -551,12 +552,13 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
+    const imageUrl = node.metadata?.storageKey && !node.metadata.content?.startsWith("blob:") ? storageImagePreviewUrl(node.metadata.storageKey) : node.metadata!.content!;
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl">
                 <img
-                    src={node.metadata!.content!}
+                    src={imageUrl}
                     alt={node.title}
                     loading="lazy"
                     decoding="async"
