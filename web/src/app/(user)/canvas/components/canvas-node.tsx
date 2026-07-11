@@ -508,7 +508,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">空视频节点</span>
             </div>
         );
-    return <video src={node.metadata.content} controls className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <video src={node.metadata.content} controls preload="metadata" className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -525,7 +525,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{node.title || "音频"}</span>
             </div>
-            <audio src={node.metadata.content} controls className="w-full" data-canvas-no-zoom />
+            <audio src={node.metadata.content} controls preload="metadata" className="w-full" data-canvas-no-zoom />
         </div>
     );
 }
@@ -558,6 +558,8 @@ function ImageContent({
                 <img
                     src={node.metadata!.content!}
                     alt={node.title}
+                    loading="lazy"
+                    decoding="async"
                     draggable={false}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}

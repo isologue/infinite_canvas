@@ -10,6 +10,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
 import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { useCanvasStore } from "@/app/(user)/canvas/stores/use-canvas-store";
+import { fetchAllCanvasProjects } from "@/services/api/canvas-projects";
 
 type StoredLog = Record<string, unknown> & { id?: string };
 export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench";
@@ -84,14 +85,15 @@ const storageKeyPattern = /^(image|video|audio|file|video-reference|audio-refere
 
 export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?: AppSyncProgress): Promise<AppSyncResult> {
     emitProgress(onProgress, { stage: "等待本地数据加载" });
-    await Promise.all([waitForHydration(useCanvasStore), waitForHydration(useAssetStore)]);
+    if (!useCanvasStore.getState().hydrated) await useCanvasStore.getState().loadProjects();
+    await waitForHydration(useAssetStore);
 
     const [canvas, assets, imageLogs, videoLogs] = await Promise.all([
         syncDomain<CanvasDomainData>(config, onProgress, {
             key: "canvas",
             label: "画布",
             emptyData: { projects: [] },
-            localData: async () => ({ projects: useCanvasStore.getState().projects }),
+            localData: async () => ({ projects: await fetchAllCanvasProjects() }),
             mergeData: (local, remote) => ({ projects: mergeById(local.projects, remote.projects, "updatedAt") }),
             applyData: async (data) => useCanvasStore.getState().replaceProjects(data.projects),
         }),

@@ -31,8 +31,8 @@ description: 当前项目的 Postgres 持久化结构
 
 ### 3. 用户业务数据
 
-- `user_canvas_data`
-  - 每个用户的画布项目 JSON
+- `user_canvas_projects`
+  - 每行保存一个画布项目，列表摘要和完整项目数据分开读取
 - `user_asset_data`
   - 每个用户的素材库 JSON
 - `user_generation_logs`
@@ -53,7 +53,7 @@ description: 当前项目的 Postgres 持久化结构
 当前和用户相关的数据，按 `user_id` 做隔离：
 
 - 登录态：Cookie Session
-- 画布：`user_canvas_data`
+- 画布：`user_canvas_projects`
 - 素材：`user_asset_data`
 - 生成记录：`user_generation_logs`
 - 文件内容：`user_files`
@@ -102,11 +102,20 @@ CREATE TABLE IF NOT EXISTS shared_configs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS user_canvas_data (
-  user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
-  data_json JSONB NOT NULL DEFAULT '[]'::jsonb,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS user_canvas_projects (
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  project_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  node_count INTEGER NOT NULL DEFAULT 0,
+  connection_count INTEGER NOT NULL DEFAULT 0,
+  data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, project_id)
 );
+
+CREATE INDEX IF NOT EXISTS idx_user_canvas_projects_updated
+  ON user_canvas_projects (user_id, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS user_asset_data (
   user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,

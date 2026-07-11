@@ -1,22 +1,18 @@
 ---
 title: 画布数据结构
-description: 画布本地存储、节点结构、媒体文件与清理机制
+description: 画布项目存储、节点结构、媒体文件与清理机制
 ---
 
 # 画布数据结构
 
-本文档说明当前画布在前端本地保存的数据结构、图片文件的存储和清理方式，以及后续接入后端存储时建议保持的兼容边界。
+本文档说明当前画布的服务端存储结构、前端加载方式、媒体文件和清理机制。
 
 ## 当前存储位置
 
-当前画布项目主要保存在浏览器本地：
-
-- 画布项目 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:canvas_store`。
-- 我的素材 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:asset_store`。
-- 图片 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `image_files`。
-- 视频等媒体 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `media_files`。
-
-画布 JSON 不直接长期保存大体积 base64 图片或视频。图片节点、视频节点、助手图片和素材媒体只保存展示 URL、`storageKey` 和元信息，真实 Blob 通过 `storageKey` 读取。
+- 每个画布项目独立保存在 Postgres `user_canvas_projects`，列表接口只读取标题、时间和节点/连线数量，详情接口按项目 ID 读取 `data_json`。
+- 图片、视频和音频二进制保存在 `user_files.content`，通过 `storageKey` 与画布节点关联。
+- 画布 JSON 不长期保存 `blob:` URL、文件接口 URL或带 `storageKey` 的 base64；自动保存前会清空这些临时字段。
+- 浏览器旧版 localForage 数据只用于首次登录迁移，不再作为画布日常持久化来源。
 
 ## 画布项目结构
 
@@ -104,8 +100,8 @@ type CanvasNodeMetadata = {
 
 不同节点的使用方式：
 
-- 图片节点：`content` 是当前可展示的图片 URL，通常是 `blob:` URL；`storageKey` 指向本地图片 Blob；`naturalWidth/naturalHeight/bytes/mimeType` 保存原图信息。
-- 视频节点：`content` 是当前可播放的视频 URL，通常是 `blob:` URL；`storageKey` 指向本地视频 Blob；`bytes/mimeType` 保存文件信息。
+- 图片节点：`storageKey` 是长期文件标识；加载详情后，前端同步把 `content` 派生为鉴权文件 URL。
+- 视频节点：使用相同的文件 URL，并通过 HTTP Range 按分片读取；`bytes/mimeType/durationMs` 保存文件信息。
 - 文本节点：`content` 保存文本内容；`fontSize` 保存字体大小；`prompt/status/errorDetails` 保存生成状态。
 - 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本、图片或视频；上游输入通过 `connections` 计算。
 - 图片组节点：根节点用 `isBatchRoot/batchChildIds/primaryImageId/imageBatchExpanded` 记录批量生成结果；子图节点用 `batchRootId` 指回根节点。
@@ -156,9 +152,8 @@ type CanvasAssistantMessage = {
 
 图片引用和助手生成图片也遵循同一套图片存储规则：
 
-- `dataUrl` 字段当前可能是 `blob:` URL，也可能是旧数据中的 `data:image/...`。
-- `storageKey` 存在时，以 `storageKey` 为准读取图片 Blob。
-- 发送到 AI 接口前，如果接口需要 base64，会通过 `imageToDataUrl` 临时把 Blob URL 转成 data URL。
+- `storageKey` 存在时，以它派生文件 URL，不在进入画布时预下载附件。
+- 发送到 AI 接口前，如果接口需要 base64，再通过 `imageToDataUrl` 按需读取并转换。
 
 ## 图片写入流程
 
@@ -167,7 +162,7 @@ type CanvasAssistantMessage = {
 1. 传入 `Blob` 或 data URL。
 2. 内部转成 `Blob`。
 3. 生成 `storageKey`，格式为 `image:<id>`。
-4. 把 Blob 写入 `image_files`。
+4. 把 Blob 写入 `user_files`。
 5. 创建 `blob:` URL，并缓存在内存 `objectUrls`。
 6. 读取图片宽高，返回：
 
@@ -198,27 +193,22 @@ type UploadedImage = {
 
 因此，`content` 只适合当前浏览器会话展示，不能作为长期文件标识；长期标识是 `storageKey`。
 
-## 图片读取和旧数据迁移
+## 画布和媒体读取
 
-打开画布时会执行图片补水：
-
-- 如果图片节点有 `storageKey`，通过 `resolveImageUrl(storageKey, fallback)` 读取 Blob 并生成新的 `blob:` URL。
-- 如果图片节点没有 `storageKey`，但 `content` 是旧的 `data:image/...`，会调用 `uploadImage(content)` 迁移到 `image_files`，并补上 `storageKey`。
-- 助手消息里的引用图和生成图也会执行同类逻辑。
-
-我的素材读取时也会做迁移：
-
-- 有 `storageKey`：恢复 `coverUrl` 和 `data.dataUrl` 的可展示 URL。
-- 无 `storageKey` 且保存了 base64：写入 `image_files`，然后更新素材里的 `storageKey`。
+1. `GET /api/user/projects` 只返回 `CanvasProjectSummary[]`。
+2. 进入画布后通过 `GET /api/user/projects/[id]` 读取当前项目详情，并立即渲染节点框架。
+3. 节点根据 `storageKey` 同步生成 `/api/storage/files/[key]`，不等待媒体下载完成。
+4. 画布只渲染视口及周围预加载区域的节点，因此视口外媒体不会发起请求。
+5. 图片使用浏览器懒加载；视频和音频使用 `preload="metadata"`，视频开放式 Range 每次最多读取 4 MiB。
 
 ## 图片移除和清理
 
 图片不是在删除节点时立即按节点逐张删除，而是做引用清理：
 
 1. 删除节点、清空画布、删除画布、删除素材、删除助手会话时，会触发 `cleanupImages`。
-2. `cleanupImages` 会收集当前仍被画布项目、素材和额外传入数据引用的所有 `storageKey`。
-3. `cleanupUnusedImages` 遍历 `image_files` 中的全部图片。
-4. 不在引用集合里的图片会被删除。
-5. 删除时会同时 `URL.revokeObjectURL`，并从内存缓存 `objectUrls` 移除。
+2. 当前画布先完成自动保存，再发起清理，避免服务端仍读取到删除前的项目状态。
+3. 服务端合并全部 `user_canvas_projects`、素材、生成记录和前端额外状态中的 `storageKey`。
+4. 不在引用集合里的 `user_files` 记录才会被删除。
+5. 当前会话创建过的 Object URL 会同步释放。
 
 这套方式可以避免同一张图片被画布、素材或助手同时引用时误删。

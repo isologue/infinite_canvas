@@ -7,6 +7,7 @@ import { BookOpen, Bot, Home, ImageIcon, Images, List, Menu, Music2, Plus, Redo2
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { fetchCanvasProject, flushCanvasProjectSaves, queueCanvasProjectSave } from "@/services/api/canvas-projects";
 import { reportAiCall } from "@/services/ai-call-log";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
@@ -14,7 +15,8 @@ import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
+import { storageFileUrl } from "@/services/storage-url";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
@@ -260,7 +262,8 @@ function InfiniteCanvasPage() {
     const historyRef = useRef<{ past: CanvasHistoryEntry[]; future: CanvasHistoryEntry[] }>({ past: [], future: [] });
     const lastHistoryRef = useRef<CanvasHistoryEntry | null>(null);
     const historyCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const projectCreatedAtRef = useRef("");
+    const skipNextSaveRef = useRef(true);
     const applyingHistoryRef = useRef(false);
     const historyPausedRef = useRef(false);
     const didInitialCenterRef = useRef(false);
@@ -287,13 +290,9 @@ function InfiniteCanvasPage() {
     const openConfigDialog = useSharedConfigGate();
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
-    const hydrated = useCanvasStore((state) => state.hydrated);
     const createProject = useCanvasStore((state) => state.createProject);
-    const openProject = useCanvasStore((state) => state.openProject);
-    const updateProject = useCanvasStore((state) => state.updateProject);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
-    const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
@@ -317,6 +316,7 @@ function InfiniteCanvasPage() {
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
+    const [projectTitle, setProjectTitle] = useState("未命名画布");
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -370,9 +370,12 @@ function InfiniteCanvasPage() {
 
     const cleanupCanvasFiles = useCallback(
         (extra?: unknown) => {
-            cleanupAssetImages({ extra, history: historyRef.current, lastHistory: lastHistoryRef.current });
+            window.setTimeout(async () => {
+                await flushCanvasProjectSaves(projectId);
+                cleanupAssetImages({ extra, history: historyRef.current, lastHistory: lastHistoryRef.current });
+            }, 450);
         },
-        [cleanupAssetImages],
+        [cleanupAssetImages, projectId],
     );
 
     const startGenerationRequest = useCallback((targetNodeId: string, originNodeId: string, runningId = originNodeId, controller = new AbortController()) => {
@@ -422,17 +425,14 @@ function InfiniteCanvasPage() {
     );
 
     useEffect(() => {
-        if (!hydrated) return;
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            router.replace("/canvas");
-            return;
-        }
-
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
+            const project = await fetchCanvasProject(projectId);
+            const restoredNodes = hydrateCanvasMedia(resetInterruptedGeneration(project.nodes));
+            const restoredSessions = hydrateAssistantMedia(project.chatSessions || []);
+            projectCreatedAtRef.current = project.createdAt;
+            setProjectTitle(project.title);
+            setTitleDraft(project.title);
             setNodes(restoredNodes);
             setConnections(project.connections);
             setChatSessions(restoredSessions);
@@ -454,10 +454,11 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             };
             setHistoryState({ canUndo: false, canRedo: false });
+            skipNextSaveRef.current = true;
             setProjectLoaded(true);
         };
-        void restore();
-    }, [hydrated, openProject, projectId, router]);
+        void restore().catch(() => router.replace("/canvas"));
+    }, [projectId, router]);
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
@@ -503,24 +504,21 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+        if (skipNextSaveRef.current) {
+            skipNextSaveRef.current = false;
+            return;
+        }
+        const now = new Date().toISOString();
+        queueCanvasProjectSave({ id: projectId, title: projectTitle, createdAt: projectCreatedAtRef.current || now, updatedAt: now, nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo, viewport });
+    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, projectTitle, showImageInfo, viewport]);
+
+    useEffect(() => () => {
+        void flushCanvasProjectSaves(projectId);
+    }, [projectId]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
-
-    useEffect(() => {
-        if (!projectLoaded) return;
-        if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        viewportSaveTimerRef.current = setTimeout(() => {
-            updateProject(projectId, { viewport: viewportRef.current });
-            viewportSaveTimerRef.current = null;
-        }, 500);
-        return () => {
-            if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
-        };
-    }, [projectId, projectLoaded, updateProject, viewport]);
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -761,13 +759,13 @@ function InfiniteCanvasPage() {
         return map;
     }, [connections, nodes]);
     const agentSnapshot = useMemo<CanvasAgentSnapshot>(
-        () => ({ projectId, title: currentProject?.title || "未命名画布", nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
-        [connections, currentProject?.title, nodes, projectId, selectedNodeIds, viewport],
+        () => ({ projectId, title: projectTitle, nodes, connections, selectedNodeIds: Array.from(selectedNodeIds), viewport }),
+        [connections, nodes, projectId, projectTitle, selectedNodeIds, viewport],
     );
     const applyAgentOps = useCallback(
         (ops?: CanvasAgentOp[]) => {
             const safeOps = Array.isArray(ops) ? ops.filter((op) => op?.type) : [];
-            const before = { projectId, title: currentProject?.title || "未命名画布", nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
+            const before = { projectId, title: projectTitle, nodes: nodesRef.current, connections: connectionsRef.current, selectedNodeIds: Array.from(selectedNodeIdsRef.current), viewport: viewportRef.current };
             const generationOps = safeOps.filter((op): op is Extract<CanvasAgentOp, { type: "run_generation" }> => op.type === "run_generation" && Boolean(op.nodeId));
             const next = applyCanvasAgentOps(before, safeOps.filter((op) => op.type !== "run_generation"));
             nodesRef.current = next.nodes;
@@ -790,9 +788,9 @@ function InfiniteCanvasPage() {
                     }),
                 );
             }
-            return { ...next, projectId, title: currentProject?.title || "未命名画布" };
+            return { ...next, projectId, title: projectTitle };
         },
-        [currentProject?.title, projectId],
+        [projectId, projectTitle],
     );
     const undoAgentOps = useCallback(() => {
         if (!agentUndoSnapshot) return null;
@@ -807,8 +805,8 @@ function InfiniteCanvasPage() {
         setViewport(agentUndoSnapshot.viewport);
         setContextMenu(null);
         setAgentUndoSnapshot(null);
-        return { ...agentUndoSnapshot, projectId, title: currentProject?.title || "未命名画布" };
-    }, [agentUndoSnapshot, currentProject?.title, projectId]);
+        return { ...agentUndoSnapshot, projectId, title: projectTitle };
+    }, [agentUndoSnapshot, projectId, projectTitle]);
     const createNode = useCallback(
         (type: CanvasNodeType, position?: Position) => {
             const targetPosition = position || getCanvasCenter();
@@ -1057,14 +1055,15 @@ function InfiniteCanvasPage() {
         applyHistory(next);
     }, [applyHistory]);
 
-    const createAndOpenProject = useCallback(() => {
-        const id = createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
+    const createAndOpenProject = useCallback(async () => {
+        await flushCanvasProjectSaves(projectId);
+        const id = await createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
         router.push(`/canvas/${id}`);
-    }, [createProject, router]);
+    }, [createProject, projectId, router]);
 
-    const deleteCurrentProject = useCallback(() => {
-        deleteProjects([projectId]);
-        cleanupAssetImages();
+    const deleteCurrentProject = useCallback(async () => {
+        await deleteProjects([projectId]);
+        await cleanupAssetImages();
         router.push("/canvas");
     }, [cleanupAssetImages, deleteProjects, projectId, router]);
 
@@ -1963,13 +1962,16 @@ function InfiniteCanvasPage() {
     }, []);
 
     const startTitleEditing = useCallback(() => {
-        setTitleDraft(currentProject?.title || "未命名画布");
+        setTitleDraft(projectTitle);
         setTitleEditing(true);
-    }, [currentProject?.title]);
+    }, [projectTitle]);
 
-    const finishTitleEditing = useCallback(() => {
+    const finishTitleEditing = useCallback(async () => {
         const nextTitle = titleDraft.trim();
-        if (nextTitle) renameProject(projectId, nextTitle);
+        if (nextTitle) {
+            await renameProject(projectId, nextTitle);
+            setProjectTitle(nextTitle);
+        }
         setTitleEditing(false);
     }, [projectId, renameProject, titleDraft]);
 
@@ -2538,7 +2540,7 @@ function InfiniteCanvasPage() {
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
-                    title={currentProject?.title || "未命名画布"}
+                    title={projectTitle}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -2547,10 +2549,10 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onHome={() => router.push("/")}
-                    onProjects={() => router.push("/canvas")}
-                    onCreateProject={createAndOpenProject}
-                    onDeleteProject={deleteCurrentProject}
+                    onHome={() => void flushCanvasProjectSaves(projectId).then(() => router.push("/"))}
+                    onProjects={() => void flushCanvasProjectSaves(projectId).then(() => router.push("/canvas"))}
+                    onCreateProject={() => void createAndOpenProject()}
+                    onDeleteProject={() => void deleteCurrentProject()}
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -3130,39 +3132,18 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
-async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
-            const content = node.metadata?.content;
-            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image || !content) return node;
-            if (node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveImageUrl(node.metadata.storageKey, content) } };
-            if (!content.startsWith("data:image/")) return node;
-            return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadImage(content)) } };
-        }),
-    );
+function hydrateCanvasMedia(nodes: CanvasNodeData[]) {
+    return nodes.map((node) => (node.metadata?.storageKey ? { ...node, metadata: { ...node.metadata, content: storageFileUrl(node.metadata.storageKey) } } : node));
 }
 
-async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
-    const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
-        }
-        return item;
-    };
-    return Promise.all(
-        sessions.map(async (session) => ({
-            ...session,
-            messages: await Promise.all(
-                session.messages.map(async (message) => ({
-                    ...message,
-                    references: await Promise.all((message.references || []).map(hydrateItem)),
-                })),
-            ),
+function hydrateAssistantMedia(sessions: CanvasAssistantSession[]) {
+    return sessions.map((session) => ({
+        ...session,
+        messages: session.messages.map((message) => ({
+            ...message,
+            references: (message.references || []).map((item) => (item.storageKey ? { ...item, dataUrl: storageFileUrl(item.storageKey) } : item)),
         })),
-    );
+    }));
 }
 
 function getGenerationCount(count: string) {

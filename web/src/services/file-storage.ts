@@ -1,6 +1,7 @@
 "use client";
 
 import { nanoid } from "nanoid";
+import { storageFileUrl } from "@/services/storage-url";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -20,11 +21,7 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
     if (!storageKey) return fallback;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
-    const blob = await downloadFile(storageKey);
-    if (!blob) return fallback;
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
+    return storageFileUrl(storageKey);
 }
 
 export async function getMediaBlob(storageKey: string) {
