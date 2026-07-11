@@ -1022,7 +1022,6 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
         metadata: cleanRecord({
             generationMode: mode,
             composerContent: prompt,
-            prompt,
             status: "idle",
             model: resolveGenerationModel(config, mode, stringOptional(input.model)),
             size: stringOptional(input.size) || config.size,
@@ -1293,16 +1292,18 @@ function compactSnapshot(snapshot: CanvasAgentSnapshot) {
             position: node.position,
             width: node.width,
             height: node.height,
-            metadata: compactMetadata(node.metadata || {}),
+            metadata: compactMetadata(node),
         })),
         connections: snapshot.connections,
     };
 }
 
-function compactMetadata(metadata: CanvasNodeData["metadata"]) {
+function compactMetadata(node: CanvasNodeData) {
+    const metadata = node.metadata;
     return {
         content: String(metadata?.content || "").slice(0, 500),
-        prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
+        prompt: String(node.type === CanvasNodeType.Config ? metadata?.composerContent || "" : metadata?.prompt || "").slice(0, 500),
+        resolvedPrompt: String(metadata?.resolvedPrompt || "").slice(0, 500),
         status: metadata?.status,
         generationMode: metadata?.generationMode,
         model: metadata?.model,

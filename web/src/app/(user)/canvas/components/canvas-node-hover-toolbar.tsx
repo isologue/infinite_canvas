@@ -260,7 +260,9 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label="位置" value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label="状态" value={node.metadata?.status || "idle"} />
                             {batchCount > 1 ? <InfoRow label="图片组" value={`${batchCount} 张`} /> : null}
-                            {node.metadata?.prompt ? <InfoRow label="提示词" value={node.metadata.prompt} /> : null}
+                            {node.type === CanvasNodeType.Config && node.metadata?.composerContent ? <InfoRow label="组装模板" value={node.metadata.composerContent} /> : null}
+                            {node.type === CanvasNodeType.Config && node.metadata?.resolvedPrompt ? <InfoRow label="本次提示词" value={node.metadata.resolvedPrompt} /> : null}
+                            {node.type !== CanvasNodeType.Config && node.metadata?.prompt ? <InfoRow label="提示词" value={node.metadata.prompt} /> : null}
                             {imageBytes ? <InfoRow label="图片大小" value={formatBytes(imageBytes)} /> : null}
                             {node.metadata?.errorDetails ? (
                                 <div className="rounded-lg border p-3 text-red-400" style={{ borderColor: theme.node.stroke }}>

@@ -75,6 +75,8 @@ type CanvasNodeData = {
 ```ts
 type CanvasNodeMetadata = {
   content?: string;
+  composerContent?: string;
+  resolvedPrompt?: string;
   prompt?: string;
   status?: "idle" | "success" | "loading" | "error";
   errorDetails?: string;
@@ -104,6 +106,7 @@ type CanvasNodeMetadata = {
 - 视频节点：使用相同的文件 URL，并通过 HTTP Range 按分片读取；`bytes/mimeType/durationMs` 保存文件信息。
 - 文本节点：`content` 保存文本内容；`fontSize` 保存字体大小；`prompt/status/errorDetails` 保存生成状态。
 - 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本、图片或视频；上游输入通过 `connections` 计算。
+- 生成配置节点的 `composerContent` 保存含 `@[node:id]` 的用户模板，`resolvedPrompt` 仅记录最近一次动态解析结果；生成不能把解析结果回写到模板。
 - 图片组节点：根节点用 `isBatchRoot/batchChildIds/primaryImageId/imageBatchExpanded` 记录批量生成结果；子图节点用 `batchRootId` 指回根节点。
 
 ## 连线结构

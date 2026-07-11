@@ -3,6 +3,7 @@ import { createAdminUserIfMissing } from "@/lib/server/auth";
 
 type LogKind = "image" | "video";
 
+const USER_DATA_SCHEMA_LOCK_ID = 482031947;
 let ensureTablesPromise: Promise<void> | null = null;
 
 export function ensureUserDataTables() {
@@ -14,9 +15,13 @@ export function ensureUserDataTables() {
 }
 
 async function createUserDataTables() {
-    await createAdminUserIfMissing();
     const db = getPgPool();
-    await db.query(`
+    const client = await db.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock($1)", [USER_DATA_SCHEMA_LOCK_ID]);
+        await createAdminUserIfMissing();
+        await client.query(`
         CREATE TABLE IF NOT EXISTS user_canvas_projects (
             user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
             project_id TEXT NOT NULL,
@@ -28,16 +33,16 @@ async function createUserDataTables() {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (user_id, project_id)
         )
-    `);
-    await db.query(`CREATE INDEX IF NOT EXISTS idx_user_canvas_projects_updated ON user_canvas_projects (user_id, updated_at DESC)`);
-    await db.query(`
+        `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_user_canvas_projects_updated ON user_canvas_projects (user_id, updated_at DESC)`);
+        await client.query(`
         CREATE TABLE IF NOT EXISTS user_asset_data (
             user_id TEXT PRIMARY KEY REFERENCES app_users(id) ON DELETE CASCADE,
             data_json JSONB NOT NULL DEFAULT '[]'::jsonb,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
-    `);
-    await db.query(`
+        `);
+        await client.query(`
         CREATE TABLE IF NOT EXISTS user_generation_logs (
             user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
             kind TEXT NOT NULL CHECK (kind IN ('image', 'video')),
@@ -45,8 +50,8 @@ async function createUserDataTables() {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (user_id, kind)
         )
-    `);
-    await db.query(`
+        `);
+        await client.query(`
         CREATE TABLE IF NOT EXISTS user_files (
             user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
             storage_key TEXT NOT NULL,
@@ -56,7 +61,14 @@ async function createUserDataTables() {
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (user_id, storage_key)
         )
-    `);
+        `);
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 async function readJsonRow(table: "user_asset_data", userId: string) {
