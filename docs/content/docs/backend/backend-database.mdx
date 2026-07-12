@@ -41,6 +41,13 @@ description: 当前项目的 Postgres 持久化结构
 - `user_files`
   - 每个用户关联的图片、视频、音频等二进制文件
   - 画布图片预览以 `preview:image:...` 派生键缓存，删除原图时同步删除
+- `user_resources`
+  - 图片、视频、音频和文本的统一资源索引
+  - 媒体正文仍在 `user_files`，文本正文直接保存在资源索引
+  - `is_saved` 标记资源是否已加入“我的素材”，`deleted_at` 标记管理员已强制删除
+- `resource_retention_settings`
+  - 全站四类资源的自动保留天数和最近清理结果
+  - 保留天数 `0` 表示关闭，自动清理跳过 `is_saved=true` 的资源
 
 ### 4. 提示词封面缓存
 
@@ -58,6 +65,7 @@ description: 当前项目的 Postgres 持久化结构
 - 素材：`user_asset_data`
 - 生成记录：`user_generation_logs`
 - 文件内容：`user_files`
+- 资源索引：`user_resources`
 - 点数余额/额度/流水：`app_users` + `credit_transactions`
 
 共享数据只有一份：
@@ -142,6 +150,43 @@ CREATE TABLE IF NOT EXISTS user_files (
   PRIMARY KEY (user_id, storage_key)
 );
 
+CREATE TABLE IF NOT EXISTS user_resources (
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  resource_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'video', 'audio', 'text')),
+  storage_key TEXT,
+  title TEXT NOT NULL DEFAULT '',
+  text_content TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT '',
+  bytes BIGINT NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT '',
+  metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  is_saved BOOLEAN NOT NULL DEFAULT FALSE,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, resource_id),
+  UNIQUE (user_id, storage_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_resources_created
+  ON user_resources (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_resources_kind_saved
+  ON user_resources (kind, is_saved, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS resource_retention_settings (
+  id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  image_days INTEGER NOT NULL DEFAULT 0,
+  video_days INTEGER NOT NULL DEFAULT 0,
+  audio_days INTEGER NOT NULL DEFAULT 0,
+  text_days INTEGER NOT NULL DEFAULT 0,
+  last_run_at TIMESTAMPTZ,
+  last_result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  backfilled_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS prompt_cover_cache (
   source_url TEXT PRIMARY KEY,
   mime_type TEXT NOT NULL,
@@ -151,3 +196,11 @@ CREATE TABLE IF NOT EXISTS prompt_cover_cache (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ```
+
+## 资源生命周期
+
+- 媒体上传、生成或导入成功后写入 `user_files`，并同步登记 `user_resources`；外部 URL 生成结果会先下载，不作为长期存储地址。
+- `preview:image:...` 仅是图片预览缓存，不单独登记资源。
+- 删除节点、连线、画布、生成记录或素材条目不会删除 `user_files`；从素材移除只会取消 `is_saved`。
+- 只有管理员资源管理接口和自动保留任务会物理删除原文件及预览缓存。资源索引保留 tombstone，确保仍被引用的画布节点和素材卡片能显示“资源已删除”。
+- 首次访问资源管理能力时会幂等回填旧 `user_files`、文本素材和可识别的画布生成文本，不复制媒体正文。

@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu, ScrollText, Users } from "lucide-react";
+import { Database, Menu, ScrollText, Users } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -67,6 +67,20 @@ export function AppTopNav() {
                                         </Link>
                                     );
                                 })}
+                                {user?.role === "admin" ? (
+                                    <Link
+                                        href="/admin/resources"
+                                        className={cn(
+                                            "relative flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                                            pathname.startsWith("/admin/resources")
+                                                ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"
+                                                : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
+                                        )}
+                                    >
+                                        <Database className="size-4" />
+                                        <span className="truncate">资源管理</span>
+                                    </Link>
+                                ) : null}
                                 {user?.role === "admin" ? (
                                     <Link
                                         href="/admin/users"

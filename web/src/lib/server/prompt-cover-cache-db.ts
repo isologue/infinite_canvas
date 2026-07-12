@@ -3,19 +3,40 @@ import { getPgPool } from "@/lib/server/postgres";
 const PROMPT_COVER_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 const PROMPT_COVER_CACHE_MAX_AGE_DAYS = 30;
 const PROMPT_COVER_CACHE_MAX_ROWS = 2000;
+const PROMPT_COVER_CACHE_SCHEMA_LOCK_ID = 482031950;
+let ensureTablePromise: Promise<void> | null = null;
 
-export async function ensurePromptCoverCacheTable() {
+export function ensurePromptCoverCacheTable() {
+    if (!ensureTablePromise) ensureTablePromise = createPromptCoverCacheTable().catch((error) => {
+        ensureTablePromise = null;
+        throw error;
+    });
+    return ensureTablePromise;
+}
+
+async function createPromptCoverCacheTable() {
     const db = getPgPool();
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS prompt_cover_cache (
-            source_url TEXT PRIMARY KEY,
-            mime_type TEXT NOT NULL,
-            bytes BIGINT NOT NULL DEFAULT 0,
-            content BYTEA NOT NULL,
-            fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    `);
+    const client = await db.connect();
+    try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock($1)", [PROMPT_COVER_CACHE_SCHEMA_LOCK_ID]);
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS prompt_cover_cache (
+                source_url TEXT PRIMARY KEY,
+                mime_type TEXT NOT NULL,
+                bytes BIGINT NOT NULL DEFAULT 0,
+                content BYTEA NOT NULL,
+                fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        `);
+        await client.query("COMMIT");
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 export async function readPromptCoverCache(sourceUrl: string) {

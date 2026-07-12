@@ -62,6 +62,42 @@ async function createUserDataTables() {
             PRIMARY KEY (user_id, storage_key)
         )
         `);
+        await client.query(`
+        CREATE TABLE IF NOT EXISTS user_resources (
+            user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+            resource_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK (kind IN ('image', 'video', 'audio', 'text')),
+            storage_key TEXT,
+            title TEXT NOT NULL DEFAULT '',
+            text_content TEXT NOT NULL DEFAULT '',
+            mime_type TEXT NOT NULL DEFAULT '',
+            bytes BIGINT NOT NULL DEFAULT 0,
+            source TEXT NOT NULL DEFAULT '',
+            metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            is_saved BOOLEAN NOT NULL DEFAULT FALSE,
+            deleted_at TIMESTAMPTZ,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (user_id, resource_id),
+            UNIQUE (user_id, storage_key)
+        )
+        `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_user_resources_created ON user_resources (created_at DESC)`);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_user_resources_kind_saved ON user_resources (kind, is_saved, created_at DESC)`);
+        await client.query(`
+        CREATE TABLE IF NOT EXISTS resource_retention_settings (
+            id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+            image_days INTEGER NOT NULL DEFAULT 0,
+            video_days INTEGER NOT NULL DEFAULT 0,
+            audio_days INTEGER NOT NULL DEFAULT 0,
+            text_days INTEGER NOT NULL DEFAULT 0,
+            last_run_at TIMESTAMPTZ,
+            last_result_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            backfilled_at TIMESTAMPTZ,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        `);
+        await client.query(`INSERT INTO resource_retention_settings (id) VALUES (TRUE) ON CONFLICT (id) DO NOTHING`);
         await client.query("COMMIT");
     } catch (error) {
         await client.query("ROLLBACK");
@@ -289,49 +325,3 @@ export async function readUserFileRange(userId: string, storageKey: string, star
     return result.rows[0]?.content || null;
 }
 
-export async function deleteUserFiles(userId: string, keys: string[]) {
-    await ensureUserDataTables();
-    if (!keys.length) return;
-    const db = getPgPool();
-    await db.query(`DELETE FROM user_files WHERE user_id = $1 AND storage_key = ANY($2::text[])`, [userId, [...keys, ...keys.map((key) => `preview:${key}`)]]);
-}
-
-export async function cleanupUserFiles(userId: string, usedKeys: string[], prefixes: string[]) {
-    await ensureUserDataTables();
-    const db = getPgPool();
-    if (!prefixes.length) return;
-    const referenced = new Set(usedKeys);
-    const [projects, assets, logs] = await Promise.all([
-        db.query<{ data_json: unknown }>(`SELECT data_json FROM user_canvas_projects WHERE user_id = $1`, [userId]),
-        db.query<{ data_json: unknown }>(`SELECT data_json FROM user_asset_data WHERE user_id = $1`, [userId]),
-        db.query<{ data_json: unknown }>(`SELECT data_json FROM user_generation_logs WHERE user_id = $1`, [userId]),
-    ]);
-    [...projects.rows, ...assets.rows, ...logs.rows].forEach((row) => collectStorageKeys(row.data_json, referenced));
-    const allUsedKeys = [...referenced];
-    if (!allUsedKeys.length) {
-        await db.query(
-            `DELETE FROM user_files WHERE user_id = $1 AND (${prefixes.map((_, index) => `storage_key LIKE $${index + 2}`).join(" OR ")})`,
-            [userId, ...prefixes.map((prefix) => `${prefix}%`)],
-        );
-    } else {
-        await db.query(
-            `
-            DELETE FROM user_files
-            WHERE user_id = $1
-              AND storage_key <> ALL($2::text[])
-              AND (${prefixes.map((_, index) => `storage_key LIKE $${index + 3}`).join(" OR ")})
-            `,
-            [userId, allUsedKeys, ...prefixes.map((prefix) => `${prefix}%`)],
-        );
-    }
-    await db.query(
-        `DELETE FROM user_files AS preview WHERE preview.user_id = $1 AND preview.storage_key LIKE 'preview:image:%' AND NOT EXISTS (SELECT 1 FROM user_files AS original WHERE original.user_id = preview.user_id AND original.storage_key = substring(preview.storage_key FROM 9))`,
-        [userId],
-    );
-}
-
-function collectStorageKeys(value: unknown, keys: Set<string>) {
-    if (!value || typeof value !== "object") return;
-    if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
-    Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectStorageKeys(child, keys)) : collectStorageKeys(item, keys)));
-}

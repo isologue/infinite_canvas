@@ -62,9 +62,9 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     }
 }
 
-export async function storeGeneratedAudio(blob: Blob, format = "mp3"): Promise<UploadedFile> {
+export async function storeGeneratedAudio(blob: Blob, format = "mp3", title = ""): Promise<UploadedFile> {
     const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
-    return uploadMediaFile(audio, "audio");
+    return uploadMediaFile(audio, "audio", { title, source: "generated" });
 }
 
 function assertAudioConfig(config: AiConfig, model: string) {

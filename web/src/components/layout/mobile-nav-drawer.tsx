@@ -1,7 +1,7 @@
 "use client";
 
 import { Drawer } from "antd";
-import { Users } from "lucide-react";
+import { Database, Users } from "lucide-react";
 import Link from "next/link";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -38,6 +38,16 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                         </Link>
                     );
                 })}
+                {user?.role === "admin" ? (
+                    <Link
+                        href="/admin/resources"
+                        onClick={onClose}
+                        className="flex items-center gap-3 rounded-lg px-3 py-3 text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                    >
+                        <Database className="size-5" />
+                        <span>资源管理</span>
+                    </Link>
+                ) : null}
                 {user?.role === "admin" ? (
                     <Link
                         href="/admin/users"

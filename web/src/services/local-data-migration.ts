@@ -160,7 +160,7 @@ function sanitizeProjects(projects: CanvasProject[]) {
 
 function sanitizeAssets(assets: Asset[]) {
     return assets.map((asset) => {
-        if (asset.kind === "video" && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, url: "" } };
+        if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, url: "" } };
         if (asset.kind === "image" && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, dataUrl: "" } };
         return asset;
     });
@@ -225,6 +225,7 @@ async function uploadLegacyBlob(storageKey: string, blob: Blob) {
             "content-type": "application/octet-stream",
             "x-storage-key": storageKey,
             "x-storage-mime-type": blob.type || "application/octet-stream",
+            "x-resource-source": "local-migration",
         },
         body: await blob.arrayBuffer(),
     })

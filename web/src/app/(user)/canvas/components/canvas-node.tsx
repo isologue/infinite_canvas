@@ -502,6 +502,9 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 }
 
 function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
+    const [missing, setMissing] = useState(false);
+    useEffect(() => setMissing(false), [node.metadata?.content]);
+    if (missing) return <DeletedResourcePlaceholder label="视频资源已删除" color={theme.node.placeholder} />;
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.placeholder }}>
@@ -509,10 +512,13 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">空视频节点</span>
             </div>
         );
-    return <video src={node.metadata.content} controls preload="metadata" className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <video src={node.metadata.content} controls preload="metadata" onError={() => setMissing(true)} className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
+    const [missing, setMissing] = useState(false);
+    useEffect(() => setMissing(false), [node.metadata?.content]);
+    if (missing) return <DeletedResourcePlaceholder label="音频资源已删除" color={theme.node.placeholder} />;
     if (!node.metadata?.content)
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2" style={{ color: theme.node.placeholder }}>
@@ -526,7 +532,7 @@ function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
                 <Music2 className="size-4 shrink-0" />
                 <span className="truncate">{node.title || "音频"}</span>
             </div>
-            <audio src={node.metadata.content} controls preload="metadata" className="w-full" data-canvas-no-zoom />
+            <audio src={node.metadata.content} controls preload="metadata" onError={() => setMissing(true)} className="w-full" data-canvas-no-zoom />
         </div>
     );
 }
@@ -553,6 +559,10 @@ function ImageContent({
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const imageUrl = node.metadata?.storageKey && !node.metadata.content?.startsWith("blob:") ? storageImagePreviewUrl(node.metadata.storageKey) : node.metadata!.content!;
+    const [missing, setMissing] = useState(false);
+    useEffect(() => setMissing(false), [imageUrl]);
+
+    if (missing) return <DeletedResourcePlaceholder label="图片资源已删除" color={theme.node.placeholder} />;
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
@@ -562,6 +572,7 @@ function ImageContent({
                     alt={node.title}
                     loading="lazy"
                     decoding="async"
+                    onError={() => setMissing(true)}
                     draggable={false}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
@@ -602,6 +613,10 @@ function ImageContent({
             ) : null}
         </BatchFrame>
     );
+}
+
+function DeletedResourcePlaceholder({ label, color }: { label: string; color: string }) {
+    return <div className="flex h-full w-full items-center justify-center rounded-[inherit] text-sm" style={{ color }}>{label}</div>;
 }
 
 function ImageInfoBar({ node }: { node: CanvasNodeData }) {

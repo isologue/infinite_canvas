@@ -16,12 +16,12 @@ export type UploadedImage = {
 
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, options?: { compress?: boolean }): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string }): Promise<UploadedImage> {
     const raw = typeof input === "string" ? await (await fetch(input)).blob() : input;
     // 仅对用户上传的大图压缩（超过 10MB 等比缩放重编码）；生成结果不传 compress，保持原图。
     const blob = options?.compress ? await compressImageIfLarge(raw) : raw;
     const storageKey = `image:${nanoid()}`;
-    await uploadFile(storageKey, blob);
+    await uploadFile(storageKey, blob, options);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
@@ -39,8 +39,8 @@ export async function getImageBlob(storageKey: string) {
     return downloadFile(storageKey);
 }
 
-export async function setImageBlob(storageKey: string, blob: Blob) {
-    await uploadFile(storageKey, blob);
+export async function setImageBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
+    await uploadFile(storageKey, blob, options);
     const url = URL.createObjectURL(blob);
     objectUrls.set(storageKey, url);
     return url;
@@ -53,28 +53,11 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
-    const list = Array.from(new Set(keys));
-    await Promise.all(
-        list.map(async (key) => {
-            const url = objectUrls.get(key);
-            if (url) URL.revokeObjectURL(url);
-            objectUrls.delete(key);
-        }),
-    );
-    await fetch("/api/storage/files", {
-        method: "DELETE",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ keys: list }),
-    }).catch(() => null);
+    void keys;
 }
 
 export async function cleanupUnusedImages(usedData: unknown) {
-    const usedKeys = Array.from(collectImageStorageKeys(usedData));
-    await fetch("/api/storage/files/cleanup", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ usedKeys, prefixes: ["image:"] }),
-    }).catch(() => null);
+    void usedData;
 }
 
 export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {
@@ -84,17 +67,20 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-async function uploadFile(storageKey: string, blob: Blob) {
+async function uploadFile(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
     const arrayBuffer = await blob.arrayBuffer();
-    await fetch("/api/storage/files", {
+    const response = await fetch("/api/storage/files", {
         method: "POST",
         headers: {
             "content-type": "application/octet-stream",
             "x-storage-key": storageKey,
             "x-storage-mime-type": blob.type || "application/octet-stream",
+            "x-resource-title": encodeURIComponent(options?.title || ""),
+            "x-resource-source": options?.source || "upload",
         },
         body: arrayBuffer,
     });
+    if (!response.ok) throw new Error("图片保存失败");
 }
 
 async function downloadFile(storageKey: string) {

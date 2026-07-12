@@ -11,6 +11,7 @@ description: 画布项目存储、节点结构、媒体文件与清理机制
 
 - 每个画布项目独立保存在 Postgres `user_canvas_projects`，列表接口只读取标题、时间和节点/连线数量，详情接口按项目 ID 读取 `data_json`。
 - 图片、视频和音频二进制保存在 `user_files.content`，通过 `storageKey` 与画布节点关联。
+- `user_resources` 保存统一资源索引；媒体节点只保存 `storageKey` 和元数据，文本节点继续保存内容副本。
 - 画布 JSON 不长期保存 `blob:` URL、文件接口 URL或带 `storageKey` 的 base64；自动保存前会清空这些临时字段。
 - 浏览器旧版 localForage 数据只用于首次登录迁移，不再作为画布日常持久化来源。
 
@@ -52,7 +53,7 @@ type CanvasProject = {
 ```ts
 type CanvasNodeData = {
   id: string;
-  type: "image" | "text" | "config" | "video";
+  type: "image" | "text" | "config" | "video" | "audio";
   title: string;
   position: { x: number; y: number };
   width: number;
@@ -64,7 +65,7 @@ type CanvasNodeData = {
 通用字段：
 
 - `id`：节点 ID。
-- `type`：节点类型，当前有图片、文本、生成配置、视频四类。
+- `type`：节点类型，当前有图片、文本、生成配置、视频、音频五类。
 - `title`：节点标题。
 - `position`：画布世界坐标，不是屏幕坐标。
 - `width` / `height`：画布世界坐标下的节点尺寸。
@@ -81,7 +82,7 @@ type CanvasNodeMetadata = {
   status?: "idle" | "success" | "loading" | "error";
   errorDetails?: string;
   fontSize?: number;
-  generationMode?: "text" | "image" | "video";
+  generationMode?: "text" | "image" | "video" | "audio";
   model?: string;
   size?: string;
   count?: number;
@@ -104,6 +105,7 @@ type CanvasNodeMetadata = {
 
 - 图片节点：`storageKey` 是长期文件标识；加载详情后，前端同步把 `content` 派生为鉴权文件 URL。
 - 视频节点：使用相同的文件 URL，并通过 HTTP Range 按分片读取；`bytes/mimeType/durationMs` 保存文件信息。
+- 音频节点：使用鉴权文件 URL 和 metadata 预加载；`bytes/mimeType/durationMs` 保存文件信息。
 - 文本节点：`content` 保存文本内容；`fontSize` 保存字体大小；`prompt/status/errorDetails` 保存生成状态。
 - 生成配置节点：`generationMode/model/size/count/inputOrder` 保存生成配置；`generationMode` 可选择文本、图片或视频；上游输入通过 `connections` 计算。
 - 生成配置节点的 `composerContent` 保存含 `@[node:id]` 的用户模板，`resolvedPrompt` 仅记录最近一次动态解析结果；生成不能把解析结果回写到模板。
@@ -204,14 +206,11 @@ type UploadedImage = {
 4. 画布只渲染视口及周围预加载区域的节点，因此视口外媒体不会发起请求。
 5. 图片使用浏览器懒加载；视频和音频使用 `preload="metadata"`，视频开放式 Range 每次最多读取 4 MiB。
 
-## 图片移除和清理
+## 资源删除和清理
 
-图片不是在删除节点时立即按节点逐张删除，而是做引用清理：
-
-1. 删除节点、清空画布、删除画布、删除素材、删除助手会话时，会触发 `cleanupImages`。
-2. 当前画布先完成自动保存，再发起清理，避免服务端仍读取到删除前的项目状态。
-3. 服务端合并全部 `user_canvas_projects`、素材、生成记录和前端额外状态中的 `storageKey`。
-4. 不在引用集合里的 `user_files` 记录才会被删除。
-5. 当前会话创建过的 Object URL 会同步释放。
-
-这套方式可以避免同一张图片被画布、素材或助手同时引用时误删。
+- 删除节点、连线、画布、生成记录、素材条目或助手会话都不会物理删除资源。
+- 从“我的素材”移除只取消资源的 `is_saved`，文件和资源索引继续保留。
+- 资源只能由管理员在 `/admin/resources` 手动强制删除、清空，或由自动保留任务删除。
+- 管理员删除媒体资源时会删除原文件和 `preview:image:...` 预览缓存，但保留画布、节点、生成记录和素材条目；对应图片、视频、音频位置显示“资源已删除”。
+- 管理员删除文本资源不会修改已有文本节点，节点继续显示自身保存的文本副本。
+- 自动清理按资源 `created_at` 和类型保留天数判断，跳过已存入素材的资源，但不保护画布引用。
