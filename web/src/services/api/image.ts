@@ -67,12 +67,7 @@ type ResponseApiPayload = {
 };
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
-type ImageApiResponse = {
-    data?: Array<Record<string, unknown>>;
-    error?: { message?: string };
-    code?: number;
-    msg?: string;
-};
+type GeneratedImage = { id: string; dataUrl: string };
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
@@ -112,6 +107,11 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+const IMAGE_TASK_POLL_INTERVAL_MS = 2500;
+const IMAGE_TASK_MAX_ATTEMPTS = 240;
+const IMAGE_TASK_MAX_CONSECUTIVE_ERRORS = 5;
+const IMAGE_TASK_MAX_INITIAL_NOT_FOUND = 3;
+const asyncUnsupported = new Set<string>();
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
@@ -191,21 +191,213 @@ function resolveImageDataUrl(item: Record<string, unknown>) {
     return null;
 }
 
-function parseImagePayload(payload: ImageApiResponse) {
-    if (typeof payload.code === "number" && payload.code !== 0) {
-        throw new Error(payload.msg || "请求失败");
-    }
-    const images =
-        payload.data
-            ?.map(resolveImageDataUrl)
-            .filter((value): value is string => Boolean(value))
-            .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
+function imageTaskKey(config: AiConfig, endpoint: string) {
+    return `${config.apiFormat}:${config.baseUrl.trim().replace(/\/+$/, "")}:${endpoint}:${config.model}`;
+}
 
-    if (images.length === 0) {
-        throw new Error("接口没有返回图片");
+async function requestImagesWithAsyncFallback(input: {
+    key: string;
+    config: AiConfig;
+    create: (asyncMode: boolean) => Promise<unknown>;
+    parseImmediate: (payload: unknown) => GeneratedImage[] | null;
+    options?: RequestOptions;
+}) {
+    if (asyncUnsupported.has(input.key)) return parseRequiredImages(await input.create(false), input.parseImmediate);
+    let payload: unknown;
+    try {
+        payload = await input.create(true);
+    } catch (error) {
+        if (!shouldFallbackWithoutAsync(error)) throw error;
+        const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
+        asyncUnsupported.add(input.key);
+        return fallback;
     }
+    try {
+        const images = input.parseImmediate(payload);
+        if (images?.length) return images;
+    } catch (error) {
+        if (!shouldFallbackWithoutAsync(error)) throw error;
+        const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
+        asyncUnsupported.add(input.key);
+        return fallback;
+    }
+    const taskId = imageTaskId(payload);
+    if (taskId) return pollImageTask(input.config, taskId, input.parseImmediate, input.options);
+    const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
+    asyncUnsupported.add(input.key);
+    return fallback;
+}
 
+function parseRequiredImages(payload: unknown, preferred: (payload: unknown) => GeneratedImage[] | null) {
+    const images = preferred(payload) || findTaskImages(payload);
+    if (!images?.length) throw new Error("接口没有返回图片");
     return images;
+}
+
+function tryParseOpenAiImages(payload: unknown) {
+    if (!isRecord(payload)) return null;
+    const message = readPayloadError(payload);
+    if (message) {
+        const error = new Error(message) as Error & { status?: number };
+        if (typeof payload.code === "number") error.status = payload.code;
+        throw error;
+    }
+    if (!Array.isArray(payload.data)) return null;
+    const images = payload.data.map((item) => isRecord(item) ? resolveImageDataUrl(item) : null).filter((value): value is string => Boolean(value)).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+    return images.length ? images : null;
+}
+
+function tryParseGeminiImages(payload: unknown) {
+    if (!isRecord(payload)) return null;
+    validateGeminiPayload(payload as GeminiPayload);
+    if (!Array.isArray(payload.candidates)) return null;
+    const images = (payload as GeminiPayload).candidates
+        ?.flatMap((candidate) => candidate.content?.parts || [])
+        .map((part) => {
+            const inlineData = part.inlineData || (part.inline_data ? { mimeType: part.inline_data.mimeType || part.inline_data.mime_type, data: part.inline_data.data } : undefined);
+            if (inlineData?.data) return `data:${inlineData.mimeType || "image/png"};base64,${inlineData.data}`;
+            return part.fileData?.fileUri || null;
+        })
+        .filter((value): value is string => Boolean(value))
+        .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
+    return images.length ? images : null;
+}
+
+function findTaskImages(payload: unknown, depth = 0): GeneratedImage[] | null {
+    if (depth > 4) return null;
+    const direct = tryParseOpenAiImages(payload) || tryParseGeminiImages(payload);
+    if (direct?.length) return direct;
+    if (Array.isArray(payload)) {
+        const images = payload.map((item) => isRecord(item) ? resolveImageDataUrl(item) : null).filter((value): value is string => Boolean(value)).map((dataUrl) => ({ id: nanoid(), dataUrl }));
+        return images.length ? images : null;
+    }
+    if (!isRecord(payload)) return null;
+    for (const key of ["images", "data", "result", "output"]) {
+        const images = findTaskImages(payload[key], depth + 1);
+        if (images?.length) return images;
+    }
+    return null;
+}
+
+function imageTaskId(payload: unknown) {
+    if (!isRecord(payload)) return "";
+    if (typeof payload.task === "string" || typeof payload.task === "number") return String(payload.task).trim();
+    for (const key of ["task_id", "taskId"]) {
+        if (typeof payload[key] === "string" || typeof payload[key] === "number") return String(payload[key]).trim();
+    }
+    for (const key of ["task", "data", "result"]) {
+        const id = imageTaskId(payload[key]);
+        if (id) return id;
+    }
+    return typeof payload.id === "string" || typeof payload.id === "number" ? String(payload.id).trim() : "";
+}
+
+function imageTaskStatus(payload: unknown): string {
+    if (!isRecord(payload)) return "";
+    for (const key of ["status", "state"]) {
+        if (typeof payload[key] === "string") return payload[key].trim().toLowerCase();
+    }
+    for (const key of ["task", "data", "result"]) {
+        const status = imageTaskStatus(payload[key]);
+        if (status) return status;
+    }
+    return "";
+}
+
+async function pollImageTask(config: AiConfig, taskId: string, preferred: (payload: unknown) => GeneratedImage[] | null, options?: RequestOptions) {
+    let consecutiveErrors = 0;
+    let initialNotFound = 0;
+    for (let attempt = 0; attempt < IMAGE_TASK_MAX_ATTEMPTS; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        try {
+            const response = await axios.get<unknown>(imageTaskApiUrl(config, taskId), {
+                headers: config.apiFormat === "gemini" ? geminiHeaders(config) : aiHeaders(config),
+                signal: options?.signal,
+            });
+            consecutiveErrors = 0;
+            const payload = response.data;
+            const errorMessage = readPayloadError(payload);
+            if (errorMessage) throw new Error(errorMessage);
+            const images = preferred(payload) || findTaskImages(payload);
+            const status = imageTaskStatus(payload);
+            if (images?.length && (!status || IMAGE_TASK_SUCCESS.has(status))) return images;
+            if (IMAGE_TASK_FAILED.has(status)) throw new Error(readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`);
+            if (IMAGE_TASK_SUCCESS.has(status)) throw new Error("图片任务已完成，但没有返回图片");
+        } catch (error) {
+            if (isRequestCancelled(error)) throw error;
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (status === 404 && initialNotFound < IMAGE_TASK_MAX_INITIAL_NOT_FOUND) {
+                initialNotFound += 1;
+            } else if (isTransientTaskError(error) && consecutiveErrors < IMAGE_TASK_MAX_CONSECUTIVE_ERRORS) {
+                consecutiveErrors += 1;
+            } else {
+                throw error;
+            }
+        }
+        await waitForImageTask(IMAGE_TASK_POLL_INTERVAL_MS, options?.signal);
+    }
+    throw new Error("图片生成任务超时，请稍后重试");
+}
+
+const IMAGE_TASK_SUCCESS = new Set(["success", "successful", "succeeded", "completed", "done", "finished"]);
+const IMAGE_TASK_FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled", "expired"]);
+
+function readPayloadError(payload: unknown) {
+    if (!isRecord(payload)) return "";
+    if (typeof payload.code === "number" && payload.code !== 0) return typeof payload.msg === "string" ? payload.msg : isRecord(payload.error) && typeof payload.error.message === "string" ? payload.error.message : "请求失败";
+    if (isRecord(payload.error) && typeof payload.error.message === "string") return payload.error.message;
+    return "";
+}
+
+function readTaskFailure(payload: unknown): string {
+    if (!isRecord(payload)) return "";
+    const error = readPayloadError(payload);
+    if (error) return error;
+    if (typeof payload.error === "string" && payload.error) return payload.error;
+    if (typeof payload.message === "string" && payload.message) return payload.message;
+    if (typeof payload.msg === "string" && payload.msg) return payload.msg;
+    for (const key of ["task", "data", "result"]) {
+        const message = readTaskFailure(payload[key]);
+        if (message) return message;
+    }
+    return "";
+}
+
+function shouldFallbackWithoutAsync(error: unknown) {
+    if (isRequestCancelled(error)) return false;
+    const status = axios.isAxiosError(error) ? error.response?.status : isRecord(error) && typeof error.status === "number" ? error.status : undefined;
+    if (status && [401, 403, 429].includes(status)) return false;
+    if (status && [400, 404, 405, 415, 422].includes(status)) return true;
+    return /(?:unknown|unsupported|not support|unrecognized|unexpected).{0,40}async|async.{0,40}(?:unknown|unsupported|not support|unrecognized|unexpected)/i.test(readAxiosError(error, ""));
+}
+
+function isTransientTaskError(error: unknown) {
+    if (!axios.isAxiosError(error)) return false;
+    const status = error.response?.status;
+    return !error.response || status === 408 || status === 425 || status === 429 || Boolean(status && status >= 500);
+}
+
+function isRequestCancelled(error: unknown) {
+    return axios.isCancel(error) || error instanceof DOMException && error.name === "AbortError";
+}
+
+function waitForImageTask(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        let timer: ReturnType<typeof setTimeout>;
+        const onAbort = () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        };
+        timer = setTimeout(() => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve();
+        }, ms);
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
 }
 
 function readAxiosError(error: unknown, fallback: string) {
@@ -231,6 +423,12 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path);
+}
+
+function imageTaskApiUrl(config: AiConfig, taskId: string) {
+    if (config.apiFormat !== "gemini") return aiApiUrl(config, `/images/tasks/${encodeURIComponent(taskId)}`);
+    const baseUrl = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/(?:v1beta|v1)$/i, "");
+    return `${baseUrl}/v1/images/tasks/${encodeURIComponent(taskId)}`;
 }
 
 function aiHeaders(config: AiConfig, contentType?: string) {
@@ -617,30 +815,26 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
     for (const image of references) {
         parts.push(toGeminiImagePart(await imageToDataUrl(image)));
     }
-    const response = await axios.post<GeminiPayload>(
-        geminiApiUrl(config, "generateContent"),
-        {
-            ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }),
-            contents: [{ role: "user", parts }],
-        },
-        { headers: geminiHeaders(config), signal: options?.signal },
-    );
-    return parseGeminiImagePayload(response.data);
+    const body = {
+        ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"] } }),
+        contents: [{ role: "user", parts }],
+    };
+    return requestImagesWithAsyncFallback({
+        key: imageTaskKey(config, "gemini:generateContent"),
+        config,
+        create: async (asyncMode) => (await axios.post<unknown>(
+            geminiApiUrl(config, "generateContent"),
+            asyncMode ? { ...body, async: true } : body,
+            { headers: geminiHeaders(config), signal: options?.signal },
+        )).data,
+        parseImmediate: (payload) => tryParseGeminiImages(payload) || tryParseOpenAiImages(payload),
+        options,
+    });
 }
 
 function parseGeminiImagePayload(payload: GeminiPayload) {
-    validateGeminiPayload(payload);
-    const images =
-        payload.candidates
-            ?.flatMap((candidate) => candidate.content?.parts || [])
-            .map((part) => {
-                const inlineData = part.inlineData || (part.inline_data ? { mimeType: part.inline_data.mimeType || part.inline_data.mime_type, data: part.inline_data.data } : undefined);
-                if (inlineData?.data) return `data:${inlineData.mimeType || "image/png"};base64,${inlineData.data}`;
-                return part.fileData?.fileUri || null;
-            })
-            .filter((value): value is string => Boolean(value))
-            .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
-    if (!images.length) throw new Error("Gemini returned no image");
+    const images = tryParseGeminiImages(payload);
+    if (!images?.length) throw new Error("Gemini returned no image");
     return images;
 }
 
@@ -658,24 +852,29 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
         try {
-            const response = await axios.post<ImageApiResponse>(
-                aiApiUrl(requestConfig, "/images/generations"),
-                {
-                    model: requestConfig.model,
-                    prompt: withSystemPrompt(requestConfig, prompt),
-                    n,
-                    ...(quality ? { quality } : {}),
-                    ...(requestSize ? { size: requestSize } : {}),
-                    response_format: "b64_json",
-                    output_format: IMAGE_OUTPUT_FORMAT,
-                },
-                {
-                    headers: aiHeaders(requestConfig, "application/json"),
-                    signal: options?.signal,
-                },
-            );
-            const images = parseImagePayload(response.data);
-            return images;
+            const body = {
+                model: requestConfig.model,
+                prompt: withSystemPrompt(requestConfig, prompt),
+                n,
+                ...(quality ? { quality } : {}),
+                ...(requestSize ? { size: requestSize } : {}),
+                response_format: "b64_json",
+                output_format: IMAGE_OUTPUT_FORMAT,
+            };
+            return await requestImagesWithAsyncFallback({
+                key: imageTaskKey(requestConfig, "/images/generations"),
+                config: requestConfig,
+                create: async (asyncMode) => (await axios.post<unknown>(
+                    aiApiUrl(requestConfig, "/images/generations"),
+                    asyncMode ? { ...body, async: true } : body,
+                    {
+                        headers: aiHeaders(requestConfig, "application/json"),
+                        signal: options?.signal,
+                    },
+                )).data,
+                parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+                options,
+            });
         } catch (error) {
             throw new Error(readAxiosError(error, "request failed"));
         }
@@ -697,26 +896,30 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
-        const formData = new FormData();
-        formData.set("model", requestConfig.model);
-        formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-        formData.set("n", String(n));
-        formData.set("response_format", "b64_json");
-        formData.set("output_format", IMAGE_OUTPUT_FORMAT);
-        if (quality) {
-            formData.set("quality", quality);
-        }
-        if (requestSize) {
-            formData.set("size", requestSize);
-        }
         const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-        files.forEach((file) => formData.append("image", file));
-        if (mask) formData.set("mask", dataUrlToFile(mask));
+        const createFormData = (asyncMode: boolean) => {
+            const formData = new FormData();
+            formData.set("model", requestConfig.model);
+            formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
+            formData.set("n", String(n));
+            formData.set("response_format", "b64_json");
+            formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+            if (asyncMode) formData.set("async", "true");
+            if (quality) formData.set("quality", quality);
+            if (requestSize) formData.set("size", requestSize);
+            files.forEach((file) => formData.append("image", file));
+            if (mask) formData.set("mask", dataUrlToFile(mask));
+            return formData;
+        };
 
         try {
-            const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
-            const images = parseImagePayload(response.data);
-            return images;
+            return await requestImagesWithAsyncFallback({
+                key: imageTaskKey(requestConfig, "/images/edits"),
+                config: requestConfig,
+                create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(requestConfig, "/images/edits"), createFormData(asyncMode), { headers: aiHeaders(requestConfig), signal: options?.signal })).data,
+                parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+                options,
+            });
         } catch (error) {
             throw new Error(readAxiosError(error, "request failed"));
         }

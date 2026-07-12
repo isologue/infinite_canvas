@@ -198,6 +198,14 @@ type UploadedImage = {
 
 因此，`content` 只适合当前浏览器会话展示，不能作为长期文件标识；长期标识是 `storageKey`。
 
+## 图片异步生成
+
+- OpenAI 格式的普通生图和图片编辑默认携带 `async=true`；Gemini `generateContent` 请求体默认携带 `async: true`。
+- 创建接口直接返回图片时立即沿用同步流程；返回任务 ID 时轮询同一渠道的 `/v1/images/tasks/:task_id`。
+- 任务查询兼容 OpenAI 图片数组和 Gemini `candidates` 图片结果，沿用当前请求的鉴权和取消信号。
+- 只有首次创建明确不兼容 `async` 时才去掉参数同步重试；任务 ID 一旦产生，查询失败不会创建第二个生成请求。
+- 不支持异步的渠道、接口和模型组合只在当前浏览器会话中缓存，刷新后重新探测。
+
 ## 画布和媒体读取
 
 1. `GET /api/user/projects` 只返回 `CanvasProjectSummary[]`。
