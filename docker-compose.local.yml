@@ -35,6 +35,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
       JWT_SECRET: ${JWT_SECRET:-infinite-canvas}
       JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-168}
+      LOCKED_CHANNEL_BASE_URLS: ${LOCKED_CHANNEL_BASE_URLS:-}
+      LOCKED_CHANNEL_BASE_URL: ${LOCKED_CHANNEL_BASE_URL:-https://moai.wiki}
       NEXT_PUBLIC_DOC_URL: ${NEXT_PUBLIC_DOC_URL:-https://docs.canvas.best}
     restart: unless-stopped
 

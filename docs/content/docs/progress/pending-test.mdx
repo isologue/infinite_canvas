@@ -44,6 +44,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 多 Base URL 锁定：
   - LOCKED_CHANNEL_BASE_URLS 环境变量支持逗号分隔多个中转地址。
   - 普通用户渠道的 Base URL 改为下拉选择器（Select），只能从管理员设置的列表中选取。
+  - 修复普通用户初始化时锁定 URL 列表未写入前端状态、下拉无选项，以及 Base URL 下方提示乱码的问题。
+  - Docker Compose 显式向应用容器传递单数和复数锁定 URL 环境变量。
   - 超管仍然可以自由编辑 Base URL。
   - 已有的单 LOCKED_CHANNEL_BASE_URL 变量向后兼容，自动转为单元素列表。
   - 服务端 enforceLockedBaseUrl 白名单校验：用户保存的 baseUrl 不在列表中时自动回退到第一个。

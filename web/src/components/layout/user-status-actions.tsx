@@ -36,7 +36,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
 
     const reloadSharedConfig = async () => {
         const shared = await fetch("/api/shared-config", { cache: "no-store" })
-            .then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string } }>)
+            .then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string; lockedBaseUrls?: string[] } }>)
             .catch(() => null);
         if (shared?.data?.config && shared.data.webdav) {
             useConfigStore.getState().replaceSharedConfig({
@@ -45,6 +45,7 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
                 canManage: Boolean(shared.data.canManage),
                 canManageUrl: Boolean(shared.data.canManageUrl),
                 lockedBaseUrl: shared.data.lockedBaseUrl,
+                lockedBaseUrls: shared.data.lockedBaseUrls,
             });
         }
     };
