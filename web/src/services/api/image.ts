@@ -272,7 +272,7 @@ function findTaskImages(payload: unknown, depth = 0): GeneratedImage[] | null {
         return images.length ? images : null;
     }
     if (!isRecord(payload)) return null;
-    for (const key of ["images", "data", "result", "output"]) {
+    for (const key of ["images", "data", "result", "output", "response"]) {
         const images = findTaskImages(payload[key], depth + 1);
         if (images?.length) return images;
     }
@@ -285,7 +285,7 @@ function imageTaskId(payload: unknown) {
     for (const key of ["task_id", "taskId"]) {
         if (typeof payload[key] === "string" || typeof payload[key] === "number") return String(payload[key]).trim();
     }
-    for (const key of ["task", "data", "result"]) {
+    for (const key of ["task", "data", "result", "response"]) {
         const id = imageTaskId(payload[key]);
         if (id) return id;
     }
@@ -297,7 +297,7 @@ function imageTaskStatus(payload: unknown): string {
     for (const key of ["status", "state"]) {
         if (typeof payload[key] === "string") return payload[key].trim().toLowerCase();
     }
-    for (const key of ["task", "data", "result"]) {
+    for (const key of ["task", "data", "result", "response"]) {
         const status = imageTaskStatus(payload[key]);
         if (status) return status;
     }
@@ -356,7 +356,7 @@ function readTaskFailure(payload: unknown): string {
     if (typeof payload.error === "string" && payload.error) return payload.error;
     if (typeof payload.message === "string" && payload.message) return payload.message;
     if (typeof payload.msg === "string" && payload.msg) return payload.msg;
-    for (const key of ["task", "data", "result"]) {
+    for (const key of ["task", "data", "result", "response"]) {
         const message = readTaskFailure(payload[key]);
         if (message) return message;
     }
