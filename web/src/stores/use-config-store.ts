@@ -407,6 +407,10 @@ function uniqueModels(models: string[]) {
     return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
 }
 
+export function buildAiProxyUrl(targetUrl: string) {
+    return `/api/ai-proxy?url=${encodeURIComponent(targetUrl)}`;
+}
+
 export function buildApiUrl(baseUrl: string, path: string) {
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
     normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);

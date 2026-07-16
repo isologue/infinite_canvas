@@ -1,6 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
@@ -422,13 +422,13 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 }
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+    return buildAiProxyUrl(buildApiUrl(config.baseUrl, path));
 }
 
 function imageTaskApiUrl(config: AiConfig, taskId: string) {
     if (config.apiFormat !== "gemini") return aiApiUrl(config, `/images/tasks/${encodeURIComponent(taskId)}`);
     const baseUrl = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/(?:v1beta|v1)$/i, "");
-    return `${baseUrl}/v1/images/tasks/${encodeURIComponent(taskId)}`;
+    return buildAiProxyUrl(`${baseUrl}/v1/images/tasks/${encodeURIComponent(taskId)}`);
 }
 
 function aiHeaders(config: AiConfig, contentType?: string) {
@@ -484,10 +484,10 @@ function geminiModelName(model: string) {
     return model.trim().replace(/^models\//, "");
 }
 
-function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent") {
+function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "generateContent" | "streamGenerateContent", search = "") {
     const baseUrl = geminiBaseUrl(config);
-    if (!action) return `${baseUrl}/models`;
-    return `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}`;
+    const targetUrl = action ? `${baseUrl}/models/${encodeURIComponent(geminiModelName(config.model))}:${action}${search}` : `${baseUrl}/models${search}`;
+    return buildAiProxyUrl(targetUrl);
 }
 
 function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
@@ -729,7 +729,7 @@ function toGeminiToolOptions(tools: ResponseFunctionTool[], toolChoice: ToolChoi
 }
 
 async function requestGeminiStreamingResponse(config: AiConfig, body: Record<string, unknown>, onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
-    const response = await fetch(`${geminiApiUrl(config, "streamGenerateContent")}?alt=sse`, {
+    const response = await fetch(geminiApiUrl(config, "streamGenerateContent", "?alt=sse"), {
         method: "POST",
         headers: geminiHeaders(config),
         body: JSON.stringify(body),
@@ -977,7 +977,7 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
                 .filter((id): id is string => Boolean(id))
                 .sort((a, b) => a.localeCompare(b));
         }
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
+        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildAiProxyUrl(buildApiUrl(config.baseUrl, "/models")), {
             headers: {
                 Authorization: `Bearer ${config.apiKey}`,
             },
