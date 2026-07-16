@@ -316,7 +316,7 @@ export function AppConfigModal() {
                                                 <Form.Item label="调用格式" className="mb-0">
                                                     <Select value={channel.apiFormat} options={apiFormatOptions} onChange={(value: ApiCallFormat) => updateChannelApiFormat(channel, value)} />
                                                 </Form.Item>
-                                                <Form.Item label="Base URL" className="mb-0" extra={!canManageUrl ? "????????" : undefined}>
+                                                <Form.Item label="Base URL" className="mb-0" extra={!canManageUrl ? "普通用户只能选择管理员预设的 Base URL" : undefined}>
                                                     {canManageUrl ? (
                                                         <Input value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
                                                     ) : (

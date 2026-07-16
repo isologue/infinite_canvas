@@ -1,12 +1,14 @@
 import { NextRequest } from "next/server";
 
 import { readSessionUser } from "@/lib/server/auth";
- import { lockedChannelBaseUrl, lockedChannelBaseUrls, readSharedConfig, readUserConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
+import { lockedChannelBaseUrls, readSharedConfig, readUserConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
 
 export async function GET() {
     try {
         const user = await readSessionUser();
         const isAdmin = user?.role === "admin";
+        const isRegularUser = user?.role === "user";
+        const lockedBaseUrls = isRegularUser ? lockedChannelBaseUrls() : [];
         // 超管读写全局配置（渠道 URL/key 的权威来源）；普通用户读自己那份（渠道 URL/key 由服务端用全局回填）。
         const shared = user && !isAdmin ? await readUserConfig(user.id) : await readSharedConfig();
         return Response.json({
@@ -17,9 +19,9 @@ export async function GET() {
                 // 所有登录用户都能保存自己的配置；只有超管能改渠道 URL。
                 canManage: Boolean(user),
                 canManageUrl: isAdmin,
-                // 普通用户新建渠道时锁定的 baseUrl（超管不受此限）。
-                 lockedBaseUrl: lockedChannelBaseUrl(),
-                 lockedBaseUrls: lockedChannelBaseUrls(),
+                // 只有普通用户接收锁定列表；超管不受环境变量限制，可自由填写任意 URL。
+                lockedBaseUrl: lockedBaseUrls[0] || "",
+                lockedBaseUrls,
             },
         });
     } catch (error) {
@@ -34,6 +36,7 @@ export async function PUT(request: NextRequest) {
         const body = (await request.json()) as { config?: Record<string, unknown>; webdav?: Record<string, unknown> };
         if (!body?.config) return Response.json({ code: 400, msg: "配置数据不完整" }, { status: 400 });
         if (user.role === "admin") {
+            // 超管直接保存全局配置，不执行普通用户的 URL 白名单校验。
             if (!body?.webdav) return Response.json({ code: 400, msg: "配置数据不完整" }, { status: 400 });
             const saved = await writeSharedConfig({ config: body.config, webdav: body.webdav });
             return Response.json({ code: 0, msg: "配置已保存", data: saved });

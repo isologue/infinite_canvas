@@ -49,7 +49,7 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
             // 换账号后重新拉取该用户的画布/素材，否则会残留上一个账号的数据。
             await reloadUserScopedData();
 
-            const shared = await fetch("/api/shared-config", { cache: "no-store" }).then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string } }>);
+            const shared = await fetch("/api/shared-config", { cache: "no-store" }).then((res) => res.json() as Promise<{ data?: { config?: unknown; webdav?: unknown; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string; lockedBaseUrls?: string[] } }>);
             if (shared.data?.config && shared.data?.webdav) {
                 replaceSharedConfig({
                     config: shared.data.config as never,
@@ -57,6 +57,7 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
                     canManage: Boolean(shared.data.canManage),
                     canManageUrl: Boolean(shared.data.canManageUrl),
                     lockedBaseUrl: shared.data.lockedBaseUrl,
+                    lockedBaseUrls: shared.data.lockedBaseUrls,
                 });
             }
 
