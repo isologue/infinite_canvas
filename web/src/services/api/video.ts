@@ -115,9 +115,13 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     return task.provider === "seedance" ? pollSeedanceTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
 }
 
-export async function storeGeneratedVideo(result: VideoGenerationResult): Promise<UploadedFile> {
-    if (result.blob) return uploadMediaFile(result.blob, "video");
-    if (result.url) return { url: result.url, storageKey: "", bytes: 0, mimeType: result.mimeType || "video/mp4" };
+export async function storeGeneratedVideo(result: VideoGenerationResult, title = ""): Promise<UploadedFile> {
+    if (result.blob) return uploadMediaFile(result.blob, "video", { title, source: "generated" });
+    if (result.url) {
+        const response = await fetch(result.url);
+        if (!response.ok) throw new Error("视频下载失败，无法保存到资源库");
+        return uploadMediaFile(await response.blob(), "video", { title, source: "generated" });
+    }
     throw new Error("视频接口没有返回可播放的视频");
 }
 

@@ -24,6 +24,7 @@ export type CanvasImageGenerationType = "generation" | "edit";
 export type CanvasNodeMetadata = {
     content?: string;
     composerContent?: string;
+    resolvedPrompt?: string;
     prompt?: string;
     status?: CanvasNodeStatus;
     errorDetails?: string;

@@ -1,12 +1,7 @@
-import { NextRequest } from "next/server";
-
 import { readSessionUser } from "@/lib/server/auth";
-import { cleanupUserFiles } from "@/lib/server/user-data-db";
 
-export async function POST(request: NextRequest) {
+export async function POST() {
     const user = await readSessionUser();
     if (!user) return Response.json({ code: 401, msg: "请先登录" }, { status: 401 });
-    const body = (await request.json().catch(() => null)) as { usedKeys?: string[]; prefixes?: string[] } | null;
-    await cleanupUserFiles(user.id, body?.usedKeys || [], body?.prefixes || []);
-    return Response.json({ code: 0, msg: "清理成功" });
+    return Response.json({ code: 403, msg: "资源只能由管理员在资源管理中删除" }, { status: 403 });
 }

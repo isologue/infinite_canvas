@@ -26,7 +26,7 @@ export async function exportAssets(assets: Asset[]) {
 
     await Promise.all(
         assets.map(async (asset) => {
-            if (asset.kind !== "image" && asset.kind !== "video") return;
+            if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
             const storageKey = asset.data.storageKey;
             if (!storageKey) return;
             const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
@@ -52,7 +52,7 @@ export async function readAssetPackage(file: File) {
             const blob = zip.get(item.path);
             if (!blob) return;
             const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
-            await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
+            await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob, { source: "asset-import" }) : setMediaBlob(item.storageKey, typedBlob, { source: "asset-import" }));
         }),
     );
     return data.assets;
@@ -67,7 +67,11 @@ function fileExtension(mimeType: string, kind: Asset["kind"]) {
     if (mimeType.includes("jpeg")) return "jpg";
     if (mimeType.includes("webp")) return "webp";
     if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return "mp4";
+    if (mimeType.includes("mp4")) return kind === "audio" ? "m4a" : "mp4";
     if (mimeType.includes("webm")) return "webm";
+    if (mimeType.includes("mpeg")) return "mp3";
+    if (mimeType.includes("wav")) return "wav";
+    if (mimeType.includes("ogg")) return "ogg";
+    if (mimeType.includes("m4a")) return "m4a";
     return kind === "image" ? "png" : "bin";
 }

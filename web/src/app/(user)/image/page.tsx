@@ -111,7 +111,7 @@ export default function ImagePage() {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
-                const image = await uploadImage(file, { compress: true });
+                const image = await uploadImage(file, { compress: true, title: file.name, source: "reference-upload" });
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
@@ -128,7 +128,7 @@ export default function ImagePage() {
             }
             const nextReferences = await Promise.all(
                 blobs.map(async (blob, index) => {
-                    const image = await uploadImage(blob, { compress: true });
+                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload" });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
@@ -172,7 +172,7 @@ export default function ImagePage() {
         try {
             const logImages = await Promise.all(
                 successImages.map(async (image) => {
-                    const stored = await uploadImage(image.dataUrl);
+                    const stored = await uploadImage(image.dataUrl, { title: text.slice(0, 80), source: "generated" });
                     return { ...image, dataUrl: stored.url, storageKey: stored.storageKey, width: stored.width, height: stored.height, bytes: stored.bytes, mimeType: stored.mimeType };
                 }),
             );

@@ -4,9 +4,10 @@ import { createZip } from "@/lib/zip";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "../export-types";
-import type { CanvasProject } from "../stores/use-canvas-store";
+import { fetchCanvasProject, type CanvasProject, type CanvasProjectSummary } from "@/services/api/canvas-projects";
 
-export async function exportCanvasProjects(projects: CanvasProject[], fileName = "无限画布") {
+export async function exportCanvasProjects(sources: Array<CanvasProject | CanvasProjectSummary>, fileName = "无限画布") {
+    const projects = await Promise.all(sources.map((project) => ("nodes" in project ? project : fetchCanvasProject(project.id))));
     const zipFiles: { name: string; data: BlobPart }[] = [];
     const exportedProjects = await Promise.all(
         projects.map(async (project) => {

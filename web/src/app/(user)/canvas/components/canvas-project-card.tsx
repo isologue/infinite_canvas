@@ -4,11 +4,11 @@ import { Check, Download, Pencil, Trash2, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button, Input } from "antd";
 
-import { useCanvasStore, type CanvasProject } from "../stores/use-canvas-store";
+import { useCanvasStore, type CanvasProjectSummary } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "../utils/canvas-export";
 
-export function CanvasProjectCard({ project }: { project: CanvasProject }) {
+export function CanvasProjectCard({ project }: { project: CanvasProjectSummary }) {
     const router = useRouter();
     const searchParams = useSearchParams();
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -23,8 +23,8 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const editing = editingId === project.id;
     const selected = selectedIds.includes(project.id);
     const open = () => router.push(`/canvas/${project.id}${searchParams.toString() ? `?${searchParams.toString()}` : ""}`);
-    const saveTitle = () => {
-        renameProject(project.id, editingTitle);
+    const saveTitle = async () => {
+        await renameProject(project.id, editingTitle);
         stopEditing();
     };
 
@@ -40,7 +40,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     aria-label={`选择 ${project.title}`}
                 />
                 {editing ? (
-                    <Input className="min-w-0" value={editingTitle} onClick={(event) => event.stopPropagation()} onChange={(event) => setEditingTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && saveTitle()} autoFocus />
+                    <Input className="min-w-0" value={editingTitle} onClick={(event) => event.stopPropagation()} onChange={(event) => setEditingTitle(event.target.value)} onKeyDown={(event) => event.key === "Enter" && void saveTitle()} autoFocus />
                 ) : (
                     <button
                         type="button"
@@ -52,7 +52,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     >
                         <h2 className="truncate text-xl font-semibold">{project.title}</h2>
                         <p className="mt-3 text-sm leading-6 text-stone-600 dark:text-stone-400">
-                            {project.nodes.length} 个节点 · {project.connections.length} 条连线
+                            {project.nodeCount} 个节点 · {project.connectionCount} 条连线
                         </p>
                     </button>
                 )}
@@ -62,7 +62,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                 <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
                     {editing ? (
                         <>
-                            <Button type="text" size="small" shape="circle" icon={<Check className="size-4" />} onClick={saveTitle} aria-label="保存名称" />
+                            <Button type="text" size="small" shape="circle" icon={<Check className="size-4" />} onClick={() => void saveTitle()} aria-label="保存名称" />
                             <Button type="text" size="small" shape="circle" icon={<X className="size-4" />} onClick={stopEditing} aria-label="取消重命名" />
                         </>
                     ) : (

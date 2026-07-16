@@ -74,6 +74,7 @@ export function AppConfigModal() {
     const canManageUrl = useConfigStore((state) => state.canManageUrl);
     const lockedBaseUrl = useConfigStore((state) => state.lockedBaseUrl);
     const lockedBaseUrls = useConfigStore((state) => state.lockedBaseUrls);
+    const lockedBaseUrlOptions = lockedBaseUrls.length ? lockedBaseUrls : lockedBaseUrl ? [lockedBaseUrl] : [];
     const isConfigOpen = useConfigStore((state) => state.isConfigOpen);
     const shouldPromptContinue = useConfigStore((state) => state.shouldPromptContinue);
     const setConfigDialogOpen = useConfigStore((state) => state.setConfigDialogOpen);
@@ -320,7 +321,7 @@ export function AppConfigModal() {
                                                     {canManageUrl ? (
                                                         <Input value={channel.baseUrl} onChange={(event) => updateChannel(channel.id, { baseUrl: event.target.value })} />
                                                     ) : (
-                                                        <Select value={channel.baseUrl} onChange={(value) => updateChannel(channel.id, { baseUrl: value })} options={lockedBaseUrls.map((url) => ({ label: url, value: url }))} />
+                                                        <Select value={channel.baseUrl} onChange={(value) => updateChannel(channel.id, { baseUrl: value })} options={lockedBaseUrlOptions.map((url) => ({ label: url, value: url }))} />
                                                     )}
                                                 </Form.Item>
                                                 <Form.Item label="API Key" className="mb-0">

@@ -122,13 +122,13 @@ export default function VideoPage() {
         if (selectedFiles.some((file) => isSupportedAudioFile(file) && file.size > SEEDANCE_REFERENCE_LIMITS.audioMaxBytes)) message.warning("已忽略超过 15MB 的参考音频");
         const nextReferences = await Promise.all(
             imageFiles.map(async (file) => {
-                const image = await uploadImage(file, { compress: true });
+                const image = await uploadImage(file, { compress: true, title: file.name, source: "reference-upload" });
                 return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
             }),
         );
         const nextVideoReferences = await Promise.all(
             videoFiles.map(async (file) => {
-                const video = await uploadMediaFile(file, "video-reference");
+                const video = await uploadMediaFile(file, "video-reference", { title: file.name, source: "reference-upload" });
                 return { id: nanoid(), name: file.name, type: video.mimeType, url: video.url, storageKey: video.storageKey, bytes: video.bytes, width: video.width, height: video.height, durationMs: video.durationMs };
             }),
         );
@@ -136,7 +136,7 @@ export default function VideoPage() {
             audioReferences,
             await Promise.all(
                 audioFiles.map(async (file) => {
-                    const audio = await uploadMediaFile(file, "audio-reference");
+                    const audio = await uploadMediaFile(file, "audio-reference", { title: file.name, source: "reference-upload" });
                     return { id: nanoid(), name: file.name, type: audio.mimeType, url: audio.url, storageKey: audio.storageKey, durationMs: audio.durationMs };
                 }),
             ),
@@ -157,7 +157,7 @@ export default function VideoPage() {
             }
             const nextReferences = await Promise.all(
                 blobs.slice(0, SEEDANCE_REFERENCE_LIMITS.images - references.length).map(async (blob, index) => {
-                    const image = await uploadImage(blob, { compress: true });
+                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload" });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
@@ -298,7 +298,7 @@ export default function VideoPage() {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
                 if (state.status === "completed") {
-                    const stored = await storeGeneratedVideo(state.result);
+                    const stored = await storeGeneratedVideo(state.result, log.prompt.slice(0, 80));
                     const nextVideo: GeneratedVideo = {
                         id: nanoid(),
                         url: stored.url,

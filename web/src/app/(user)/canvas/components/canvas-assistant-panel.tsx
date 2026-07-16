@@ -11,6 +11,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { nanoid } from "nanoid";
 import { requestToolResponse, type ResponseFunctionTool, type ResponseInputMessage, type ResponseToolCall } from "@/services/api/image";
+import { registerGeneratedTextResource } from "@/services/api/resources";
 import { imageToDataUrl } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -208,6 +209,7 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
         }));
     };
     const addOnlineLog = (title: string, data?: unknown) => setOnlineLogs((prev) => [{ id: nanoid(), time: new Date().toLocaleTimeString(), title, data }, ...prev].slice(0, 80));
+    const registerAssistantReply = (sessionId: string, content: string) => registerGeneratedTextResource({ title: content.slice(0, 32) || "助手回复", content, source: "canvas-assistant", metadata: { sessionId } });
 
     const upsertMessage = (sessionId: string, message: CanvasAssistantMessage) => {
         updateSession(sessionId, (session) => {
@@ -300,7 +302,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
                 await continueOnlineToolLoop(sessionId, assistantId, messages, result, loop.step);
             } else {
                 if (!result.content.trim()) throw new Error("模型没有返回工具调用，画布操作未执行。");
-                upsertMessage(sessionId, { id: assistantId, role: "assistant", text: result.content || streamed || "没有返回内容。" });
+                const content = result.content || streamed || "没有返回内容。";
+                upsertMessage(sessionId, { id: assistantId, role: "assistant", text: content });
+                await registerAssistantReply(sessionId, content);
                 addOnlineLog(`Agent Tool Loop ${loop.step} 结束`, { reply: result.content });
             }
         } catch (error) {
@@ -331,7 +335,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
             ...toolResults.map((item) => ({ role: "tool" as const, tool_call_id: item.toolCallId, content: JSON.stringify(item.result) })),
         ];
         if (step >= ONLINE_AGENT_MAX_STEPS) {
-            upsertMessage(sessionId, { id: assistantId, role: "assistant", text: toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
+            const content = toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。";
+            upsertMessage(sessionId, { id: assistantId, role: "assistant", text: content });
+            await registerAssistantReply(sessionId, content);
             addOnlineLog("Agent Tool Loop 达到步数上限", { maxSteps: ONLINE_AGENT_MAX_STEPS });
             return;
         }
@@ -355,7 +361,9 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
             await continueOnlineToolLoop(sessionId, assistantId, nextMessages, next, step + 1);
             return;
         }
-        upsertMessage(sessionId, { id: assistantId, role: "assistant", text: next.content || streamed || toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。" });
+        const content = next.content || streamed || toolResults.map((item) => toolResultText(item.result)).join("\n") || "工具已执行。";
+        upsertMessage(sessionId, { id: assistantId, role: "assistant", text: content });
+        await registerAssistantReply(sessionId, content);
     };
 
     const executeOps = (ops: CanvasAgentOp[]) => {
@@ -1022,7 +1030,6 @@ function configNodeOp(id: string, input: Record<string, unknown>, x: number, y: 
         metadata: cleanRecord({
             generationMode: mode,
             composerContent: prompt,
-            prompt,
             status: "idle",
             model: resolveGenerationModel(config, mode, stringOptional(input.model)),
             size: stringOptional(input.size) || config.size,
@@ -1293,16 +1300,18 @@ function compactSnapshot(snapshot: CanvasAgentSnapshot) {
             position: node.position,
             width: node.width,
             height: node.height,
-            metadata: compactMetadata(node.metadata || {}),
+            metadata: compactMetadata(node),
         })),
         connections: snapshot.connections,
     };
 }
 
-function compactMetadata(metadata: CanvasNodeData["metadata"]) {
+function compactMetadata(node: CanvasNodeData) {
+    const metadata = node.metadata;
     return {
         content: String(metadata?.content || "").slice(0, 500),
-        prompt: String(metadata?.prompt || metadata?.composerContent || "").slice(0, 500),
+        prompt: String(node.type === CanvasNodeType.Config ? metadata?.composerContent || "" : metadata?.prompt || "").slice(0, 500),
+        resolvedPrompt: String(metadata?.resolvedPrompt || "").slice(0, 500),
         status: metadata?.status,
         generationMode: metadata?.generationMode,
         model: metadata?.model,

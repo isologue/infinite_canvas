@@ -20,7 +20,7 @@ type MigrationResult = {
     files: number;
 };
 
-const MIGRATION_VERSION = 1;
+const MIGRATION_VERSION = 2;
 const APP_DB_NAME = "infinite-canvas";
 const APP_STATE_STORE = "app_state";
 const IMAGE_FILE_STORE = "image_files";
@@ -34,7 +34,7 @@ export async function migrateLocalDataToServer(user: LocalUser): Promise<Migrati
     if (window.localStorage.getItem(marker) === "1") return emptyResult();
 
     const [serverProjects, serverAssets, serverImageLogs, serverVideoLogs, localProjects, localAssets, localImageLogs, localVideoLogs] = await Promise.all([
-        readRemoteArray<CanvasProject>("/api/user/projects", "projects"),
+        readRemoteArray<unknown>("/api/user/projects", "projects"),
         readRemoteArray<Asset>("/api/user/assets", "assets"),
         readRemoteArray<StoredLog>("/api/user/logs/image", "logs"),
         readRemoteArray<StoredLog>("/api/user/logs/video", "logs"),
@@ -73,7 +73,7 @@ export async function migrateLocalDataToServer(user: LocalUser): Promise<Migrati
 
     const uploadedFiles = await uploadLegacyFiles(imageKeys, mediaKeys);
     const writeResults = await Promise.all([
-        nextProjects.length ? writeRemoteArray("/api/user/projects", "projects", nextProjects) : Promise.resolve(true),
+        nextProjects.length ? writeRemoteProjects(nextProjects) : Promise.resolve(true),
         nextAssets.length ? writeRemoteArray("/api/user/assets", "assets", nextAssets) : Promise.resolve(true),
         nextImageLogs.length ? writeRemoteArray("/api/user/logs/image", "logs", nextImageLogs) : Promise.resolve(true),
         nextVideoLogs.length ? writeRemoteArray("/api/user/logs/video", "logs", nextVideoLogs) : Promise.resolve(true),
@@ -115,6 +115,15 @@ async function writeRemoteArray(url: string, field: string, value: unknown[]) {
         .catch(() => false);
 }
 
+async function writeRemoteProjects(projects: CanvasProject[]) {
+    const results = await Promise.all(projects.map((project) => fetch("/api/user/projects", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ project }),
+    }).then((res) => res.ok).catch(() => false)));
+    return results.every(Boolean);
+}
+
 async function readLegacyProjects() {
     const state = await readLegacyPersistState<{ projects?: CanvasProject[] }>("infinite-canvas:canvas_store");
     return Array.isArray(state?.projects) ? state.projects : [];
@@ -151,7 +160,7 @@ function sanitizeProjects(projects: CanvasProject[]) {
 
 function sanitizeAssets(assets: Asset[]) {
     return assets.map((asset) => {
-        if (asset.kind === "video" && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, url: "" } };
+        if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, url: "" } };
         if (asset.kind === "image" && asset.data.storageKey) return { ...asset, coverUrl: "", data: { ...asset.data, dataUrl: "" } };
         return asset;
     });
@@ -216,6 +225,7 @@ async function uploadLegacyBlob(storageKey: string, blob: Blob) {
             "content-type": "application/octet-stream",
             "x-storage-key": storageKey,
             "x-storage-mime-type": blob.type || "application/octet-stream",
+            "x-resource-source": "local-migration",
         },
         body: await blob.arrayBuffer(),
     })
