@@ -4,6 +4,9 @@ import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin
 import type { CanvasPlugin } from "@/types/canvas-plugin";
 
 const cleanups = new Map<string, () => void>();
+type PluginModule = { default?: unknown; plugin?: unknown };
+// 避免 Vite/Turbopack 静态解析运行时 Blob URL。
+const importPluginModule = new Function("url", "return import(url)") as (url: string) => Promise<PluginModule>;
 
 // 远程插件默认导出可以是 CanvasPlugin,或接收 runtime 返回 CanvasPlugin 的工厂
 // (工厂形式用 runtime.React,无需 bundle 自带 React)
@@ -11,7 +14,7 @@ async function evaluatePluginSource(source: string): Promise<CanvasPlugin> {
     const blob = new Blob([source], { type: "text/javascript" });
     const url = URL.createObjectURL(blob);
     try {
-        const mod = (await import(/* @vite-ignore */ url)) as { default?: unknown; plugin?: unknown };
+        const mod = await importPluginModule(url);
         const exported = mod.default ?? mod.plugin;
         const plugin = typeof exported === "function" ? (exported as (runtime: unknown) => unknown)(getPluginRuntime()) : exported;
         assertPlugin(plugin);
