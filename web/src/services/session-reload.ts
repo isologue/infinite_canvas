@@ -1,6 +1,6 @@
 "use client";
 
-import { useCanvasStore } from "@/app/(user)/canvas/stores/use-canvas-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { flushCanvasProjectSaves } from "@/services/api/canvas-projects";
 import { resumeAssetPersist, suspendAssetPersist, useAssetStore } from "@/stores/use-asset-store";
 import { useUserStore } from "@/stores/use-user-store";

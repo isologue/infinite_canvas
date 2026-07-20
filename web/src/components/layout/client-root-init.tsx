@@ -1,5 +1,3 @@
-"use client";
-
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
@@ -10,6 +8,7 @@ import { useUserStore, type LocalUser } from "@/stores/use-user-store";
 
 type SessionResponse = { code: number; data?: { user?: LocalUser | null } };
 type SharedConfigResponse = { code: number; data?: { config?: AiConfig; webdav?: WebdavSyncConfig; canManage?: boolean; canManageUrl?: boolean; lockedBaseUrl?: string; lockedBaseUrls?: string[] } };
+import { usePromptSourceScheduler } from "@/hooks/use-prompt-source-scheduler";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -17,6 +16,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
     const replaceSharedConfig = useConfigStore((state) => state.replaceSharedConfig);
     const setUser = useUserStore((state) => state.setUser);
     const setUserHydrated = useUserStore((state) => state.setHydrated);
+
+    usePromptSourceScheduler();
 
     useEffect(() => {
         if (booted.current) return;

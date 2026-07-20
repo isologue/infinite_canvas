@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { Keyboard, LogIn, LogOut, Settings2 } from "lucide-react";
+import { Keyboard, LogIn, LogOut, Puzzle, Settings2 } from "lucide-react";
 import { useState } from "react";
 import { App } from "antd";
 
@@ -19,9 +19,10 @@ type UserStatusActionsProps = {
     showConfig?: boolean;
     variant?: "default" | "canvas";
     onOpenShortcuts?: () => void;
+    onOpenPlugins?: () => void;
 };
 
-export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts }: UserStatusActionsProps) {
+export function UserStatusActions({ showConfig = true, variant = "default", onOpenShortcuts, onOpenPlugins }: UserStatusActionsProps) {
     const { message } = App.useApp();
     const [loginOpen, setLoginOpen] = useState(false);
     const theme = useThemeStore((state) => state.theme);
@@ -63,6 +64,11 @@ export function UserStatusActions({ showConfig = true, variant = "default", onOp
     return (
         <>
             <div className="inline-flex shrink-0 items-center gap-1">
+                {onOpenPlugins ? (
+                    <button type="button" className={naturalIconClass} style={iconStyle} onClick={onOpenPlugins} aria-label="节点插件" title="节点插件">
+                        <Puzzle className="size-4" />
+                    </button>
+                ) : null}
                 {showConfig && canManageConfig ? (
                     <button type="button" className={naturalIconClass} style={iconStyle} onClick={() => openConfigDialog(false)} aria-label="配置" title="配置">
                         <Settings2 className="size-4" />

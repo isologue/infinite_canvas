@@ -1,5 +1,3 @@
-"use client";
-
 import localforage from "localforage";
 
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
@@ -8,8 +6,8 @@ import { downloadWebdavFile, uploadWebdavFile, WEBDAV_MANIFEST_FILE_NAME } from 
 import type { Asset } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
-import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
-import { useCanvasStore } from "@/app/(user)/canvas/stores/use-canvas-store";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
+import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { fetchAllCanvasProjects } from "@/services/api/canvas-projects";
 
 type StoredLog = Record<string, unknown> & { id?: string };
@@ -99,7 +97,7 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
         }),
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
-            label: "我的素材",
+            label: "我的资产",
             emptyData: { assets: [] },
             localData: async () => ({ assets: useAssetStore.getState().assets }),
             mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
@@ -327,7 +325,7 @@ function domainPath(domain: DomainKey, path: string) {
 
 function domainLabel(domain: DomainKey) {
     if (domain === "canvas") return "画布";
-    if (domain === "assets") return "我的素材";
+    if (domain === "assets") return "我的资产";
     if (domain === "image-workbench") return "生图工作台";
     return "视频创作台";
 }

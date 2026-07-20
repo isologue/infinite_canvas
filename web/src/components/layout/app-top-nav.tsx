@@ -1,6 +1,7 @@
 "use client";
 
-import { Database, Menu, ScrollText, Users } from "lucide-react";
+import { Bot, Database, Menu, ScrollText, Users } from "lucide-react";
+import { Button, Tooltip } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -9,16 +10,30 @@ import { AppConfigModal } from "@/components/layout/app-config-modal";
 import { MobileNavDrawer } from "@/components/layout/mobile-nav-drawer";
 import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useUserStore } from "@/stores/use-user-store";
+import { useAgentStore } from "@/stores/use-agent-store";
 
 export function AppTopNav() {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const user = useUserStore((state) => state.user);
+    const autoConnectRef = useRef(false);
+    const agentToken = useAgentStore((state) => state.token);
+    const agentEnabled = useAgentStore((state) => state.enabled);
+    const agentConnected = useAgentStore((state) => state.connected);
+    const connectAgent = useAgentStore((state) => state.connectAgent);
+    const togglePanel = useAgentStore((state) => state.togglePanel);
+    const panelOpen = useAgentStore((state) => state.panelOpen);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
+
+    useEffect(() => {
+        if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
+        autoConnectRef.current = true;
+        connectAgent({ silent: true });
+    }, [agentConnected, agentEnabled, agentToken, connectAgent]);
 
     return (
         <>
@@ -113,6 +128,9 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                            <Tooltip title={panelOpen ? "?? Agent" : "?? Agent"}>
+                                <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="?? Agent" />
+                            </Tooltip>
                             <UserStatusActions />
                         </div>
                     </div>

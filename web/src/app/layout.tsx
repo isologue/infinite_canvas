@@ -3,7 +3,7 @@ import Script from "next/script";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/components/layout/app-providers";
 import "antd/dist/reset.css";
-import "./globals.css";
+import "@/styles/globals.css";
 import React from "react";
 
 export const metadata: Metadata = {

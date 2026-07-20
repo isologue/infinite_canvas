@@ -5,7 +5,7 @@ import type { StorageValue } from "zustand/middleware";
 
 import { collectMediaStorageKeys } from "@/services/file-storage";
 import { collectImageStorageKeys } from "@/services/image-storage";
-import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
+import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
 import type { Asset } from "@/stores/use-asset-store";
 import type { LocalUser } from "@/stores/use-user-store";
 
