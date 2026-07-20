@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense } from "react";
-import CanvasProjectPage from "@/pages/canvas/project";
+import CanvasProjectPage from "@/views/canvas/project";
 
 export default function CanvasPage() {
     return (

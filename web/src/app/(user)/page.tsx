@@ -1,3 +1,3 @@
 "use client";
 
-export { default } from "@/pages/home";
+export { default } from "@/views/home";

@@ -1,3 +1,3 @@
 "use client";
 
-export { default } from "@/pages/not-found";
+export { default } from "@/views/not-found";

@@ -1,3 +1,3 @@
 "use client";
 
-export { default } from "@/pages/prompts";
+export { default } from "@/views/prompts";
