@@ -270,7 +270,11 @@ async function hydrateAsset(asset: Asset): Promise<Asset> {
         const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
         return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? dataUrl : asset.coverUrl, data: { ...asset.data, dataUrl } };
     }
-    if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) {
+    if (asset.kind === "video" && asset.data.storageKey) {
+        const url = await resolveMediaUrl(asset.data.storageKey, asset.data.url);
+        return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? url : asset.coverUrl, data: { ...asset.data, url } };
+    }
+    if (asset.kind === "audio" && asset.data.storageKey) {
         const url = await resolveMediaUrl(asset.data.storageKey, asset.data.url);
         return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? url : asset.coverUrl, data: { ...asset.data, url } };
     }

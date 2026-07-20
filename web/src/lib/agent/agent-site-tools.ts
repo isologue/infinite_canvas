@@ -133,8 +133,8 @@ function listCanvasProjects(input: SiteToolInput) {
         title: project.title,
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
-        nodeCount: project.nodes.length,
-        connectionCount: project.connections.length,
+        nodeCount: project.nodeCount,
+        connectionCount: project.connectionCount,
     }));
     return { total: filtered.length, page, pageSize, items, hint: "用 site_navigate 跳转 /canvas/{id} 打开对应画布" };
 }

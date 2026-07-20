@@ -329,14 +329,14 @@ function findTaskImages(payload: unknown, depth = 0): GeneratedImage[] | null {
     return null;
 }
 
-function imageTaskId(payload: unknown) {
+function imageTaskId(payload: unknown): string {
     if (!isRecord(payload)) return "";
     if (typeof payload.task === "string" || typeof payload.task === "number") return String(payload.task).trim();
     for (const key of ["task_id", "taskId"]) {
         if (typeof payload[key] === "string" || typeof payload[key] === "number") return String(payload[key]).trim();
     }
     for (const key of ["task", "data", "result", "response"]) {
-        const id = imageTaskId(payload[key]);
+        const id: string = imageTaskId(payload[key]);
         if (id) return id;
     }
     return typeof payload.id === "string" || typeof payload.id === "number" ? String(payload.id).trim() : "";

@@ -118,7 +118,8 @@ export const useAssetStore = create<AssetStore>()(
 );
 
 async function hydrateAsset(asset: Asset): Promise<Asset> {
-    if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+    if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+    if (asset.kind === "audio" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
     if (asset.kind !== "image") return asset;
     if (asset.data.storageKey)
         return {
@@ -132,7 +133,8 @@ async function hydrateAsset(asset: Asset): Promise<Asset> {
 }
 
 function serializeAsset(asset: Asset): Asset {
-    if (asset.kind === "video" || asset.kind === "audio") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
+    if (asset.kind === "video") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
+    if (asset.kind === "audio") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
     if (asset.kind === "image") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, dataUrl: "" } } : asset;
     return asset;
 }

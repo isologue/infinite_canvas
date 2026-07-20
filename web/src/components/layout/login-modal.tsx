@@ -98,7 +98,7 @@ export function LoginModal({ open, onClose }: { open: boolean; onClose: () => vo
                     <Input.Password autoComplete={mode === "login" ? "current-password" : "new-password"} placeholder="请输入密码" />
                 </Form.Item>
             </Form>
-            <div className="text-xs text-stone-500">只有超级管理员可以编辑配置窗口，普通用户注册登录后可使用个人画布、素材和生成记录。</div>
+            <div className="text-xs text-stone-500">登录后可编辑个人配置并使用画布、素材和生成记录；超级管理员还可管理全局渠道地址。</div>
         </Modal>
     );
 }

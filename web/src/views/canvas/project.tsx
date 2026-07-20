@@ -350,8 +350,8 @@ function InfiniteCanvasPage() {
         setProjectLoaded(false);
         const restore = async () => {
             const project = await fetchCanvasProject(projectId);
-            const restoredNodes = hydrateCanvasMedia(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = hydrateAssistantMedia(project.chatSessions || []);
+            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
+            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
             projectCreatedAtRef.current = project.createdAt;
             setProjectTitle(project.title);
             setTitleDraft(project.title);

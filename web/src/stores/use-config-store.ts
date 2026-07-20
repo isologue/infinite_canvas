@@ -333,26 +333,20 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 
 function normalizeConfig(config: AiConfig) {
     const channels = normalizeChannels(config);
-    const models = modelOptionsFromChannels(channels);
-    const imageModels = keepOrSuggest(config.imageModels, filterModelsByCapability(models, "image"), models);
-    const videoModels = keepOrSuggest(config.videoModels, filterModelsByCapability(models, "video"), models);
-    const textModels = keepOrSuggest(config.textModels, filterModelsByCapability(models, "text"), models);
-    const audioModels = keepOrSuggest(config.audioModels, filterModelsByCapability(models, "audio"), models);
-    return {
+    const normalized = {
         ...config,
         channels,
-        models,
+        models: modelOptionsFromChannels(channels),
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
-        imageModels,
-        videoModels,
-        textModels,
-        audioModels,
-        imageModel: normalizeDefaultModel(config.imageModel, imageModels),
-        videoModel: normalizeDefaultModel(config.videoModel, videoModels),
-        textModel: normalizeDefaultModel(config.textModel, textModels),
-        audioModel: normalizeDefaultModel(config.audioModel, audioModels),
+    };
+    return {
+        ...normalized,
+        imageModel: normalizeDefaultModel(config.imageModel, selectableModelsByCapability(normalized, "image")),
+        videoModel: normalizeDefaultModel(config.videoModel, selectableModelsByCapability(normalized, "video")),
+        textModel: normalizeDefaultModel(config.textModel, selectableModelsByCapability(normalized, "text")),
+        audioModel: normalizeDefaultModel(config.audioModel, selectableModelsByCapability(normalized, "audio")),
     };
 }
 
@@ -393,19 +387,9 @@ function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
 }
 
-function keepOrSuggest(current: string[], suggested: string[], allModels: string[]) {
-    const available = new Set(allModels);
-    const kept = uniqueModels(current).filter((model) => available.has(model));
-    return kept.length ? kept : suggested;
-}
-
 function normalizeDefaultModel(value: string, options: string[]) {
     if (options.includes(value)) return value;
     return options[0] || value;
-}
-
-function uniqueModels(models: string[]) {
-    return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
 }
 
 export function buildAiProxyUrl(targetUrl: string) {
