@@ -11,6 +11,7 @@ import { syncAppDataToWebdav, type AppSyncDomainKey, type AppSyncProgressEvent }
 import { testWebdavConnection, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { useUserStore } from "@/stores/use-user-store";
 
 type ModelGroup = {
     capability: ModelCapability;
@@ -66,6 +67,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const updateWebdavConfig = useConfigStore((state) => state.updateWebdavConfig);
     const canManageConfig = useConfigStore((state) => state.canManageConfig);
     const canManageUrl = useConfigStore((state) => state.canManageUrl);
+    const canManagePromptSources = useUserStore((state) => state.user?.role === "admin");
     const lockedBaseUrl = useConfigStore((state) => state.lockedBaseUrl);
     const lockedBaseUrls = useConfigStore((state) => state.lockedBaseUrls);
     const lockedBaseUrlOptions = lockedBaseUrls.length ? lockedBaseUrls : lockedBaseUrl ? [lockedBaseUrl] : [];
@@ -74,7 +76,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const clearPromptContinue = useConfigStore((state) => state.clearPromptContinue);
     const webdavReady = Boolean(webdav.url.trim());
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
-    useEffect(() => setActiveTab(initialTab), [initialTab]);
+    useEffect(() => setActiveTab(initialTab === "prompt-sources" && !canManagePromptSources ? "channels" : initialTab), [canManagePromptSources, initialTab]);
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -280,11 +282,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                             </Form>
                         ),
                     },
-                    {
-                        key: "prompt-sources",
-                        label: "提示词来源",
-                        children: <ConfigPromptSources />,
-                    },
+                    ...(canManagePromptSources
+                        ? [
+                              {
+                                  key: "prompt-sources",
+                                  label: "提示词来源",
+                                  children: <ConfigPromptSources />,
+                              },
+                          ]
+                        : []),
                     {
                         key: "webdav",
                         label: "WebDAV",
