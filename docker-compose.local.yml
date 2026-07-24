@@ -5,7 +5,7 @@ services:
     security_opt:
       - seccomp:unconfined
     ports:
-      - "15432:5432"
+      - "5432:5432"
     environment:
       POSTGRES_DB: infinite_canvas
       POSTGRES_USER: infinite_canvas

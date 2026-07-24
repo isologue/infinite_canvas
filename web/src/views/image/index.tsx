@@ -16,6 +16,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { reportAiCall } from "@/services/ai-call-log";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { referenceImageBytes, referenceImageFileError, referenceImagesError } from "@/lib/reference-image-limits";
 import { requestEdit, requestGeneration } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createUserLogStore } from "@/services/user-log-store";
@@ -114,13 +115,31 @@ export default function ImagePage() {
 
     const addReferences = async (files?: FileList | null) => {
         const imageFiles = Array.from(files || []).filter((file) => file.type.startsWith("image/"));
-        const nextReferences = await Promise.all(
-            imageFiles.map(async (file) => {
-                const image = await uploadImage(file, { compress: true, title: file.name, source: "reference-upload" });
-                return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
-            }),
-        );
-        setReferences((value) => [...value, ...nextReferences]);
+        if (!imageFiles.length) return;
+        let totalBytes = (await Promise.all(references.map(referenceImageBytes))).reduce((sum, bytes) => sum + bytes, 0);
+        const accepted: File[] = [];
+        const rejected: string[] = [];
+        for (const file of imageFiles) {
+            const error = referenceImageFileError(file, totalBytes);
+            if (error) rejected.push(error);
+            else {
+                accepted.push(file);
+                totalBytes += file.size;
+            }
+        }
+        if (rejected.length) message.warning(rejected.join("；"));
+        if (!accepted.length) return;
+        try {
+            const nextReferences = await Promise.all(
+                accepted.map(async (file) => {
+                    const image = await uploadImage(file, { compress: true, title: file.name, source: "reference-upload" });
+                    return { id: nanoid(), name: file.name, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes };
+                }),
+            );
+            setReferences((value) => [...value, ...nextReferences]);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图上传失败，请重试");
+        }
     };
 
     const addReferencesFromClipboard = async () => {
@@ -131,16 +150,29 @@ export default function ImagePage() {
                 message.error("剪切板里没有可读取的图片");
                 return;
             }
+            let totalBytes = (await Promise.all(references.map(referenceImageBytes))).reduce((sum, bytes) => sum + bytes, 0);
+            const accepted: Blob[] = [];
+            const rejected: string[] = [];
+            blobs.forEach((blob, index) => {
+                const error = referenceImageFileError({ size: blob.size, name: `clipboard-${index + 1}.png` }, totalBytes);
+                if (error) rejected.push(error);
+                else {
+                    accepted.push(blob);
+                    totalBytes += blob.size;
+                }
+            });
+            if (rejected.length) message.warning(rejected.join("；"));
+            if (!accepted.length) return;
             const nextReferences = await Promise.all(
-                blobs.map(async (blob, index) => {
+                accepted.map(async (blob, index) => {
                     const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload" });
-                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
+                    return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes };
                 }),
             );
             setReferences((value) => [...value, ...nextReferences]);
             message.success(`已读取 ${nextReferences.length} 张参考图`);
-        } catch {
-            message.error("剪切板里没有可读取的图片");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图上传失败，请重试");
         }
     };
 
@@ -163,6 +195,13 @@ export default function ImagePage() {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) {
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: "生图参数无效" });
+            return;
+        }
+
+        const referenceError = await referenceImagesError(snapshot.references);
+        if (referenceError) {
+            message.error(referenceError);
+            if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", error: referenceError });
             return;
         }
 
@@ -251,9 +290,19 @@ export default function ImagePage() {
     };
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
-        setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
-        message.success("已加入参考图");
+        try {
+            const stored = await uploadImage(image.dataUrl, { source: "reference-upload", title: `result-${index + 1}.png` });
+            const totalBytes = (await Promise.all(references.map(referenceImageBytes))).reduce((sum, bytes) => sum + bytes, 0);
+            const validationError = referenceImageFileError({ size: stored.bytes, name: `result-${index + 1}.png` }, totalBytes);
+            if (validationError) {
+                message.warning(validationError);
+                return;
+            }
+            setReferences((value) => [...value, { id: nanoid(), name: `result-${index + 1}.png`, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, bytes: stored.bytes }]);
+            message.success("已加入参考图");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "参考图上传失败，请重试");
+        }
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
@@ -274,8 +323,17 @@ export default function ImagePage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            const stored = await uploadImage(payload.dataUrl);
-            setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }]);
+            const totalBytes = (await Promise.all(references.map(referenceImageBytes))).reduce((sum, bytes) => sum + bytes, 0);
+            const validationError = referenceImageFileError({ size: payload.bytes || 0, name: payload.title }, totalBytes);
+            if (validationError) message.warning(validationError);
+            else {
+                try {
+                    const stored = await uploadImage(payload.dataUrl, { compress: true, title: payload.title, source: "reference-upload" });
+                    setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, bytes: stored.bytes }]);
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "参考图上传失败，请重试");
+                }
+            }
         } else {
             message.warning("生图工作台只能使用文本或图片资产");
         }

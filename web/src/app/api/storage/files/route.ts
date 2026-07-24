@@ -4,6 +4,9 @@ import { readSessionUser } from "@/lib/server/auth";
 import { getUserImagePreview } from "@/lib/server/image-preview";
 import { saveUserFileResource } from "@/lib/server/resource-db";
 
+const MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024;
+const REFERENCE_UPLOAD_SOURCES = new Set(["reference-upload", "canvas-upload", "asset-upload"]);
+
 export async function POST(request: NextRequest) {
     const user = await readSessionUser();
     if (!user) return Response.json({ code: 401, msg: "请先登录" }, { status: 401 });
@@ -13,6 +16,9 @@ export async function POST(request: NextRequest) {
     const source = request.headers.get("x-resource-source") || "upload";
     if (!storageKey) return Response.json({ code: 400, msg: "缺少 storageKey" }, { status: 400 });
     const content = Buffer.from(await request.arrayBuffer());
+    if (mimeType.startsWith("image/") && REFERENCE_UPLOAD_SOURCES.has(source) && content.length > MAX_REFERENCE_IMAGE_BYTES) {
+        return Response.json({ code: 413, msg: "参考图超过单张 15MB 限制" }, { status: 413 });
+    }
     await saveUserFileResource(user.id, { storageKey, mimeType, bytes: content.length, content, title, source });
     if (mimeType.startsWith("image/")) after(() => getUserImagePreview(user.id, storageKey).then(() => undefined).catch(() => undefined));
     return Response.json({ code: 0, msg: "保存成功" });

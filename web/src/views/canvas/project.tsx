@@ -18,6 +18,7 @@ import { storageFileUrl } from "@/services/storage-url";
 import { registerGeneratedTextResource } from "@/services/api/resources";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
+import { referenceImageFileError, referenceImagesError } from "@/lib/reference-image-limits";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -1301,24 +1302,33 @@ function InfiniteCanvasPage() {
     }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
-        const image = await uploadImage(file, { compress: true, title: file.name, source: "canvas-upload" });
-        const size = fitNodeSize(image.width, image.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const newNode: CanvasNodeData = {
-            id,
-            type: CanvasNodeType.Image,
-            title: file.name,
-            position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-            width: size.width,
-            height: size.height,
-            metadata: imageMetadata(image),
-        };
+        const validationError = referenceImageFileError(file);
+        if (validationError) {
+            message.warning(validationError);
+            return;
+        }
+        try {
+            const image = await uploadImage(file, { compress: true, title: file.name, source: "canvas-upload" });
+            const size = fitNodeSize(image.width, image.height);
+            const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const newNode: CanvasNodeData = {
+                id,
+                type: CanvasNodeType.Image,
+                title: file.name,
+                position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
+                width: size.width,
+                height: size.height,
+                metadata: imageMetadata(image),
+            };
 
-        setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(id);
-    }, []);
+            setNodes((prev) => [...prev, newNode]);
+            setSelectedNodeIds(new Set([id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(id);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "图片上传失败，请重试");
+        }
+    }, [message]);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video", { title: file.name, source: "canvas-upload" });
@@ -1938,7 +1948,22 @@ function InfiniteCanvasPage() {
                     event.target.value = "";
                     return;
                 }
-                const image = await uploadImage(file, { compress: true });
+                const validationError = referenceImageFileError(file);
+                if (validationError) {
+                    message.warning(validationError);
+                    uploadTargetRef.current = null;
+                    event.target.value = "";
+                    return;
+                }
+                let image: UploadedImage;
+                try {
+                    image = await uploadImage(file, { compress: true, source: "canvas-upload", title: file.name });
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "图片上传失败，请重试");
+                    uploadTargetRef.current = null;
+                    event.target.value = "";
+                    return;
+                }
                 const size = fitNodeSize(image.width, image.height);
                 setNodes((prev) =>
                     prev.map((node) =>
@@ -2044,9 +2069,11 @@ function InfiniteCanvasPage() {
                         .filter((node): node is CanvasNodeData => Boolean(node));
                     const refs = upstreamNodes.flatMap((up) =>
                         typeof up.metadata?.content === "string" && up.metadata.content && up.type !== sourceNode.type
-                            ? [{ id: up.id, name: `${up.title || up.id}.png`, type: up.metadata.mimeType || "image/png", dataUrl: up.metadata.content, storageKey: up.metadata.storageKey }]
+                            ? [{ id: up.id, name: `${up.title || up.id}.png`, type: up.metadata.mimeType || "image/png", dataUrl: up.metadata.content, bytes: up.metadata.bytes, storageKey: up.metadata.storageKey }]
                             : [],
                     );
+                    const referenceError = await referenceImagesError(refs);
+                    if (referenceError) throw new Error(referenceError);
                     const image = refs.length
                         ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal }).then((items) => items[0])
                         : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
@@ -2109,9 +2136,16 @@ function InfiniteCanvasPage() {
                     const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                     const sourceReference =
                         isImageNode && sourceNode?.metadata?.content
-                            ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, storageKey: sourceNode.metadata.storageKey }]
+                            ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, bytes: sourceNode.metadata.bytes, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                    const referenceError = await referenceImagesError(referenceImages);
+                    if (referenceError) {
+                        message.error(referenceError);
+                        finishGenerationRequest(nodeId, runController);
+                        setRunningNodeId(null);
+                        return;
+                    }
                     const generationType = referenceImages.length ? ("edit" as const) : ("generation" as const);
                     const generationMetadata = buildImageGenerationMetadata(generationType, generationConfig, count, referenceImages);
                     const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];

@@ -12,6 +12,7 @@ import { PromptDetailDialog } from "@/views/prompts/components/prompt-detail-dia
 import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
+import { referenceImageFileError } from "@/lib/reference-image-limits";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
 import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
@@ -284,7 +285,7 @@ function buildInsertPayload(asset: Asset): InsertAssetPayload {
     if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
     if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
     if (asset.kind === "audio") return { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, durationMs: asset.data.durationMs };
-    return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title };
+    return { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title, bytes: asset.data.bytes };
 }
 
 const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
@@ -313,10 +314,18 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
         setUploading(true);
         const hide = message.loading("正在添加资产…", 0);
         let added = 0;
+        let imageBytes = 0;
+        const rejected: string[] = [];
         try {
             for (const file of files) {
                 if (file.type.startsWith("image/")) {
-                    const image = await uploadImage(file);
+                    const validationError = referenceImageFileError(file, imageBytes);
+                    if (validationError) {
+                        rejected.push(validationError);
+                        continue;
+                    }
+                    imageBytes += file.size;
+                    const image = await uploadImage(file, { compress: true, title: file.name, source: "asset-upload" });
                     addAsset({ kind: "image", title: file.name || "图片", coverUrl: image.url, tags: [], data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } });
                     added += 1;
                 } else if (file.type.startsWith("video/")) {
@@ -325,8 +334,9 @@ const CanvasAssetsTab = memo(function CanvasAssetsTab({ onInsert, theme }: { onI
                     added += 1;
                 }
             }
+            if (rejected.length) message.warning(rejected.join("；"));
             if (added) message.success(`已添加 ${added} 个资产`);
-            else message.warning("仅支持图片或视频文件");
+            else if (!rejected.length) message.warning("仅支持图片或视频文件");
         } catch (error) {
             console.error(error);
             message.error("添加失败，请重试");

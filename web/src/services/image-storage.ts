@@ -80,7 +80,10 @@ async function uploadFile(storageKey: string, blob: Blob, options?: { title?: st
         },
         body: arrayBuffer,
     });
-    if (!response.ok) throw new Error("图片保存失败");
+    if (!response.ok) {
+        const payload = (await response.json().catch(() => null)) as { msg?: string } | null;
+        throw new Error(payload?.msg || (response.status === 413 ? "参考图超过单张 15MB 限制" : "图片保存失败"));
+    }
 }
 
 async function downloadFile(storageKey: string) {
