@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
+import { buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -529,21 +529,22 @@ function aiLogKindFromReason(kind: string): AiCallLogKind {
 }
 
 // 从生成参数里挑出适合入日志的字段（不含 base64 图片，避免日志膨胀）。
-function buildImageRequestParams(config: AiConfig) {
+function buildImageRequestParams(config: AiConfig, extra?: Record<string, unknown>) {
     return {
         model: modelOptionName(config.model),
         count: config.count,
         size: (config as { size?: unknown }).size,
         quality: (config as { quality?: unknown }).quality,
         prompt: (config as { prompt?: unknown }).prompt,
+        ...extra,
     };
 }
 
 // 包裹生成调用并上报 AI 调用日志。图片类日志由页面层在拿到 storageKey 后上报（这里只有 base64），此处只报文本等非图片类型。
-async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => Promise<T>) {
+async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => Promise<T>, extra?: Record<string, unknown>) {
     const model = modelOptionName(config.model);
     const logKind = aiLogKindFromReason(kind);
-    const requestParams = buildImageRequestParams(config);
+    const requestParams = buildImageRequestParams(config, extra);
     try {
         const result = await run();
         if (logKind !== "image") {
@@ -1068,6 +1069,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     });
 }
 
+function countMessageReferenceImages(messages: ResponseInputMessage[]) {
+    return messages.reduce((total, message) => {
+        if (!("content" in message) || !Array.isArray(message.content)) return total;
+        return total + message.content.filter((item) => item.type === "image_url").length;
+    }, 0);
+}
+
 export async function requestImageQuestion(config: AiConfig, messages: AiTextMessage[], onDelta: (text: string) => void, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.textModel);
     return withGenerationLog({ ...config, model: config.model || config.textModel, count: "1" }, "text generation", async () => {
@@ -1105,7 +1113,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
         } catch (error) {
             throw new Error(readAxiosError(error, "请求失败"));
         }
-    });
+    }, buildReferenceAssetLogParams({ images: countMessageReferenceImages(messages) }));
 }
 
 export async function requestToolResponse(config: AiConfig, messages: ResponseInputMessage[], tools: ResponseFunctionTool[], toolChoice: ToolChoice = "auto", onDelta?: (text: string) => void, options?: RequestOptions): Promise<ToolResponseResult> {
@@ -1126,7 +1134,7 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
         } catch (error) {
             throw new Error(readAxiosError(error, "request failed"));
         }
-    });
+    }, buildReferenceAssetLogParams({ images: countMessageReferenceImages(messages) }));
 }
 
 export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat">) {

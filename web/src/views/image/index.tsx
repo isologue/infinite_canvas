@@ -13,7 +13,7 @@ import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, 
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { reportAiCall } from "@/services/ai-call-log";
+import { buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { referenceImageBytes, referenceImageFileError, referenceImagesError } from "@/lib/reference-image-limits";
@@ -252,7 +252,7 @@ export default function ImagePage() {
                 model: logModel,
                 status: successCount ? "success" : "failed",
                 reason: `image generation: ${logModel}`,
-                requestParams: { prompt: text, model: logModel, count: generationCount },
+                requestParams: { prompt: text, model: logModel, count: generationCount, ...buildReferenceAssetLogParams({ images: snapshot.references.length }) },
                 responseResult: successCount
                     ? { count: logImages.length, items: logImages.map((img) => ({ storageKey: img.storageKey, width: img.width, height: img.height, mimeType: img.mimeType, bytes: img.bytes })) }
                     : undefined,

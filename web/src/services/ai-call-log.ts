@@ -3,6 +3,22 @@
 export type AiCallLogKind = "image" | "video" | "audio" | "text" | "other";
 export type AiCallLogStatus = "success" | "failed";
 
+export type ReferenceAssetLogCounts = {
+    images?: number;
+    videos?: number;
+    audios?: number;
+    hasMask?: boolean;
+};
+
+export function buildReferenceAssetLogParams({ images, videos, audios, hasMask }: ReferenceAssetLogCounts) {
+    return {
+        ...(images === undefined ? {} : { hasReferenceImages: images > 0, referenceImageCount: images }),
+        ...(videos === undefined ? {} : { hasReferenceVideos: videos > 0, referenceVideoCount: videos }),
+        ...(audios === undefined ? {} : { hasReferenceAudios: audios > 0, referenceAudioCount: audios }),
+        ...(hasMask === undefined ? {} : { hasMask }),
+    };
+}
+
 export type ReportAiCallInput = {
     kind: AiCallLogKind;
     model: string;

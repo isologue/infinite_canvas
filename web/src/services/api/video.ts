@@ -5,7 +5,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { reportAiCall } from "@/services/ai-call-log";
+import { buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
@@ -97,19 +97,17 @@ export async function requestVideoGeneration(
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
-    const script = resolveModelScript(config, selectedModel);
-    if (script) return createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options);
-    assertVideoConfig(requestConfig, requestConfig.model);
     const logExtras = {
         logModel: modelOptionName(selectedModel),
         logParams: {
             model: modelOptionName(selectedModel),
             promptLength: prompt.length,
-            references: references.length,
-            videoReferences: videoReferences.length,
-            audioReferences: audioReferences.length,
+            ...buildReferenceAssetLogParams({ images: references.length, videos: videoReferences.length, audios: audioReferences.length }),
         },
     };
+    const script = resolveModelScript(config, selectedModel);
+    if (script) return { ...(await createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options)), ...logExtras };
+    assertVideoConfig(requestConfig, requestConfig.model);
     if (isSeedanceVideoConfig(requestConfig)) {
         return { ...(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...logExtras };
     }

@@ -6,7 +6,7 @@ import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { fetchCanvasProject, flushCanvasProjectSaves, queueCanvasProjectSave } from "@/services/api/canvas-projects";
-import { reportAiCall } from "@/services/ai-call-log";
+import { buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
@@ -139,26 +139,26 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 3. 尽量写成可直接用于生图模型的完整提示词。`;
 
 // 画布页图片生成上报 AI 调用日志（在拿到 storageKey 之后调用）。失败静默。
-function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number }) {
+function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number }, referenceImageCount = 0, hasMask = false) {
     const model = modelOptionName(config.model);
     void reportAiCall({
         kind: "image",
         model,
         status: "success",
         reason: `image generation: ${model}`,
-        requestParams: { prompt, model },
+        requestParams: { prompt, model, ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }) },
         responseResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
     });
 }
 
-function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown) {
+function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown, referenceImageCount = 0, hasMask = false) {
     const model = modelOptionName(config.model);
     void reportAiCall({
         kind: "image",
         model,
         status: "failed",
         reason: `image generation: ${model}`,
-        requestParams: { prompt, model },
+        requestParams: { prompt, model, ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }) },
         errorMessage: error instanceof Error ? error.message : String(error),
     });
 }
@@ -1783,13 +1783,13 @@ function InfiniteCanvasPage() {
             try {
                 const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
-                reportCanvasImageLog(generationConfig, prompt, uploaded);
+                reportCanvasImageLog(generationConfig, prompt, uploaded, 1, true);
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "局部修改失败";
-                reportCanvasImageError(generationConfig, prompt, error);
+                reportCanvasImageError(generationConfig, prompt, error, 1, true);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
@@ -1867,13 +1867,13 @@ function InfiniteCanvasPage() {
                     { signal: controller.signal },
                 ).then((items) => items[0]);
                 const uploaded = await uploadImage(image.dataUrl);
-                reportCanvasImageLog(generationConfig, prompt, uploaded);
+                reportCanvasImageLog(generationConfig, prompt, uploaded, 1);
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                reportCanvasImageError(generationConfig, prompt, error);
+                reportCanvasImageError(generationConfig, prompt, error, 1);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
@@ -2291,7 +2291,7 @@ function InfiniteCanvasPage() {
                                     ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
                                     : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
                                 const uploaded = await uploadImage(image.dataUrl, { title: effectivePrompt.slice(0, 80), source: "generated" });
-                                reportCanvasImageLog(generationConfig, effectivePrompt, uploaded);
+                                reportCanvasImageLog(generationConfig, effectivePrompt, uploaded, referenceImages.length);
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
                                     const root = prev.find((node) => node.id === rootId);
@@ -2325,7 +2325,7 @@ function InfiniteCanvasPage() {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 if (!firstError) firstError = errorDetails;
                                 hasFailure = true;
-                                reportCanvasImageError(generationConfig, effectivePrompt, error);
+                                reportCanvasImageError(generationConfig, effectivePrompt, error, referenceImages.length);
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                             } finally {
                                 finishGenerationRequest(targetId, controller);
@@ -2635,7 +2635,7 @@ function InfiniteCanvasPage() {
 
                 const image = useReferenceImages ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
                 const uploadedImage = await uploadImage(image.dataUrl, { title: prompt.slice(0, 80), source: "generated" });
-                reportCanvasImageLog(generationConfig, prompt, uploadedImage);
+                reportCanvasImageLog(generationConfig, prompt, uploadedImage, retryImages.length);
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
@@ -2665,7 +2665,7 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                reportCanvasImageError(generationConfig, prompt, error);
+                reportCanvasImageError(generationConfig, prompt, error, retryImages.length);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
