@@ -29,6 +29,29 @@ export type ReportAiCallInput = {
     errorMessage?: string;
 };
 
+type ErrorRecord = Record<string, unknown>;
+
+export function buildAiErrorResponseResult(error: unknown): unknown {
+    const visited = new Set<unknown>();
+    let current = error;
+    while (current && typeof current === "object" && !visited.has(current)) {
+        visited.add(current);
+        const record = current as ErrorRecord;
+        if (record.responseResult !== undefined) return record.responseResult;
+        const response = record.response;
+        if (response && typeof response === "object") {
+            const responseRecord = response as ErrorRecord;
+            return {
+                ...(typeof responseRecord.status === "number" ? { status: responseRecord.status } : {}),
+                ...(typeof responseRecord.statusText === "string" && responseRecord.statusText ? { statusText: responseRecord.statusText } : {}),
+                ...(responseRecord.data === undefined ? {} : { data: responseRecord.data }),
+            };
+        }
+        current = record.cause;
+    }
+    return undefined;
+}
+
 // 生成结束后上报一条 AI 调用日志。无论收费与否都调用；失败静默，绝不影响生成主流程。
 export async function reportAiCall(input: ReportAiCallInput) {
     try {

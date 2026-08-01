@@ -13,7 +13,7 @@ import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, 
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { referenceImageBytes, referenceImageFileError, referenceImagesError } from "@/lib/reference-image-limits";
@@ -255,7 +255,7 @@ export default function ImagePage() {
                 requestParams: { prompt: text, model: logModel, count: generationCount, ...buildReferenceAssetLogParams({ images: snapshot.references.length }) },
                 responseResult: successCount
                     ? { count: logImages.length, items: logImages.map((img) => ({ storageKey: img.storageKey, width: img.width, height: img.height, mimeType: img.mimeType, bytes: img.bytes })) }
-                    : undefined,
+                    : buildAiErrorResponseResult(failed?.reason),
                 errorMessage: successCount ? undefined : failed?.reason instanceof Error ? failed.reason.message : "生成失败",
             });
             successCount ? message.success("图片已生成") : message.error(failed?.reason instanceof Error ? failed.reason.message : "生成失败");

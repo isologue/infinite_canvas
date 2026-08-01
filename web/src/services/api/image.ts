@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -288,7 +288,7 @@ function tryParseOpenAiImages(payload: unknown) {
     if (!isRecord(payload)) return null;
     const message = readPayloadError(payload);
     if (message) {
-        const error = new Error(message) as Error & { status?: number };
+        const error = responsePayloadError(message, payload) as Error & { status?: number };
         if (typeof payload.code === "number") error.status = payload.code;
         throw error;
     }
@@ -377,11 +377,11 @@ async function pollImageTask(config: AiConfig, taskId: string, preferred: (paylo
             consecutiveErrors = 0;
             const payload = response.data;
             const errorMessage = readPayloadError(payload);
-            if (errorMessage) throw new Error(errorMessage);
+            if (errorMessage) throw responsePayloadError(errorMessage, payload);
             const images = preferred(payload) || findTaskImages(payload);
             const status = imageTaskStatus(payload);
             if (images?.length && (!status || IMAGE_TASK_SUCCESS.has(status))) return images;
-            if (IMAGE_TASK_FAILED.has(status)) throw new Error(readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`);
+            if (IMAGE_TASK_FAILED.has(status)) throw responsePayloadError(readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`, payload);
             if (IMAGE_TASK_SUCCESS.has(status)) throw new Error("图片任务已完成，但没有返回图片");
         } catch (error) {
             if (isRequestCancelled(error)) throw error;
@@ -491,6 +491,16 @@ function readAxiosError(error: unknown, fallback: string) {
     return error instanceof Error ? readApiErrorMessage(error.message) || error.message : fallback;
 }
 
+function requestError(error: unknown, fallback: string) {
+    return new Error(readAxiosError(error, fallback), { cause: error });
+}
+
+function responsePayloadError(message: string, responseResult: unknown) {
+    const error = new Error(message) as Error & { responseResult: unknown };
+    error.responseResult = responseResult;
+    return error;
+}
+
 function readStatusError(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
@@ -553,7 +563,7 @@ async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => P
         return result;
     } catch (error) {
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, requestParams, errorMessage: error instanceof Error ? error.message : String(error) });
+            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, requestParams, responseResult: buildAiErrorResponseResult(error), errorMessage: error instanceof Error ? error.message : String(error) });
         }
         throw error;
     }
@@ -942,14 +952,14 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 });
                 return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         if (requestConfig.apiFormat === "gemini") {
             try {
                 return await requestGeminiImages(requestConfig, prompt, [], n, options);
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         const quality = normalizeQuality(config.quality);
@@ -974,7 +984,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 options,
             });
         } catch (error) {
-            throw new Error(readAxiosError(error, "请求失败"));
+            throw requestError(error, "请求失败");
         }
     });
 }
@@ -1002,7 +1012,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 });
                 return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         if (requestConfig.apiFormat === "gemini") {
@@ -1010,7 +1020,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             try {
                 return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         if (requestConfig.apiFormat === "ark") {
@@ -1033,7 +1043,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 }, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal });
                 return parseImagePayload(response.data);
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         const quality = normalizeQuality(config.quality);
@@ -1064,7 +1074,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 options,
             });
         } catch (error) {
-            throw new Error(readAxiosError(error, "请求失败"));
+            throw requestError(error, "请求失败");
         }
     });
 }
@@ -1094,7 +1104,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
                 if (text === "没有返回内容") onDelta(text);
                 return text;
             } catch (error) {
-                throw new Error(readAxiosError(error, "请求失败"));
+                throw requestError(error, "请求失败");
             }
         }
         try {
@@ -1111,7 +1121,7 @@ export async function requestImageQuestion(config: AiConfig, messages: AiTextMes
             if (answer === "没有返回内容") onDelta(answer);
             return answer;
         } catch (error) {
-            throw new Error(readAxiosError(error, "请求失败"));
+            throw requestError(error, "请求失败");
         }
     }, buildReferenceAssetLogParams({ images: countMessageReferenceImages(messages) }));
 }
@@ -1132,7 +1142,7 @@ export async function requestToolResponse(config: AiConfig, messages: ResponseIn
                 ...(requestConfig.reasoningEffort === "auto" ? {} : { reasoning: { effort: requestConfig.reasoningEffort } }),
             }, onDelta, options);
         } catch (error) {
-            throw new Error(readAxiosError(error, "request failed"));
+            throw requestError(error, "request failed");
         }
     }, buildReferenceAssetLogParams({ images: countMessageReferenceImages(messages) }));
 }
@@ -1157,7 +1167,7 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
             .filter((id): id is string => Boolean(id))
             .sort((a, b) => a.localeCompare(b));
     } catch (error) {
-        throw new Error(readAxiosError(error, "读取模型失败"));
+        throw requestError(error, "读取模型失败");
     }
 }
 

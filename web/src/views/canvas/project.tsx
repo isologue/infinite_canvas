@@ -6,7 +6,7 @@ import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
 import { fetchCanvasProject, flushCanvasProjectSaves, queueCanvasProjectSave } from "@/services/api/canvas-projects";
-import { buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
 import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
@@ -159,6 +159,7 @@ function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown
         status: "failed",
         reason: `image generation: ${model}`,
         requestParams: { prompt, model, ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }) },
+        responseResult: buildAiErrorResponseResult(error),
         errorMessage: error instanceof Error ? error.message : String(error),
     });
 }
