@@ -3,7 +3,6 @@ import axios from "axios";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
-import { dataUrlToFile } from "@/lib/image-utils";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
@@ -1049,27 +1048,25 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const quality = normalizeQuality(config.quality);
         const requestSize = resolveRequestSize(quality, config.size);
         const background = normalizeBackground(config.background);
-        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-        const createFormData = (asyncMode: boolean) => {
-            const formData = new FormData();
-            formData.set("model", requestConfig.model);
-            formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
-            formData.set("n", String(n));
-            formData.set("response_format", "b64_json");
-            formData.set("output_format", IMAGE_OUTPUT_FORMAT);
-            if (asyncMode) formData.set("async", "true");
-            if (quality) formData.set("quality", quality);
-            if (requestSize) formData.set("size", requestSize);
-            if (background) formData.set("background", background);
-            files.forEach((file) => formData.append("image", file));
-            if (mask) formData.set("mask", dataUrlToFile(mask));
-            return formData;
+        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+        const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
+        const body = {
+            model: requestConfig.model,
+            prompt: withSystemPrompt(requestConfig, requestPrompt),
+            n,
+            response_format: "b64_json",
+            output_format: IMAGE_OUTPUT_FORMAT,
+            images: refs.map((image_url) => ({ image_url })),
+            ...(maskDataUrl ? { mask: maskDataUrl } : {}),
+            ...(quality ? { quality } : {}),
+            ...(requestSize ? { size: requestSize } : {}),
+            ...(background ? { background } : {}),
         };
         try {
             return await requestImagesWithAsyncFallback({
                 key: imageTaskKey(requestConfig, "/images/edits"),
                 config: requestConfig,
-                create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(requestConfig, "/images/edits"), createFormData(asyncMode), { headers: aiHeaders(requestConfig), signal: options?.signal })).data,
+                create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(requestConfig, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data,
                 parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
                 options,
             });
