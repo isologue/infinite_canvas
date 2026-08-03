@@ -146,7 +146,16 @@ function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { stor
         model,
         status: "success",
         reason: `image generation: ${model}`,
-        requestParams: { prompt, model, ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }) },
+        requestParams: {
+            prompt,
+            model,
+            size: config.size,
+            aspectRatio: config.size,
+            quality: config.quality,
+            resolution: config.resolution,
+            count: config.count,
+            ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
+        },
         responseResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
     });
 }
@@ -158,7 +167,16 @@ function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown
         model,
         status: "failed",
         reason: `image generation: ${model}`,
-        requestParams: { prompt, model, ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }) },
+        requestParams: {
+            prompt,
+            model,
+            size: config.size,
+            aspectRatio: config.size,
+            quality: config.quality,
+            resolution: config.resolution,
+            count: config.count,
+            ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
+        },
         responseResult: buildAiErrorResponseResult(error),
         errorMessage: error instanceof Error ? error.message : String(error),
     });

@@ -188,6 +188,7 @@ export default function AdminAiLogsPage() {
                             <DetailRow label="原因" value={detail.reason || "—"} />
                             {detail.errorMessage ? <DetailRow label="错误信息" value={detail.errorMessage} /> : null}
                             <MediaPreview userId={detail.userId} kind={detail.kind} result={detail.responseResult} />
+                            {detail.kind === "image" ? <ImageRequestSettings requestParams={detail.requestParams} /> : null}
                             <DetailBlock label="请求参数" value={detail.requestParams} />
                             <DetailBlock label="返回结果" value={detail.responseResult} />
                             {detail.requestParams === null && detail.responseResult === null ? (
@@ -201,6 +202,25 @@ export default function AdminAiLogsPage() {
             </main>
         </AdminRequired>
     );
+}
+
+function ImageRequestSettings({ requestParams }: { requestParams: unknown }) {
+    const params = requestParams && typeof requestParams === "object" ? (requestParams as Record<string, unknown>) : {};
+    const aspectRatio = params.aspectRatio ?? params.size;
+    return (
+        <div className="flex flex-col gap-2">
+            <div className="text-stone-500">生图配置</div>
+            <DetailRow label="分辨率" value={displayRequestParam(params.resolution)} />
+            <DetailRow label="宽高比" value={displayRequestParam(aspectRatio)} />
+            <DetailRow label="质量" value={displayRequestParam(params.quality)} />
+        </div>
+    );
+}
+
+function displayRequestParam(value: unknown) {
+    if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    return "-";
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {

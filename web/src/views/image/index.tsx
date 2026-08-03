@@ -253,7 +253,16 @@ export default function ImagePage() {
                 model: logModel,
                 status: successCount ? "success" : "failed",
                 reason: `image generation: ${logModel}`,
-                requestParams: { prompt: text, model: logModel, count: generationCount, ...buildReferenceAssetLogParams({ images: snapshot.references.length }) },
+                requestParams: {
+                    prompt: text,
+                    model: logModel,
+                    size: snapshot.config.size,
+                    aspectRatio: snapshot.config.size,
+                    quality: snapshot.config.quality,
+                    resolution: snapshot.config.resolution,
+                    count: generationCount,
+                    ...buildReferenceAssetLogParams({ images: snapshot.references.length }),
+                },
                 responseResult: successCount
                     ? { count: logImages.length, items: logImages.map((img) => ({ storageKey: img.storageKey, width: img.width, height: img.height, mimeType: img.mimeType, bytes: img.bytes })) }
                     : buildAiErrorResponseResult(failed?.reason),

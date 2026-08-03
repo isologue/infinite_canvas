@@ -121,6 +121,10 @@ function normalizeQuality(quality: string) {
     return QUALITY_BASE[normalized] ? normalized : undefined;
 }
 
+function resolutionQuality(resolution?: string) {
+    return resolution ? normalizeQuality(resolution) : undefined;
+}
+
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
 function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
@@ -138,7 +142,7 @@ function resolveSize(quality: string | undefined, ratio: string): string {
     if (basePixels) {
         const targetPixels = basePixels * basePixels;
         const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(longSideRaw / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
+        longSide = Math.floor(Math.min(longSideRaw, IMAGE_MAX_EDGE) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
         shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
     } else {
         shortSide = DEFAULT_IMAGE_SHORT_SIDE;
@@ -181,15 +185,16 @@ function validateImageSize(width: number, height: number) {
     if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
 }
 
-function resolveRequestSize(quality: string | undefined, size: string) {
+function resolveRequestSize(quality: string | undefined, size: string, resolution?: string) {
     const value = size.trim();
-    if (!value || value.toLowerCase() === "auto") return undefined;
+    const effectiveQuality = resolutionQuality(resolution) || quality;
+    if (!value || value.toLowerCase() === "auto") return effectiveQuality ? resolveSize(effectiveQuality, "1:1") : undefined;
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
         validateImageSize(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(quality, value);
+    if (value.includes(":")) return resolveSize(effectiveQuality, value);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
@@ -531,6 +536,7 @@ function buildImageRequestParams(config: AiConfig, extra?: Record<string, unknow
         model: modelOptionName(config.model),
         count: config.count,
         size: (config as { size?: unknown }).size,
+        aspectRatio: (config as { size?: unknown }).size,
         quality: (config as { quality?: unknown }).quality,
         resolution: (config as { resolution?: unknown }).resolution,
         prompt: (config as { prompt?: unknown }).prompt,
@@ -927,7 +933,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
         const script = resolveModelScript(config, config.model || config.imageModel);
         if (script) {
             const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size);
+            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
             const background = normalizeBackground(config.background);
             try {
                 const result = await runModelPlugin({
@@ -952,7 +958,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             }
         }
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
         const background = normalizeBackground(config.background);
         const body = {
             model: requestConfig.model,
@@ -986,7 +992,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const script = resolveModelScript(config, config.model || config.imageModel);
         if (script) {
             const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size);
+            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
             const background = normalizeBackground(config.background);
             const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
             try {
@@ -1015,7 +1021,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         if (requestConfig.apiFormat === "ark") {
             if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
             const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size);
+            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
             const background = normalizeBackground(config.background);
             const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
             try {
@@ -1036,7 +1042,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             }
         }
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
