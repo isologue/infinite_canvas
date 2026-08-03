@@ -1057,7 +1057,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             response_format: "b64_json",
             output_format: IMAGE_OUTPUT_FORMAT,
             images: refs.map((image_url) => ({ image_url })),
-            ...(maskDataUrl ? { mask: maskDataUrl } : {}),
+            ...(maskDataUrl ? { mask: { image_url: maskDataUrl } } : {}),
             ...(quality ? { quality } : {}),
             ...(requestSize ? { size: requestSize } : {}),
             ...(background ? { background } : {}),
