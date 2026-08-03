@@ -45,6 +45,7 @@ export type AiConfig = {
     reasoningEffort: ReasoningEffort;
     models: string[];
     quality: string;
+    resolution: string;
     size: string;
     background: string;
     count: string;
@@ -103,7 +104,8 @@ export const defaultConfig: AiConfig = {
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "auto",
-    size: "1:1",
+    resolution: "1K",
+    size: "auto",
     background: "",
     count: "1",
     canvasImageCount: "3",

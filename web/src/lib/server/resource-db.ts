@@ -38,6 +38,70 @@ export async function saveUserFileResource(userId: string, input: { storageKey: 
     }
 }
 
+export async function restoreCanvasProjectImageResults<T extends { id: string; nodes: unknown[] }>(userId: string, project: T): Promise<T> {
+    const nodes = Array.isArray(project.nodes) ? project.nodes : [];
+    const imageNodeIds = new Set(
+        nodes.flatMap((raw) => {
+            if (!raw || typeof raw !== "object") return [];
+            const node = raw as Record<string, any>;
+            return node.type === "image" && typeof node.id === "string" && node.id ? [node.id] : [];
+        }),
+    );
+    if (!imageNodeIds.size) return project;
+    await ensureUserDataTables();
+    const result = await getPgPool().query<{ storage_key: string | null; mime_type: string; bytes: string | number; metadata_json: unknown }>(
+        `SELECT storage_key, mime_type, bytes, metadata_json
+         FROM user_resources
+         WHERE user_id = $1 AND kind = 'image' AND deleted_at IS NULL AND storage_key IS NOT NULL AND metadata_json->>'projectId' = $2
+           AND EXISTS (SELECT 1 FROM user_files WHERE user_files.user_id = user_resources.user_id AND user_files.storage_key = user_resources.storage_key)
+         ORDER BY created_at DESC`,
+        [userId, project.id],
+    );
+    const matches = new Map<string, { storageKey: string; mimeType: string; bytes: number; metadata: Record<string, unknown> }>();
+    for (const row of result.rows) {
+        const metadata = row.metadata_json && typeof row.metadata_json === "object" && !Array.isArray(row.metadata_json) ? row.metadata_json as Record<string, unknown> : {};
+        const nodeId = typeof metadata.nodeId === "string" ? metadata.nodeId : "";
+        if (!nodeId || !imageNodeIds.has(nodeId) || !row.storage_key || matches.has(nodeId)) continue;
+        matches.set(nodeId, { storageKey: row.storage_key, mimeType: row.mime_type, bytes: Number(row.bytes || 0), metadata });
+    }
+    if (!matches.size) return project;
+    const recoveredOrigins = new Set<string>();
+    const recoveredNodes = nodes.map((raw) => {
+        if (!raw || typeof raw !== "object") return raw;
+        const node = raw as Record<string, any>;
+        const match = typeof node.id === "string" ? matches.get(node.id) : undefined;
+        if (!match) return raw;
+        const metadata = node.metadata && typeof node.metadata === "object" ? node.metadata as Record<string, any> : {};
+        const originNodeId = typeof match.metadata.originNodeId === "string" ? match.metadata.originNodeId : "";
+        if (originNodeId) recoveredOrigins.add(originNodeId);
+        const width = positiveNumber(match.metadata.width);
+        const height = positiveNumber(match.metadata.height);
+        return {
+            ...node,
+            metadata: {
+                ...metadata,
+                content: "",
+                storageKey: match.storageKey,
+                status: "success",
+                errorDetails: undefined,
+                bytes: match.bytes,
+                mimeType: match.mimeType || metadata.mimeType,
+                ...(width ? { naturalWidth: width } : {}),
+                ...(height ? { naturalHeight: height } : {}),
+            },
+        };
+    });
+    return {
+        ...project,
+        nodes: recoveredNodes.map((raw) => {
+            if (!raw || typeof raw !== "object") return raw;
+            const node = raw as Record<string, any>;
+            if (!recoveredOrigins.has(node.id) || node.metadata?.status === "success") return raw;
+            return { ...node, metadata: { ...(node.metadata || {}), status: "success", errorDetails: undefined } };
+        }),
+    } as T;
+}
+
 export async function registerTextResource(userId: string, input: { resourceId?: string; title?: string; content: string; source?: string; createdAt?: string; isSaved?: boolean; metadata?: unknown }) {
     await ensureUserDataTables();
     const resourceId = input.resourceId || `text:${randomUUID()}`;
@@ -292,6 +356,10 @@ function mediaKind(mimeType: string, storageKey: string): ResourceKind | null {
     if (mimeType.startsWith("video/") || storageKey.startsWith("video:")) return "video";
     if (mimeType.startsWith("audio/") || storageKey.startsWith("audio:")) return "audio";
     return null;
+}
+
+function positiveNumber(value: unknown) {
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
 function mapResource(row: any) {

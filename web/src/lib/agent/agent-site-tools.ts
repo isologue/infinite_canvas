@@ -1,6 +1,6 @@
 import { fetchPrompts } from "@/services/api/prompts";
 import { uploadImage } from "@/services/image-storage";
-import { imageAspectOptions, imageQualityOptions } from "@/components/image-settings-panel";
+import { imageAspectOptions, imageQualityOptions, imageResolutionOptions } from "@/components/image-settings-panel";
 import { videoResolutionOptions, videoSecondOptions, videoSizeOptions } from "@/components/video-settings-panel";
 import type { CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
@@ -143,9 +143,10 @@ function getImageConfig() {
     const { config } = useConfigStore.getState();
     const model = config.imageModel || config.model;
     return {
-        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", size: config.size || "1:1", count: config.count || "1" },
+        current: { model, modelName: modelOptionName(model), quality: config.quality || "auto", resolution: config.resolution || "1K", size: config.size || "auto", count: config.count || "1" },
         models: selectableModelsByCapability(config, "image").map((value) => ({ value, label: modelOptionLabel(config, value) })),
         qualityOptions: imageQualityOptions,
+        resolutionOptions: imageResolutionOptions,
         sizeOptions: imageAspectOptions,
         countRange: { min: 1, max: 15 },
     };
@@ -162,6 +163,10 @@ function runImageWorkbench(input: SiteToolInput, navigate: NavigateFunction) {
     if (typeof input.quality === "string" && input.quality.trim()) {
         configStore.updateConfig("quality", input.quality);
         applied.quality = input.quality;
+    }
+    if (typeof input.resolution === "string" && input.resolution.trim()) {
+        configStore.updateConfig("resolution", input.resolution);
+        applied.resolution = input.resolution;
     }
     if (typeof input.size === "string" && input.size.trim()) {
         configStore.updateConfig("size", input.size);

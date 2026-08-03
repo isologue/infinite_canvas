@@ -113,8 +113,7 @@ const IMAGE_TASK_MAX_CONSECUTIVE_ERRORS = 5;
 const IMAGE_TASK_MAX_INITIAL_NOT_FOUND = 3;
 const asyncUnsupported = new Set<string>();
 
-const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
-const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
+const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9", "9:21"];
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
@@ -199,9 +198,9 @@ function resolveGeminiImageConfig(config: AiConfig) {
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
     const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
-    const imageSize = supportsGeminiImageSize(config.model) ? resolveGeminiImageSize(config.quality, dimensions) : undefined;
+    const imageSize = resolveGeminiImageSize(config.resolution);
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
-    return Object.keys(image).length ? { responseFormat: { image } } : {};
+    return Object.keys(image).length ? { imageConfig: image } : {};
 }
 
 function closestGeminiAspectRatio(value: string) {
@@ -214,20 +213,9 @@ function closestGeminiAspectRatio(value: string) {
     });
 }
 
-function resolveGeminiImageSize(quality: string, dimensions: { width: number; height: number } | null) {
-    const normalizedQuality = normalizeQuality(quality);
-    if (normalizedQuality) return GEMINI_IMAGE_SIZE_BY_QUALITY[normalizedQuality];
-    if (!dimensions) return undefined;
-    const edge = Math.max(dimensions.width, dimensions.height);
-    if (edge <= 768) return "512";
-    if (edge <= 1536) return "1K";
-    if (edge <= 3072) return "2K";
-    return "4K";
-}
-
-function supportsGeminiImageSize(model: string) {
-    const value = model.toLowerCase();
-    return value.includes("gemini-3") || value.includes("3.1") || value.includes("3-pro");
+function resolveGeminiImageSize(value: string) {
+    const normalized = value.trim().toUpperCase();
+    return normalized === "1K" || normalized === "2K" || normalized === "4K" ? normalized : undefined;
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -544,6 +532,7 @@ function buildImageRequestParams(config: AiConfig, extra?: Record<string, unknow
         count: config.count,
         size: (config as { size?: unknown }).size,
         quality: (config as { quality?: unknown }).quality,
+        resolution: (config as { resolution?: unknown }).resolution,
         prompt: (config as { prompt?: unknown }).prompt,
         ...extra,
     };
@@ -586,6 +575,7 @@ function geminiApiUrl(config: Pick<AiConfig, "baseUrl" | "model">, action?: "gen
 
 function geminiHeaders(config: Pick<AiConfig, "apiKey">) {
     return {
+        Authorization: `Bearer ${config.apiKey}`,
         "x-goog-api-key": config.apiKey,
         "Content-Type": "application/json",
     };
@@ -946,7 +936,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                     config: requestConfig,
                     prompt: withSystemPrompt(requestConfig, prompt),
                     images: [],
-                    params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                    params: { size: requestSize, quality, resolution: config.resolution, count: n, ...(background ? { background } : {}) },
                     signal: options?.signal,
                 });
                 return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));
@@ -1006,7 +996,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     config: requestConfig,
                     prompt: withSystemPrompt(requestConfig, requestPrompt),
                     images: refs,
-                    params: { size: requestSize, quality, count: n, ...(background ? { background } : {}) },
+                    params: { size: requestSize, quality, resolution: config.resolution, count: n, ...(background ? { background } : {}) },
                     signal: options?.signal,
                 });
                 return normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl }));

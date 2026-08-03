@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 
 import { readSessionUser } from "@/lib/server/auth";
 import { normalizeCanvasProject } from "@/lib/server/canvas-project";
+import { restoreCanvasProjectImageResults } from "@/lib/server/resource-db";
 import { hasUserProject, readUserProject, renameUserProject, upsertUserProject } from "@/lib/server/user-data-db";
 
 export async function GET(_request: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -9,7 +10,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ id
     if (!user) return Response.json({ code: 401, msg: "请先登录" }, { status: 401 });
     const project = await readUserProject(user.id, (await context.params).id);
     if (!project) return Response.json({ code: 404, msg: "画布不存在" }, { status: 404 });
-    return Response.json({ code: 0, data: { project }, msg: "读取成功" });
+    return Response.json({ code: 0, data: { project: await restoreCanvasProjectImageResults(user.id, project) }, msg: "读取成功" });
 }
 
 export async function PUT(request: NextRequest, context: { params: Promise<{ id: string }> }) {

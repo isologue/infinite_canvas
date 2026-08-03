@@ -37,6 +37,7 @@ export type CanvasNodeMetadata = {
     model?: string;
     size?: string;
     quality?: string;
+    resolution?: string;
     count?: number;
     seconds?: string;
     vquality?: string;
@@ -153,6 +154,7 @@ export type GenerateOptions = {
 export type GenerateImageOptions = GenerateOptions & {
     count?: number; // 期望生成张数(宿主会按模型上限裁剪)
     size?: string; // 形如 "1024x1024" / "auto";缺省用宿主当前配置
+    resolution?: string;
 };
 
 export type GenerateImageResult = {

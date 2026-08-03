@@ -40,7 +40,8 @@ const defaultConfig = {
     textModels: ["default::gpt-5.5"],
     audioModels: ["default::gpt-4o-mini-tts"],
     quality: "auto",
-    size: "1:1",
+    resolution: "1K",
+    size: "auto",
     count: "1",
     canvasImageCount: "3",
 };
@@ -53,6 +54,15 @@ const defaultWebdavConfig = {
     directory: "infinite-canvas",
     lastSyncedAt: "",
 };
+
+function mergeStoredConfig(configJson?: Record<string, unknown>) {
+    const stored = configJson || {};
+    const config = { ...defaultConfig, ...stored };
+    // Configurations created before the separate resolution field used 1:1 as the default.
+    // Keep an explicitly selected 1:1 after the new field has been persisted.
+    if (!Object.prototype.hasOwnProperty.call(stored, "resolution") && stored.size === "1:1") config.size = defaultConfig.size;
+    return config;
+}
 
 declare global {
     // eslint-disable-next-line no-var
@@ -105,7 +115,7 @@ export async function readSharedConfig(): Promise<SharedConfigRecord> {
     const result = await db.query<{ config_json: Record<string, unknown>; webdav_json: Record<string, unknown> }>("SELECT config_json, webdav_json FROM shared_configs WHERE config_key = 'global' LIMIT 1");
     const row = result.rows[0];
     return {
-        config: { ...defaultConfig, ...(row?.config_json || {}) },
+        config: mergeStoredConfig(row?.config_json),
         webdav: { ...defaultWebdavConfig, ...(row?.webdav_json || {}) },
     };
 }
@@ -202,7 +212,7 @@ export async function readUserConfig(userId: string): Promise<SharedConfigRecord
     );
     const row = userRow.rows[0];
     // 存过就用自己的；没存过给空白默认（绝不用全局配置当模板，避免泄露 admin 的渠道/key）。
-    const base = row?.config_json ? { ...defaultConfig, ...row.config_json } : emptyUserConfig();
+    const base = row?.config_json ? mergeStoredConfig(row.config_json) : emptyUserConfig();
     return {
         config: enforceLockedBaseUrl(base),
         webdav: { ...defaultWebdavConfig, ...(row?.webdav_json || {}) },

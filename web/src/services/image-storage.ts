@@ -16,15 +16,18 @@ export type UploadedImage = {
 
 const objectUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string }): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
     const raw = typeof input === "string" ? await (await fetch(input)).blob() : input;
     // 仅对用户上传的大图压缩（超过 10MB 等比缩放重编码）；生成结果不传 compress，保持原图。
     const blob = options?.compress ? await compressImageIfLarge(raw) : raw;
     const storageKey = `image:${nanoid()}`;
-    await uploadFile(storageKey, blob, options);
     const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
     const meta = await readImageMeta(url);
+    await uploadFile(storageKey, blob, {
+        ...options,
+        metadata: { ...(options?.metadata || {}), width: meta.width, height: meta.height, mimeType: blob.type || meta.mimeType, bytes: blob.size },
+    });
+    objectUrls.set(storageKey, url);
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
 }
 
@@ -67,7 +70,7 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-async function uploadFile(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
+async function uploadFile(storageKey: string, blob: Blob, options?: { title?: string; source?: string; metadata?: Record<string, unknown> }) {
     const arrayBuffer = await blob.arrayBuffer();
     const response = await fetch("/api/storage/files", {
         method: "POST",
@@ -77,6 +80,7 @@ async function uploadFile(storageKey: string, blob: Blob, options?: { title?: st
             "x-storage-mime-type": blob.type || "application/octet-stream",
             "x-resource-title": encodeURIComponent(options?.title || ""),
             "x-resource-source": options?.source || "upload",
+            "x-resource-metadata": encodeURIComponent(JSON.stringify(options?.metadata || {})),
         },
         body: arrayBuffer,
     });

@@ -166,7 +166,7 @@ export const PLUGIN_VARIABLES: PluginVariable[] = [
     { name: "prompt", type: "string", desc: "用户输入的提示词（已拼接系统提示词）", capabilities: ["image", "video", "audio"] },
     { name: "images", type: "string[]", desc: "参考图，dataURL 数组（改图 / 图生视频时有值）", capabilities: ["image", "video"] },
     { name: "messages", type: "{ role, content }[]", desc: "对话消息数组，含系统消息", capabilities: ["text"] },
-    { name: "params", type: "object", desc: "生成参数：生图 {size,quality,count}、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}" },
+    { name: "params", type: "object", desc: "生成参数：生图 {size,quality,resolution,count}、视频 {seconds,size,resolution,ratio,generateAudio,watermark}、音频 {voice,format,speed,instructions}" },
     { name: "model", type: "string", desc: "模型名称（不含渠道前缀）" },
     { name: "baseUrl", type: "string", desc: "渠道接口地址（原样，未拼 /v1）" },
     { name: "apiKey", type: "string", desc: "渠道 API Key，请求头里自己带上" },
@@ -226,7 +226,7 @@ return (edited.data || []).map((item) => item.b64_json ? \`data:image/png;base64
         {
             label: "Gemini 规范",
             script: `// Gemini 文生图 / 图生图：都走 generateContent，参考图放进 parts 的 inline_data。
-// 可用：prompt、images(dataURL[])、model、baseUrl、apiKey
+// 可用：prompt、images(dataURL[])、params{size,resolution}、model、baseUrl、apiKey
 const parts = [{ text: prompt }];
 for (const dataUrl of images) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
@@ -235,8 +235,17 @@ for (const dataUrl of images) {
 const data = await request({
   method: "post",
   url: \`\${baseUrl}/v1beta/models/\${model}:generateContent\`,
-  headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-  data: { contents: [{ role: "user", parts }], generationConfig: { responseModalities: ["IMAGE"] } },
+  headers: { Authorization: \`Bearer \${apiKey}\`, "Content-Type": "application/json", "x-goog-api-key": apiKey },
+  data: {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseModalities: ["TEXT", "IMAGE"],
+      imageConfig: {
+        ...(typeof params.size === "string" && params.size.includes(":") ? { aspectRatio: params.size } : {}),
+        ...(params.resolution ? { imageSize: params.resolution } : {}),
+      },
+    },
+  },
 });
 return (data.candidates || [])
   .flatMap((c) => c.content?.parts || [])
