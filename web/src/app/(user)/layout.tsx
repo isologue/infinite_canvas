@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import { usePathname } from "next/navigation";
 
 import { AuthRequired } from "@/components/layout/auth-required";
@@ -17,7 +18,9 @@ export default function UserLayout({ children }: { children: ReactNode }) {
                 <AppTopNav />
                 <div className="min-h-0 flex-1 overflow-hidden">{needAuth ? <AuthRequired title="请先登录后继续使用">{children}</AuthRequired> : children}</div>
             </div>
-            <AgentPanel />
+            <Suspense fallback={null}>
+                <AgentPanel />
+            </Suspense>
         </div>
     );
 }

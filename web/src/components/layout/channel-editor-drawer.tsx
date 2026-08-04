@@ -1,8 +1,8 @@
-import { Button, Drawer, Input, Segmented, Select, Space } from "antd";
+import { Button, Drawer, Input, Modal, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, incompatibleModelNames, inferChannelApiFormat, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -33,11 +33,37 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
     if (!draft) return null;
 
     const patch = (value: Partial<ModelChannel>) => setDraft((current) => (current ? { ...current, ...value } : current));
-    const setModels = (models: ChannelModel[]) => patch({ models });
+    const setModels = (models: ChannelModel[]) => {
+        const normalizedModels = normalizeChannelModels(models);
+        const inferredFormat = draft.apiFormatMode === "auto" ? inferChannelApiFormat(normalizedModels) : undefined;
+        if (!inferredFormat || inferredFormat === draft.apiFormat) {
+            patch({ models: normalizedModels });
+            return;
+        }
+        const baseUrl = canManageUrl && (!draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat)) ? defaultBaseUrlForApiFormat(inferredFormat) : draft.baseUrl;
+        patch({ models: normalizedModels, apiFormat: inferredFormat, baseUrl });
+    };
 
     const changeApiFormat = (apiFormat: ApiCallFormat) => {
-        const baseUrl = canManageUrl && (!draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat)) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
-        patch({ apiFormat, baseUrl });
+        if (apiFormat === draft.apiFormat) return;
+        const apply = () => {
+            const baseUrl = canManageUrl && (!draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat)) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
+            patch({ apiFormat, apiFormatMode: "manual", baseUrl });
+        };
+        const incompatible = incompatibleModelNames(draft.models, apiFormat);
+        if (!incompatible.length) {
+            apply();
+            return;
+        }
+        const preview = incompatible.slice(0, 3).join(", ");
+        const suffix = incompatible.length > 3 ? ` 等 ${incompatible.length} 个模型` : "";
+        Modal.confirm({
+            title: "模型与调用协议可能不匹配",
+            content: `当前模型列表包含 ${preview}${suffix}，可能不兼容 ${apiFormat === "gemini" ? "Gemini" : apiFormat === "ark" ? "火山方舟" : "OpenAI"} 协议，确定仍要修改吗？`,
+            okText: "确定修改",
+            cancelText: "取消",
+            onOk: apply,
+        });
     };
 
     const applySelection = (names: string[]) => {

@@ -4,6 +4,7 @@ import { persist } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 export type ApiCallFormat = "openai" | "gemini" | "ark";
+export type ApiFormatMode = "auto" | "manual";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -19,6 +20,7 @@ export type ModelChannel = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    apiFormatMode: ApiFormatMode;
     models: ChannelModel[];
 };
 
@@ -79,6 +81,7 @@ export const defaultConfig: AiConfig = {
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
+            apiFormatMode: "auto",
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
@@ -274,15 +277,47 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
     return result;
 }
 
+const GEMINI_MODEL_NAME_PATTERN = /(^|[/:._-])gemini(?:$|[/:._-])/i;
+const OPENAI_MODEL_NAME_PATTERN = /(^|[/:._-])(?:openai|gpt|dall[-_]?e|dalle|o[1-9])(?:$|[/:._-])/i;
+
+export function inferModelApiFormat(modelName: string): ApiCallFormat | undefined {
+    const value = modelName.trim();
+    if (!value) return undefined;
+    if (GEMINI_MODEL_NAME_PATTERN.test(value)) return "gemini";
+    if (OPENAI_MODEL_NAME_PATTERN.test(value)) return "openai";
+    return undefined;
+}
+
+export function inferChannelApiFormat(models: Array<string | ChannelModel> | undefined): ApiCallFormat | undefined {
+    const formats = new Set<ApiCallFormat>();
+    for (const item of models || []) {
+        const format = inferModelApiFormat(typeof item === "string" ? item : item?.name || "");
+        if (format === "openai" || format === "gemini") formats.add(format);
+    }
+    return formats.size === 1 ? formats.values().next().value : undefined;
+}
+
+export function incompatibleModelNames(models: ChannelModel[], apiFormat: ApiCallFormat) {
+    return models.filter((model) => {
+        const inferred = inferModelApiFormat(model.name);
+        return Boolean(inferred && inferred !== apiFormat);
+    }).map((model) => model.name);
+}
+
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
-    const apiFormat = normalizeApiFormat(channel?.apiFormat);
+    const models = normalizeChannelModels(channel?.models);
+    const hasMode = Boolean(channel && Object.prototype.hasOwnProperty.call(channel, "apiFormatMode"));
+    const apiFormatMode: ApiFormatMode = channel?.apiFormatMode === "manual" || (!hasMode && Boolean(channel?.id)) ? "manual" : "auto";
+    const configuredFormat = normalizeApiFormat(channel?.apiFormat);
+    const apiFormat = apiFormatMode === "auto" ? inferChannelApiFormat(models) || configuredFormat : configuredFormat;
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
         baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
         apiKey: channel?.apiKey || "",
         apiFormat,
-        models: normalizeChannelModels(channel?.models),
+        apiFormatMode,
+        models,
     };
 }
 

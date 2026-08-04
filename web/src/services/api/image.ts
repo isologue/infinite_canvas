@@ -270,6 +270,58 @@ async function requestImagesWithAsyncFallback(input: {
     return fallback;
 }
 
+function alternateImageApiFormat(apiFormat: AiConfig["apiFormat"]): "openai" | "gemini" | undefined {
+    if (apiFormat === "openai") return "gemini";
+    if (apiFormat === "gemini") return "openai";
+    return undefined;
+}
+
+function imageRequestErrorStatus(error: unknown) {
+    const validStatus = (value: unknown) => typeof value === "number" && value >= 100 && value <= 599 ? value : undefined;
+    if (axios.isAxiosError(error)) return validStatus(error.response?.status);
+    if (isRecord(error)) {
+        const status = validStatus(error.status);
+        if (status) return status;
+        if (isRecord(error.responseResult)) return validStatus(error.responseResult.code);
+    }
+    return undefined;
+}
+
+function imageRequestErrorText(error: unknown) {
+    const messages = [error instanceof Error ? error.message : "", readAxiosError(error, "")];
+    if (axios.isAxiosError(error)) messages.push(readApiErrorMessage(error.response?.data));
+    if (isRecord(error) && error.responseResult) {
+        try {
+            messages.push(JSON.stringify(error.responseResult));
+        } catch {
+            // Ignore non-serializable response payloads.
+        }
+    }
+    return messages.filter(Boolean).join(" ");
+}
+
+function isLikelyProtocolMismatchError(error: unknown) {
+    if (isRequestCancelled(error)) return false;
+    const status = imageRequestErrorStatus(error);
+    const text = imageRequestErrorText(error);
+    if (/gemini.*(?:(?:mask|蒙版).*(?:unsupported|not support|不支持)|(?:unsupported|not support|不支持).*(?:mask|蒙版))/i.test(text)) return true;
+    if (status && [401, 403, 408, 425, 429].includes(status)) return false;
+    if (status && status >= 500) return false;
+    if (status && ![400, 404, 405, 415, 422].includes(status)) return false;
+    if (status && [404, 405, 415].includes(status)) return true;
+    return /(?:field|parameter|body|json|schema|payload|request|image|images|contents|parts|endpoint|method|unsupported|unmarshal|parse|invalid)/i.test(text);
+}
+
+async function withImageApiFormatFallback<T>(config: AiConfig, run: (requestConfig: AiConfig) => Promise<T>, options?: { hasMask?: boolean }) {
+    try {
+        return await run(config);
+    } catch (error) {
+        const alternate = alternateImageApiFormat(config.apiFormat);
+        if (!alternate || !isLikelyProtocolMismatchError(error) || (options?.hasMask && alternate === "gemini")) throw error;
+        return run({ ...config, apiFormat: alternate });
+    }
+}
+
 function parseRequiredImages(payload: unknown, preferred: (payload: unknown) => GeneratedImage[] | null) {
     const images = preferred(payload) || findTaskImages(payload);
     if (!images?.length) throw new Error("接口没有返回图片");
@@ -926,6 +978,56 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
+async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: number, options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+    const background = normalizeBackground(config.background);
+    const body = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        n,
+        ...(quality ? { quality } : {}),
+        ...(requestSize ? { size: requestSize } : {}),
+        ...(background ? { background } : {}),
+        response_format: "b64_json",
+        output_format: IMAGE_OUTPUT_FORMAT,
+    };
+    return requestImagesWithAsyncFallback({
+        key: imageTaskKey(config, "/images/generations"),
+        config,
+        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+        options,
+    });
+}
+
+async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
+    const quality = normalizeQuality(config.quality);
+    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+    const background = normalizeBackground(config.background);
+    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
+    const body = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        n,
+        response_format: "b64_json",
+        output_format: IMAGE_OUTPUT_FORMAT,
+        images: refs.map((image_url) => ({ image_url })),
+        ...(maskDataUrl ? { mask: { image_url: maskDataUrl } } : {}),
+        ...(quality ? { quality } : {}),
+        ...(requestSize ? { size: requestSize } : {}),
+        ...(background ? { background } : {}),
+    };
+    return requestImagesWithAsyncFallback({
+        key: imageTaskKey(config, "/images/edits"),
+        config,
+        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+        options,
+    });
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
@@ -950,33 +1052,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 throw requestError(error, "请求失败");
             }
         }
-        if (requestConfig.apiFormat === "gemini") {
-            try {
-                return await requestGeminiImages(requestConfig, prompt, [], n, options);
-            } catch (error) {
-                throw requestError(error, "请求失败");
-            }
-        }
-        const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
-        const background = normalizeBackground(config.background);
-        const body = {
-            model: requestConfig.model,
-            prompt: withSystemPrompt(requestConfig, prompt),
-            n,
-            ...(quality ? { quality } : {}),
-            ...(requestSize ? { size: requestSize } : {}),
-            ...(background ? { background } : {}),
-            response_format: "b64_json",
-            output_format: IMAGE_OUTPUT_FORMAT,
-        };
         try {
-            return await requestImagesWithAsyncFallback({
-                key: imageTaskKey(requestConfig, "/images/generations"),
-                config: requestConfig,
-                create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(requestConfig, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data,
-                parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
-                options,
+            return await withImageApiFormatFallback(requestConfig, async (activeConfig) => {
+                if (activeConfig.apiFormat === "gemini") return requestGeminiImages(activeConfig, prompt, [], n, options);
+                return requestOpenAiGeneration(activeConfig, prompt, n, options);
             });
         } catch (error) {
             throw requestError(error, "请求失败");
@@ -1010,62 +1089,33 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 throw requestError(error, "请求失败");
             }
         }
-        if (requestConfig.apiFormat === "gemini") {
-            if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
-            try {
-                return await requestGeminiImages(requestConfig, requestPrompt, references, n, options);
-            } catch (error) {
-                throw requestError(error, "请求失败");
-            }
-        }
-        if (requestConfig.apiFormat === "ark") {
-            if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
-            const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
-            const background = normalizeBackground(config.background);
-            const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-            try {
-                const response = await axios.post<unknown>(aiApiUrl(requestConfig, "/images/generations"), {
-                    model: requestConfig.model,
-                    prompt: withSystemPrompt(requestConfig, requestPrompt),
-                    n,
-                    response_format: "b64_json",
-                    output_format: IMAGE_OUTPUT_FORMAT,
-                    image: refs,
-                    ...(quality ? { quality } : {}),
-                    ...(requestSize ? { size: requestSize } : {}),
-                    ...(background ? { background } : {}),
-                }, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal });
-                return parseImagePayload(response.data);
-            } catch (error) {
-                throw requestError(error, "请求失败");
-            }
-        }
-        const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
-        const background = normalizeBackground(config.background);
-        const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-        const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
-        const body = {
-            model: requestConfig.model,
-            prompt: withSystemPrompt(requestConfig, requestPrompt),
-            n,
-            response_format: "b64_json",
-            output_format: IMAGE_OUTPUT_FORMAT,
-            images: refs.map((image_url) => ({ image_url })),
-            ...(maskDataUrl ? { mask: { image_url: maskDataUrl } } : {}),
-            ...(quality ? { quality } : {}),
-            ...(requestSize ? { size: requestSize } : {}),
-            ...(background ? { background } : {}),
-        };
         try {
-            return await requestImagesWithAsyncFallback({
-                key: imageTaskKey(requestConfig, "/images/edits"),
-                config: requestConfig,
-                create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(requestConfig, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(requestConfig, "application/json"), signal: options?.signal })).data,
-                parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
-                options,
-            });
+            return await withImageApiFormatFallback(requestConfig, async (activeConfig) => {
+                if (activeConfig.apiFormat === "gemini") {
+                    if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
+                    return requestGeminiImages(activeConfig, requestPrompt, references, n, options);
+                }
+                if (activeConfig.apiFormat === "ark") {
+                    if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
+                    const quality = normalizeQuality(config.quality);
+                    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+                    const background = normalizeBackground(config.background);
+                    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+                    const response = await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
+                        model: activeConfig.model,
+                        prompt: withSystemPrompt(activeConfig, requestPrompt),
+                        n,
+                        response_format: "b64_json",
+                        output_format: IMAGE_OUTPUT_FORMAT,
+                        image: refs,
+                        ...(quality ? { quality } : {}),
+                        ...(requestSize ? { size: requestSize } : {}),
+                        ...(background ? { background } : {}),
+                    }, { headers: aiHeaders(activeConfig, "application/json"), signal: options?.signal });
+                    return parseImagePayload(response.data);
+                }
+                return requestOpenAiEdit(activeConfig, requestPrompt, references, mask, n, options);
+            }, { hasMask: Boolean(mask) });
         } catch (error) {
             throw requestError(error, "请求失败");
         }
