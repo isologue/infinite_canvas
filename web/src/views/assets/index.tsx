@@ -5,7 +5,7 @@ import { saveAs } from "file-saver";
 
 import { useCopyText } from "@/hooks/use-copy-text";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
-import { uploadImage } from "@/services/image-storage";
+import { createVideoThumbnail, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
 import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
@@ -481,7 +481,19 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
     const cover = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
     const [missing, setMissing] = useState(false);
+    const updateAsset = useAssetStore((state) => state.updateAsset);
     useEffect(() => setMissing(false), [asset?.id, asset?.metadata?.resourceDeleted]);
+    useEffect(() => {
+        if (!asset || asset.kind !== "video" || asset.coverUrl || asset.data.coverStorageKey || !asset.data.url || asset.metadata?.resourceDeleted) return;
+        let active = true;
+        void createVideoThumbnail(asset.data.url, asset.title).then((thumbnail) => {
+            if (!active || !thumbnail) return;
+            updateAsset(asset.id, { coverUrl: thumbnail.url, data: { ...asset.data, coverStorageKey: thumbnail.storageKey } });
+        });
+        return () => {
+            active = false;
+        };
+    }, [asset, updateAsset]);
     const deleted = asset?.metadata?.resourceDeleted === true || missing;
     return (
         <Drawer title="资产详情" open={Boolean(asset)} size="large" onClose={onClose}>

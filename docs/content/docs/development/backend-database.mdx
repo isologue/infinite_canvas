@@ -111,6 +111,13 @@ CREATE TABLE IF NOT EXISTS shared_configs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS video_download_settings (
+  id BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  allowed_hosts JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS user_canvas_projects (
   user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
   project_id TEXT NOT NULL,

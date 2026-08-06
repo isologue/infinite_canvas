@@ -117,3 +117,10 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Agent 消息区分：用户消息应在右侧使用透明无气泡排版，AI 回复应在左侧使用无头像的开放式 Markdown 排版；长文本、多张附件、错误消息及浅色/深色主题下均应清晰且不溢出。
 - Agent 命令记录：命令执行中应显示运行状态；完成后，同一轮相邻命令应合并为「已执行 N 条命令」折叠行且默认不显示原始命令，单条展开后直接显示完整详情，多条展开后可分别查看命令、输出和退出状态；对话结束或刷新后分组与记录不应消失。
 - 渠道协议自动识别与失败回退：新建渠道或处于自动协议模式时，纯 Gemini 模型列表应自动选择 Gemini，纯 OpenAI 模型列表应自动选择 OpenAI；手动切换到与模型不匹配的协议时应弹出确认，取消后保持原协议，确认后记录为手动配置。故意配置错误协议进行生图和编辑图时，收到疑似请求结构/协议错误应只额外尝试一次反向协议；鉴权、限流、超时、网络错误和 5xx 不应触发回退；自定义模型脚本不应自动改协议；带蒙版编辑不得回退到 Gemini，Gemini 配置带蒙版时可尝试 OpenAI。
+- Server-side video transfer:
+  - Administrators can read and save the transfer switch and exact HTTPS host allowlist in the Channels section; regular users cannot see it and the admin settings API returns 403 to them.
+  - With `pub-9256c687f7ad40139828469d8a431c2b.r2.dev` enabled in the allowlist, a generated video without upstream CORS support is downloaded by the server and saved to My Assets.
+  - Disabled transfer or an allowlist miss falls back to the original browser download behavior; enabled allowlist matches that fail on the server record `video_server_transfer`, the original URL, HTTP status, and response data in the video call log.
+  - Non-HTTPS URLs, credentials in URLs, non-443 ports, redirects, non-video responses, empty responses, files over 200MB, and upstream download timeouts are rejected.
+- ?????????????????????????????????????????? JPEG ????????????????????????????????????????
+- 画布组装提示词参考资源：配置节点连接图片、视频或音频但未在组装提示词中插入 `@[node:id]` 时，生成请求应默认携带全部已连接资源；插入引用后仍只携带被引用的资源，并在调用日志中正确显示参考资源数量。

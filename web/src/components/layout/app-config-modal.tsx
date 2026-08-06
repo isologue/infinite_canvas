@@ -1,6 +1,6 @@
 "use client";
 
-import { App, Button, Form, Input, Modal, Progress, Select, Tabs } from "antd";
+import { App, Button, Form, Input, Modal, Progress, Select, Switch, Tabs } from "antd";
 import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -27,6 +27,8 @@ type WebdavDomainProgress = {
     total?: number;
     status?: "active" | "success" | "exception";
 };
+
+type VideoDownloadSettings = { enabled: boolean; allowedHosts: string[] };
 
 const modelGroups: ModelGroup[] = [
     { capability: "image", modelKey: "imageModel", defaultLabel: "默认生图模型" },
@@ -62,6 +64,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
     const [webdavDomainProgress, setWebdavDomainProgress] = useState(createWebdavDomainProgress);
+    const [videoTransferSettings, setVideoTransferSettings] = useState<VideoDownloadSettings>({ enabled: false, allowedHosts: [] });
+    const [videoTransferHosts, setVideoTransferHosts] = useState("");
+    const [videoTransferLoading, setVideoTransferLoading] = useState(false);
+    const [videoTransferSaving, setVideoTransferSaving] = useState(false);
     const config = useConfigStore((state) => state.config);
     const webdav = useConfigStore((state) => state.webdav);
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -79,6 +85,47 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
     const webdavReady = Boolean(webdav.url.trim());
     const editingChannel = config.channels.find((channel) => channel.id === editingChannelId) || null;
     useEffect(() => setActiveTab(initialTab === "prompt-sources" && !canManagePromptSources ? "channels" : initialTab), [canManagePromptSources, initialTab]);
+    useEffect(() => {
+        if (!canManagePromptSources) return;
+        let cancelled = false;
+        setVideoTransferLoading(true);
+        void fetch("/api/admin/video-download-settings")
+            .then(async (response) => {
+                const payload = await response.json() as { code?: number; data?: VideoDownloadSettings; msg?: string };
+                if (!response.ok || payload.code !== 0 || !payload.data) throw new Error(payload.msg || "Failed to read video transfer settings");
+                if (!cancelled) {
+                    setVideoTransferSettings(payload.data);
+                    setVideoTransferHosts(payload.data.allowedHosts.join("\n"));
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                if (!cancelled) setVideoTransferLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [canManagePromptSources]);
+
+    const saveVideoTransferSettings = async () => {
+        setVideoTransferSaving(true);
+        try {
+            const response = await fetch("/api/admin/video-download-settings", {
+                method: "PUT",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ enabled: videoTransferSettings.enabled, allowedHosts: videoTransferHosts.split(/\r?\n/).map((host) => host.trim()).filter(Boolean) }),
+            });
+            const payload = await response.json() as { code?: number; data?: VideoDownloadSettings; msg?: string };
+            if (!response.ok || payload.code !== 0 || !payload.data) throw new Error(payload.msg || "Failed to save video transfer settings");
+            setVideoTransferSettings(payload.data);
+            setVideoTransferHosts(payload.data.allowedHosts.join("\n"));
+            message.success("Video transfer settings saved");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "Failed to save video transfer settings");
+        } finally {
+            setVideoTransferSaving(false);
+        }
+    };
 
     const saveConfig = (nextConfig: AiConfig) => {
         (Object.keys(nextConfig) as Array<keyof AiConfig>).forEach((key) => updateConfig(key, nextConfig[key]));
@@ -252,6 +299,21 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                         </div>
                                     ))}
                                 </div>
+                                {canManagePromptSources ? (
+                                    <section className="mt-5 rounded-lg border border-stone-200 p-3 dark:border-stone-800">
+                                        <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                                            <div>
+                                                <div className="text-sm font-semibold">{"\u670d\u52a1\u7aef\u89c6\u9891\u8f6c\u5b58"}</div>
+                                                <div className="mt-1 text-xs text-stone-500">{"\u4ec5\u7528\u4e8e\u4e0a\u6e38\u89c6\u9891 CDN \u4e0d\u652f\u6301\u6d4f\u89c8\u5668 CORS \u65f6\u7531\u670d\u52a1\u5668\u4e0b\u8f7d\u5e76\u4fdd\u5b58\u5230\u7528\u6237\u7d20\u6750\u3002\u666e\u901a\u7528\u6237\u4e0d\u53ef\u67e5\u770b\u6216\u4fee\u6539\u3002"}</div>
+                                            </div>
+                                            <Switch loading={videoTransferLoading} checked={videoTransferSettings.enabled} onChange={(enabled) => setVideoTransferSettings((current) => ({ ...current, enabled }))} checkedChildren={"\u5f00"} unCheckedChildren={"\u5173"} />
+                                        </div>
+                                        <Form.Item label={"\u5141\u8bb8\u4e0b\u8f7d\u7684\u89c6\u9891\u57df\u540d"} extra={"\u6bcf\u884c\u4e00\u4e2a\u5b8c\u6574\u57df\u540d\uff0c\u4ec5\u5141\u8bb8 HTTPS \u548c\u7cbe\u786e\u5339\u914d\u3002\u4f8b\u5982 pub-9256c687f7ad40139828469d8a431c2b.r2.dev"} className="mb-3">
+                                            <Input.TextArea rows={3} value={videoTransferHosts} placeholder="pub-xxxxxxxx.r2.dev" onChange={(event) => setVideoTransferHosts(event.target.value)} />
+                                        </Form.Item>
+                                        <Button type="primary" loading={videoTransferSaving} onClick={() => void saveVideoTransferSettings()}>{"\u4fdd\u5b58\u8f6c\u5b58\u8bbe\u7f6e"}</Button>
+                                    </section>
+                                ) : null}
                             </div>
                         ),
                     },

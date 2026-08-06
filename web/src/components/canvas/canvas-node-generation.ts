@@ -89,15 +89,26 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     const referenceAudios = selectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
 
     if (!hasToken) {
+        // 未显式插入 @ 引用时，组装提示词仍应使用全部已连接资源。
+        // 否则配置面板虽然显示了参考图，实际请求会把资源全部丢弃。
+        const connectedInputs = inputs.filter((input) => input.type !== "text");
+        const connectedText = inputs
+            .map((input) => input.text)
+            .filter(Boolean)
+            .join("\n\n");
+        const connectedImages = connectedInputs.map((input) => input.image).filter((image): image is ReferenceImage => Boolean(image));
+        const connectedVideos = connectedInputs.map((input) => input.video).filter((video): video is ReferenceVideo => Boolean(video));
+        const connectedAudios = connectedInputs.map((input) => input.audio).filter((audio): audio is ReferenceAudio => Boolean(audio));
+
         return {
-            prompt,
-            referenceImages: [],
-            referenceVideos: [],
-            referenceAudios: [],
-            textCount: 0,
-            imageCount: 0,
-            videoCount: 0,
-            audioCount: 0,
+            prompt: connectedText ? `${prompt}\n\n${connectedText}` : prompt,
+            referenceImages: connectedImages,
+            referenceVideos: connectedVideos,
+            referenceAudios: connectedAudios,
+            textCount: inputs.filter((input) => input.type === "text").length,
+            imageCount: connectedImages.length,
+            videoCount: connectedVideos.length,
+            audioCount: connectedAudios.length,
         };
     }
 

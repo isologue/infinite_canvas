@@ -12,7 +12,7 @@ import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/vide
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
-import { resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { createVideoThumbnail, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { storageFileUrl } from "@/services/storage-url";
 import { registerGeneratedTextResource } from "@/services/api/resources";

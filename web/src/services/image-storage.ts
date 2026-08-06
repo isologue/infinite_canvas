@@ -55,6 +55,48 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
     return blobToDataUrl(await (await fetch(url)).blob());
 }
 
+export async function createVideoThumbnail(videoUrl: string, title = "??") {
+    if (!videoUrl || typeof document === "undefined") return null;
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+    try {
+        const source = new URL(videoUrl, window.location.href);
+        if (source.origin !== window.location.origin) video.crossOrigin = "anonymous";
+    } catch {
+        return null;
+    }
+    try {
+        await new Promise<void>((resolve, reject) => {
+            video.onloadedmetadata = () => resolve();
+            video.onerror = () => reject(new Error("??????"));
+            video.src = videoUrl;
+            video.load();
+        });
+        if (!video.videoWidth || !video.videoHeight) return null;
+        const targetWidth = Math.min(video.videoWidth, 960);
+        const canvas = document.createElement("canvas");
+        canvas.width = targetWidth;
+        canvas.height = Math.max(1, Math.round(targetWidth * video.videoHeight / video.videoWidth));
+        const time = Number.isFinite(video.duration) && video.duration > 0 ? Math.min(Math.max(video.duration * 0.1, 0.1), Math.max(0, video.duration - 0.01)) : 0;
+        if (time > 0) {
+            await new Promise<void>((resolve) => {
+                video.onseeked = () => resolve();
+                video.currentTime = time;
+            });
+        }
+        canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+        return blob ? uploadImage(blob, { title: `${title}??`, source: "generated-video-cover" }) : null;
+    } catch {
+        return null;
+    } finally {
+        video.removeAttribute("src");
+        video.load();
+    }
+}
+
 export async function deleteStoredImages(keys: Iterable<string>) {
     void keys;
 }

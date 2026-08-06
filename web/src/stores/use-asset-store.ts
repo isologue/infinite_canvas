@@ -8,7 +8,7 @@ import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 export type AssetKind = "text" | "image" | "video" | "audio";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
 export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
-export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
+export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; coverStorageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type AudioAsset = AssetBase<"audio"> & { data: { url: string; storageKey?: string; bytes: number; mimeType: string; durationMs?: number } };
 export type Asset = TextAsset | ImageAsset | VideoAsset | AudioAsset;
 
@@ -118,7 +118,13 @@ export const useAssetStore = create<AssetStore>()(
 );
 
 async function hydrateAsset(asset: Asset): Promise<Asset> {
-    if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+    if (asset.kind === "video") {
+        const [url, coverUrl] = await Promise.all([
+            asset.data.storageKey ? resolveMediaUrl(asset.data.storageKey, asset.data.url) : asset.data.url,
+            asset.data.coverStorageKey ? resolveImageUrl(asset.data.coverStorageKey, asset.coverUrl) : asset.coverUrl,
+        ]);
+        return { ...asset, coverUrl, data: { ...asset.data, url } };
+    }
     if (asset.kind === "audio" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
     if (asset.kind !== "image") return asset;
     if (asset.data.storageKey)
