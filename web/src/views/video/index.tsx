@@ -14,6 +14,7 @@ import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceRatio, seedanceRefe
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { buildAiErrorResponseResult } from "@/services/ai-call-log";
 import { createUserLogStore } from "@/services/user-log-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
@@ -349,6 +350,7 @@ export default function VideoPage() {
         setStartedAt((value) => value || performance.now());
         setResults((value) => (value.length ? value : [{ id: log.id, status: "pending" }]));
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
+        let failureResult: unknown;
         try {
             for (let attempt = 0; attempt < 120; attempt += 1) {
                 const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
@@ -373,14 +375,17 @@ export default function VideoPage() {
                     message.success("视频已生成");
                     return;
                 }
-                if (state.status === "failed") throw new Error(state.error);
+                if (state.status === "failed") {
+                    failureResult = state.responseResult;
+                    throw new Error(state.error);
+                }
                 if (attempt === 119) throw new Error("视频生成超时，请稍后重试");
                 await delay(log.task.provider === "seedance" ? 5000 : 2500);
             }
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             setResults([{ id: log.id, status: "failed", error: errorMessage }]);
-            await settleVideoTaskCredits(log.task, "failed", { errorMessage });
+            await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: failureResult ?? buildAiErrorResponseResult(error) });
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, error: errorMessage });
             message.error(errorMessage);
