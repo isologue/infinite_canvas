@@ -122,5 +122,7 @@ description: 当前版本已实现但仍需人工验证的变更项
   - With `pub-9256c687f7ad40139828469d8a431c2b.r2.dev` enabled in the allowlist, a generated video without upstream CORS support is downloaded by the server and saved to My Assets.
   - Disabled transfer or an allowlist miss falls back to the original browser download behavior; enabled allowlist matches that fail on the server record `video_server_transfer`, the original URL, HTTP status, and response data in the video call log.
   - Non-HTTPS URLs, credentials in URLs, non-443 ports, redirects, non-video responses, empty responses, files over 200MB, and upstream download timeouts are rejected.
+  - 兼容上游以 `code: "success"` 或 `code: "ok"` 表示成功且把视频地址嵌套在 `data` 中的响应：任务完成后不得被记录为 `error_message: success`，应继续执行服务端转存或浏览器下载并保存到「我的素材」。
+  - 服务端视频转存允许域名支持通配子域名：配置 `*.sllt.uk` 后可转存 `xai3.sllt.uk` 等任意子域名的视频地址，但不匹配根域 `sllt.uk`，也不匹配其他域名。
 - ?????????????????????????????????????????? JPEG ????????????????????????????????????????
 - 画布组装提示词参考资源：配置节点连接图片、视频或音频但未在组装提示词中插入 `@[node:id]` 时，生成请求应默认携带全部已连接资源；插入引用后仍只携带被引用的资源，并在调用日志中正确显示参考资源数量。

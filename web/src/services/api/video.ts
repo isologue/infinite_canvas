@@ -465,11 +465,16 @@ function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {
 function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
     if (!payload) throw new Error(emptyMessage);
     if (typeof payload === "object" && "code" in payload && payload.code !== undefined) {
-        if (payload.code !== 0 && payload.code !== "0") throw videoResponseError(readApiErrorMessage(payload) || "请求失败", payload);
-        if (!payload.data) throw videoResponseError(emptyMessage, payload);
-        return payload.data;
+        if (!isSuccessCode(payload.code)) throw videoResponseError(readApiErrorMessage(payload) || "请求失败", payload);
+        // 部分上游把 code/status/video_url 直接放在顶层，不返回 data 包装层。
+        // 有 data 时优先解包；没有 data 时保留整个成功响应，后续按任务或视频结果解析。
+        return payload.data !== undefined && payload.data !== null ? payload.data : (payload as T);
     }
     return payload as T;
+}
+
+function isSuccessCode(value: unknown) {
+    return value === 0 || (typeof value === "string" && ["0", "success", "ok"].includes(value.trim().toLowerCase()));
 }
 
 function videoResponseError(message: string, responseResult?: unknown) {
@@ -479,7 +484,15 @@ function videoResponseError(message: string, responseResult?: unknown) {
 }
 
 function videoResultUrl(payload: VideoResponse | SeedanceTask) {
-    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
+    const urls: unknown[] = [];
+    const visit = (value: unknown, depth = 0) => {
+        if (!value || depth > 3 || typeof value !== "object") return;
+        const record = value as Record<string, unknown>;
+        urls.push(record.video_url, record.result_url, record.url, (record.content as Record<string, unknown> | undefined)?.video_url, (record.content as Record<string, unknown> | undefined)?.url);
+        visit(record.data, depth + 1);
+    };
+    visit(payload);
+    return urls.find((url): url is string => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
 function readApiErrorMessage(value: unknown): string {
@@ -548,7 +561,7 @@ async function assertVideoBlob(blob: Blob, url?: string) {
         return;
     }
     const responseResult = url ? { stage: "video_download", url, data: payload } : payload;
-    if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0") throw videoResponseError(readApiErrorMessage(payload) || "视频下载失败", responseResult);
+    if (payload.code !== undefined && !isSuccessCode(payload.code)) throw videoResponseError(readApiErrorMessage(payload) || "视频下载失败", responseResult);
     if (payload.error?.message) throw videoResponseError(readApiErrorMessage(payload.error.message) || payload.error.message, responseResult);
 }
 

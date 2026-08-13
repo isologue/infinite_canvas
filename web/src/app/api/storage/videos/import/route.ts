@@ -40,11 +40,20 @@ function unavailable(reason: "disabled" | "host_not_allowed") {
     return Response.json({ code: 409, msg: "Video server transfer is unavailable", data: { reason } }, { status: 409 });
 }
 
+function isAllowedVideoHost(hostname: string, allowedHosts: string[]) {
+    const host = hostname.toLowerCase();
+    return allowedHosts.some((allowedHost) => {
+        if (!allowedHost.startsWith("*.")) return host === allowedHost;
+        const suffix = allowedHost.slice(1);
+        return host.endsWith(suffix) && host.length > suffix.length;
+    });
+}
+
 function parseVideoUrl(value: unknown, allowedHosts: string[]) {
     if (typeof value !== "string" || value.length > 4096) return null;
     try {
         const url = new URL(value);
-        if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !allowedHosts.includes(url.hostname.toLowerCase())) return null;
+        if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443") || !isAllowedVideoHost(url.hostname, allowedHosts)) return null;
         return url;
     } catch {
         return null;

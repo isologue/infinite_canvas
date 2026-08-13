@@ -308,8 +308,8 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                             </div>
                                             <Switch loading={videoTransferLoading} checked={videoTransferSettings.enabled} onChange={(enabled) => setVideoTransferSettings((current) => ({ ...current, enabled }))} checkedChildren={"\u5f00"} unCheckedChildren={"\u5173"} />
                                         </div>
-                                        <Form.Item label={"\u5141\u8bb8\u4e0b\u8f7d\u7684\u89c6\u9891\u57df\u540d"} extra={"\u6bcf\u884c\u4e00\u4e2a\u5b8c\u6574\u57df\u540d\uff0c\u4ec5\u5141\u8bb8 HTTPS \u548c\u7cbe\u786e\u5339\u914d\u3002\u4f8b\u5982 pub-9256c687f7ad40139828469d8a431c2b.r2.dev"} className="mb-3">
-                                            <Input.TextArea rows={3} value={videoTransferHosts} placeholder="pub-xxxxxxxx.r2.dev" onChange={(event) => setVideoTransferHosts(event.target.value)} />
+                                        <Form.Item label={"\u5141\u8bb8\u4e0b\u8f7d\u7684\u89c6\u9891\u57df\u540d"} extra={"\u6bcf\u884c\u4e00\u4e2a\u57df\u540d\uff0c\u4ec5\u5141\u8bb8 HTTPS\uff1b\u652f\u6301\u7cbe\u786e\u57df\u540d\u6216\u901a\u914d\u5b50\u57df\u540d\uff0c\u4f8b\u5982 pub-9256c687f7ad40139828469d8a431c2b.r2.dev\u3001*.sllt.uk"} className="mb-3">
+                                            <Input.TextArea rows={3} value={videoTransferHosts} placeholder="pub-xxxxxxxx.r2.dev 或 *.sllt.uk" onChange={(event) => setVideoTransferHosts(event.target.value)} />
                                         </Form.Item>
                                         <Button type="primary" loading={videoTransferSaving} onClick={() => void saveVideoTransferSettings()}>{"\u4fdd\u5b58\u8f6c\u5b58\u8bbe\u7f6e"}</Button>
                                     </section>
