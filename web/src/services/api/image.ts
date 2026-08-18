@@ -5,7 +5,6 @@ import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { imageToDataUrl } from "@/services/image-storage";
-import { resolveReferenceAssetUrl } from "@/services/storage-public-url";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
@@ -1002,17 +1001,12 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
     });
 }
 
-async function resolveImageEditInput(image: ReferenceImage) {
-    const url = await resolveReferenceAssetUrl(image);
-    return url || (await imageToDataUrl(image));
-}
-
 async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
-    const refs = await Promise.all(references.map((image) => resolveImageEditInput(image)));
-    const maskDataUrl = mask ? await resolveImageEditInput(mask) : undefined;
+    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
     const body = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
@@ -1106,7 +1100,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     const quality = normalizeQuality(config.quality);
                     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
                     const background = normalizeBackground(config.background);
-                    const refs = await Promise.all(references.map((image) => resolveImageEditInput(image)));
+                    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
                     const response = await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
                         model: activeConfig.model,
                         prompt: withSystemPrompt(activeConfig, requestPrompt),
