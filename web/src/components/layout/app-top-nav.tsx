@@ -4,6 +4,7 @@ import { Bot, Database, Menu, ScrollText, Users } from "lucide-react";
 import { Button, Tooltip } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useTranslation } from "react-i18next";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
 import { AppConfigModal } from "@/components/layout/app-config-modal";
@@ -15,6 +16,7 @@ import { useUserStore } from "@/stores/use-user-store";
 import { useAgentStore } from "@/stores/use-agent-store";
 
 export function AppTopNav() {
+    const { t } = useTranslation();
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const user = useUserStore((state) => state.user);
@@ -128,8 +130,15 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
-                            <Tooltip title={panelOpen ? "?? Agent" : "?? Agent"}>
-                                <Button type="text" shape="circle" className="!h-8 !w-8 !min-w-8" icon={<Bot className="size-4" />} onClick={togglePanel} aria-label="?? Agent" />
+                            <Tooltip title={panelOpen ? t("topNav.closeAgent") : t("topNav.openAgent")}>
+                                <Button
+                                    type="text"
+                                    shape="circle"
+                                    className="!h-8 !w-8 !min-w-8"
+                                    icon={<Bot className="size-4" />}
+                                    onClick={togglePanel}
+                                    aria-label={panelOpen ? t("topNav.closeAgent") : t("topNav.openAgent")}
+                                />
                             </Tooltip>
                             <UserStatusActions />
                         </div>

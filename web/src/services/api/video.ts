@@ -5,6 +5,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { storageFileUrl } from "@/services/storage-url";
 import { imageToDataUrl } from "@/services/image-storage";
+import { resolveReferenceAssetUrl } from "@/services/storage-public-url";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
@@ -267,8 +268,14 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("preset", "normal");
-    const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    files.forEach((file) => body.append("input_reference[]", file));
+    const referenceParts = await Promise.all(references.slice(0, 7).map(async (image) => {
+        const url = await resolveReferenceAssetUrl(image);
+        if (url) return url;
+        return dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) });
+    }));
+    const referenceUrls = referenceParts.filter((reference): reference is string => typeof reference === "string");
+    referenceParts.forEach((reference) => body.append("input_reference[]", reference));
+    if (referenceUrls.length) body.append("image", JSON.stringify(referenceUrls));
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");
@@ -379,14 +386,18 @@ async function buildSeedanceContent(config: AiConfig, prompt: string, references
 
 async function resolveSeedanceImageUrl(config: AiConfig, image: ReferenceImage) {
     const directUrl = image.url || image.dataUrl;
-    if (isPublicMediaUrl(directUrl) || directUrl.startsWith("asset://")) return directUrl;
+    if (directUrl.startsWith("asset://")) return directUrl;
+    const publicUrl = await resolveReferenceAssetUrl(image);
+    if (publicUrl) return publicUrl;
     const dataUrl = await imageToDataUrl(image);
     if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
     return dataUrl;
 }
 
 async function resolveSeedanceVideoUrl(video: ReferenceVideo) {
-    if (isPublicMediaUrl(video.url) || video.url.startsWith("asset://")) return video.url;
+    if (video.url.startsWith("asset://")) return video.url;
+    const publicUrl = await resolveReferenceAssetUrl(video);
+    if (publicUrl) return publicUrl;
     let blob: Blob | null = null;
     if (video.storageKey) blob = await getMediaBlob(video.storageKey);
     if (!blob && video.url?.startsWith("blob:")) blob = await (await fetch(video.url)).blob();
@@ -395,7 +406,9 @@ async function resolveSeedanceVideoUrl(video: ReferenceVideo) {
 }
 
 async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
-    if (isPublicMediaUrl(audio.url) || audio.url.startsWith("asset://")) return audio.url;
+    if (audio.url.startsWith("asset://")) return audio.url;
+    const publicUrl = await resolveReferenceAssetUrl(audio);
+    if (publicUrl) return publicUrl;
     let blob: Blob | null = null;
     if (audio.storageKey) blob = await getMediaBlob(audio.storageKey);
     if (!blob && audio.url?.startsWith("blob:")) blob = await (await fetch(audio.url)).blob();
