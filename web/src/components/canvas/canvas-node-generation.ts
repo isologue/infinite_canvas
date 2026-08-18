@@ -1,4 +1,5 @@
 import type { AiTextMessage } from "@/services/api/image";
+import i18n from "@/i18n";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { seedanceReferenceLabel } from "@/lib/seedance-video";
 import type { ReferenceImage } from "@/types/image";
@@ -72,7 +73,7 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
         if (input) {
             let label = labelByNodeId.get(input.nodeId);
             if (!label) {
-                label = generationLabel(input.type, counts[input.type]++);
+                label = generationLabel(input.type || "text", counts[input.type]++);
                 labelByNodeId.set(input.nodeId, label);
                 if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
                 else selectedInputs.push(input);
@@ -165,7 +166,7 @@ function generationLabel(type: NodeGenerationInput["type"], index: number) {
     if (type === "image") return imageReferenceLabel(index);
     if (type === "video") return seedanceReferenceLabel("video", index);
     if (type === "audio") return seedanceReferenceLabel("audio", index);
-    return `文本${index + 1}`;
+    return i18n.t("canvas.composer.resources.text", { index: index + 1 });
 }
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {

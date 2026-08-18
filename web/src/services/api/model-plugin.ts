@@ -180,6 +180,10 @@ export const PLUGIN_VARIABLES: PluginVariable[] = [
     { name: "onDelta", type: "function", desc: "onDelta(text) 推送流式文本（文本模型）", capabilities: ["text"] },
 ];
 
+export function getPluginVariables() {
+    return PLUGIN_VARIABLES;
+}
+
 export const PLUGIN_RETURNS: Record<ModelCapability, string> = {
     image: "文生图（images 为空）和图生图（images 有参考图）接口不同，脚本需自行区分；返回图片 URL 或 dataURL 字符串，也可返回它们的数组，或 [{ dataUrl }] / [{ url }] / [{ b64_json }]",
     video: "脚本内部完成轮询，返回 { url } 或 { blob } 或视频 URL 字符串",
@@ -388,3 +392,6 @@ export function normalizePluginImages(result: unknown): string[] {
     if (!urls.length) throw new Error("模型调用脚本没有返回图片");
     return urls;
 }
+
+export function getPluginReturn(capability: ModelCapability) { return PLUGIN_RETURNS[capability]; }
+export function getPluginTemplates() { return PLUGIN_TEMPLATES; }

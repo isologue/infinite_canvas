@@ -157,7 +157,7 @@ export default function AssetsPage() {
             message.warning("暂无资产可导出");
             return;
         }
-        await exportAssets(validAssets);
+        await exportAssets(validAssets, "assets.zip");
     };
 
     const importAssetZip = async (file?: File) => {

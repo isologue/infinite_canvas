@@ -1278,7 +1278,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                     {tokenUsage ? <AgentUsageBar usage={tokenUsage} theme={theme} /> : null}
                     <AgentChatComposer
                         prompt={prompt}
-                        attachments={attachments.map(agentAttachmentToChatAttachment)}
+                        attachments={attachments.map((item) => agentAttachmentToChatAttachment(item, endpoint, token))}
                         disabled={!connected || agentInitializing}
                         sending={sending || waiting}
                         placeholder={agentInitializing ? "MCP 初始化中，完成后即可发送" : "询问 Codex，或让它操作网站/画布"}

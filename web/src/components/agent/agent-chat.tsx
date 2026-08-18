@@ -31,6 +31,8 @@ export function AgentChatTimeline({
     onApprovalDecision: (approval: AgentPendingApproval, decision: "accept" | "acceptForSession" | "decline") => void;
 }) {
     const messages = useAgentStore((state) => state.messages);
+    const endpoint = useAgentStore((state) => state.url);
+    const token = useAgentStore((state) => state.token);
     const bootstrapStatus = useAgentStore((state) => state.bootstrapStatus);
     const mcpStartupStatuses = useAgentStore((state) => state.mcpStartupStatuses);
     const timeline = useMemo(() => groupTimelineMessages(messages), [messages]);
@@ -78,7 +80,7 @@ export function AgentChatTimeline({
                 <div ref={contentRef} className="space-y-4 px-4 pt-4">
                     {timeline.map((entry) => entry.type === "commands"
                         ? <AgentCommandGroupRow key={entry.id} items={entry.items} theme={theme} />
-                        : <AgentChatMessageRow key={entry.item.id} item={entry.item} theme={theme} />)}
+                        : <AgentChatMessageRow key={entry.item.id} item={entry.item} theme={theme} endpoint={endpoint} token={token} />)}
                     {pendingTool ? (
                         <AgentPendingToolCard
                             summary={summarizeCanvasAgentOps(pendingTool.input?.ops || []) || toolName(pendingTool.name)}
@@ -109,10 +111,10 @@ export function AgentTaskProgress({ theme, busy }: { theme: (typeof canvasThemes
     );
 }
 
-const AgentChatMessageRow = memo(function AgentChatMessageRow({ item, theme }: { item: AgentChatItem; theme: (typeof canvasThemes)[keyof typeof canvasThemes] }) {
+const AgentChatMessageRow = memo(function AgentChatMessageRow({ item, theme, endpoint, token }: { item: AgentChatItem; theme: (typeof canvasThemes)[keyof typeof canvasThemes]; endpoint: string; token: string }) {
     return (
         <div style={item.streamId ? undefined : historyMessageStyle}>
-            <AgentChatMessage item={agentMessageToChatMessage(item)} theme={theme} />
+            <AgentChatMessage item={agentMessageToChatMessage(item, endpoint, token)} theme={theme} />
         </div>
     );
 });

@@ -1,7 +1,7 @@
 import localforage from "localforage";
 
 import { upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
-import type { AgentAttachment, AgentChatItem } from "@/stores/use-agent-store";
+import type { AgentAttachment, AgentChatItem, AgentMessageAttachment } from "@/stores/use-agent-store";
 
 export type StoredAgentUserMessage = Pick<AgentChatItem, "id" | "text" | "attachments"> & { role: "user"; historyText: string; threadId?: string; turnId?: string };
 
@@ -126,7 +126,17 @@ async function mutateScopes(scopes: string[], mutation: () => Promise<void>) {
     }
 }
 
-async function createThumbnail(attachment: AgentAttachment): Promise<AgentAttachment> {
-    const dataUrl = Math.max(attachment.width, attachment.height) > 512 ? await upscaleDataUrl(attachment.dataUrl, { targetLongEdge: 512, algorithm: "high" }) : attachment.dataUrl;
-    return { ...attachment, size: dataUrl.length, url: dataUrl, dataUrl };
+async function createThumbnail(attachment: AgentMessageAttachment | AgentAttachment): Promise<AgentAttachment> {
+    const normalized: AgentAttachment = {
+        id: attachment.id,
+        name: attachment.name,
+        type: attachment.type || "application/octet-stream",
+        size: attachment.size || 0,
+        width: attachment.width || 0,
+        height: attachment.height || 0,
+        url: attachment.url,
+        dataUrl: attachment.dataUrl || attachment.url,
+    };
+    const dataUrl = Math.max(normalized.width, normalized.height) > 512 ? await upscaleDataUrl(normalized.dataUrl, { targetLongEdge: 512, algorithm: "high" }) : normalized.dataUrl;
+    return { ...normalized, size: dataUrl.length, url: dataUrl, dataUrl };
 }

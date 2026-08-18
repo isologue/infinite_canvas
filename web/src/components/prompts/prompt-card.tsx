@@ -13,6 +13,7 @@ export function PromptCard({
     actionIcon = <Copy className="size-3.5" />,
     actionType = "text",
     extraAction,
+    compact = false,
 }: {
     item: Prompt;
     onOpen: () => void;
@@ -21,11 +22,12 @@ export function PromptCard({
     actionIcon?: ReactNode;
     actionType?: "text" | "primary";
     extraAction?: ReactNode;
+    compact?: boolean;
 }) {
     return (
         <Card
             hoverable
-            className="overflow-hidden"
+            className={`overflow-hidden ${compact ? "h-full" : ""}`}
             styles={{ body: { padding: 0 } }}
             cover={
                 <button type="button" className="block w-full text-left" onClick={onOpen}>

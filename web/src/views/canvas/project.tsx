@@ -266,6 +266,7 @@ function InfiniteCanvasPage() {
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
     const [showImageInfo, setShowImageInfo] = useState(false);
+    const [canvasTool, setCanvasTool] = useState<"select" | "pan">("select");
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
@@ -2908,6 +2909,7 @@ function InfiniteCanvasPage() {
                 />
 
                 <InfiniteCanvas
+                    tool={canvasTool}
                     containerRef={containerRef}
                     viewport={viewport}
                     backgroundMode={backgroundMode}
@@ -3060,6 +3062,7 @@ function InfiniteCanvasPage() {
 
                 <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
+                    canvasTool={canvasTool}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
@@ -3076,7 +3079,7 @@ function InfiniteCanvasPage() {
                     onUpload={() => handleUploadRequest()}
                     onDelete={() => deleteNodes(new Set(selectedNodeIds))}
                     onClear={() => setClearConfirmOpen(true)}
-                    onDeselect={deselectCanvas}
+                    onCanvasToolChange={setCanvasTool}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
                 />
