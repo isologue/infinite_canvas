@@ -1,9 +1,10 @@
 import axios from "axios";
 
-import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildAiProxyUrl, buildApiUrl, inferModelApiFormat, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
+import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
@@ -112,6 +113,8 @@ const IMAGE_TASK_MAX_ATTEMPTS = 240;
 const IMAGE_TASK_MAX_CONSECUTIVE_ERRORS = 5;
 const IMAGE_TASK_MAX_INITIAL_NOT_FOUND = 3;
 const asyncUnsupported = new Set<string>();
+
+type ImageTaskExecutionError = Error & { imageTaskExecution?: true };
 
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9", "9:21"];
 
@@ -264,7 +267,13 @@ async function requestImagesWithAsyncFallback(input: {
         return fallback;
     }
     const taskId = imageTaskId(payload);
-    if (taskId) return pollImageTask(input.config, taskId, input.parseImmediate, input.options);
+    if (taskId) {
+        try {
+            return await pollImageTask(input.config, taskId, input.parseImmediate, input.options);
+        } catch (error) {
+            throw markImageTaskExecutionError(error);
+        }
+    }
     const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
     asyncUnsupported.add(input.key);
     return fallback;
@@ -274,6 +283,21 @@ function alternateImageApiFormat(apiFormat: AiConfig["apiFormat"]): "openai" | "
     if (apiFormat === "openai") return "gemini";
     if (apiFormat === "gemini") return "openai";
     return undefined;
+}
+
+function shouldTryAlternateImageApiFormat(config: AiConfig, alternate: "openai" | "gemini") {
+    const inferred = inferModelApiFormat(config.model);
+    return !inferred || inferred === alternate;
+}
+
+function markImageTaskExecutionError(error: unknown) {
+    if (error instanceof Error) {
+        (error as ImageTaskExecutionError).imageTaskExecution = true;
+        return error;
+    }
+    const wrapped = new Error(String(error || "图片任务执行失败")) as ImageTaskExecutionError;
+    wrapped.imageTaskExecution = true;
+    return wrapped;
 }
 
 function imageRequestErrorStatus(error: unknown) {
@@ -317,7 +341,8 @@ async function withImageApiFormatFallback<T>(config: AiConfig, run: (requestConf
         return await run(config);
     } catch (error) {
         const alternate = alternateImageApiFormat(config.apiFormat);
-        if (!alternate || !isLikelyProtocolMismatchError(error) || (options?.hasMask && alternate === "gemini")) throw error;
+        if (isRecord(error) && error.imageTaskExecution) throw error;
+        if (!alternate || !shouldTryAlternateImageApiFormat(config, alternate) || !isLikelyProtocolMismatchError(error) || (options?.hasMask && alternate === "gemini")) throw error;
         return run({ ...config, apiFormat: alternate });
     }
 }
@@ -833,7 +858,7 @@ function toGeminiParts(content: ResponseMessageContent): GeminiPart[] {
 function toGeminiImagePart(url: string): GeminiPart {
     const match = url.match(/^data:([^;,]+);base64,(.+)$/);
     if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
-    return { fileData: { fileUri: url, mimeType: "image/png" } };
+    return { fileData: { fileUri: url } };
 }
 
 function geminiTextContent(content: ResponseMessageContent) {
@@ -1001,15 +1026,57 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
     });
 }
 
+function isGrokImageModel(model: string) {
+    return /(^|[/:._-])grok(?:$|[/:._-])/i.test(model);
+}
+
 async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
+    const requestPrompt = withSystemPrompt(config, prompt);
+
+    if (isGrokImageModel(config.model)) {
+        if (mask) throw new Error("Grok 图像编辑接口暂不支持蒙版编辑");
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const parseImmediate = (value: unknown) => tryParseOpenAiImages(value) || tryParseGeminiImages(value);
+        return requestImagesWithAsyncFallback({
+            key: imageTaskKey(config, "/images/edits:multipart"),
+            config,
+            create: async (asyncMode) => {
+                const form = new FormData();
+                form.set("model", config.model);
+                form.set("prompt", requestPrompt);
+                form.set("n", String(n));
+                form.set("response_format", "url");
+                if (requestSize) form.set("size", requestSize);
+                if (asyncMode) form.set("async", "true");
+                files.forEach((file) => form.append("image[]", file, file.name));
+
+                console.info("[image-edit:grok] multipart prepared", {
+                    model: config.model,
+                    async: asyncMode,
+                    referenceCount: references.length,
+                    fileCount: files.length,
+                    files: files.map((file) => ({ name: file.name, size: file.size, type: file.type })),
+                    imageFieldCount: form.getAll("image[]").length,
+                });
+
+                return (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), form, {
+                    headers: aiHeaders(config),
+                    signal: options?.signal,
+                })).data;
+            },
+            parseImmediate,
+            options,
+        });
+    }
+
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
     const body = {
         model: config.model,
-        prompt: withSystemPrompt(config, prompt),
+        prompt: requestPrompt,
         n,
         response_format: "b64_json",
         output_format: IMAGE_OUTPUT_FORMAT,

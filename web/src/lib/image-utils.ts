@@ -1,3 +1,4 @@
+import { resolveImageMimeType } from "@/lib/image-mime";
 import i18n from "@/i18n";
 import type { ReferenceImage } from "@/types/image";
 
@@ -95,11 +96,11 @@ export async function compressImageIfLarge(file: Blob, options?: { thresholdByte
 
 export function dataUrlToFile(image: ReferenceImage) {
     const [header, content] = image.dataUrl.split(",", 2);
-    const mimeType = header.match(/data:(.*?);base64/)?.[1] || image.type || "image/png";
+    const declaredMimeType = header.match(/data:(.*?);base64/)?.[1] || image.type || "image/png";
     const binary = atob(content || "");
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index += 1) {
         bytes[index] = binary.charCodeAt(index);
     }
-    return new File([bytes], image.name || "reference.png", { type: mimeType });
+    return new File([bytes], image.name || "reference.png", { type: resolveImageMimeType(bytes, declaredMimeType) });
 }

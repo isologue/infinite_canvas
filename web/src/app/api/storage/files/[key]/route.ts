@@ -1,3 +1,4 @@
+import { resolveImageMimeType } from "@/lib/image-mime";
 import { readSessionUser } from "@/lib/server/auth";
 import { getUserImagePreview } from "@/lib/server/image-preview";
 import { readUserFile, readUserFileInfo, readUserFileRange } from "@/lib/server/user-data-db";
@@ -30,10 +31,12 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
         if (!range) return new Response(null, { status: 416, headers: { "content-range": `bytes */${total}`, "accept-ranges": "bytes" } });
         const content = await readUserFileRange(user.id, storageKey, range.start, range.end - range.start + 1);
         if (!content) return new Response("Not Found", { status: 404 });
+        const signature = range.start === 0 ? content : await readUserFileRange(user.id, storageKey, 0, 16);
+        const mimeType = resolveImageMimeType(signature || content, info.mime_type);
         return new Response(new Uint8Array(content), {
             status: 206,
             headers: {
-                "content-type": info.mime_type,
+                "content-type": mimeType,
                 "content-length": String(content.length),
                 "content-range": `bytes ${range.start}-${range.end}/${total}`,
                 "accept-ranges": "bytes",
@@ -44,9 +47,10 @@ export async function GET(request: Request, context: { params: Promise<{ key: st
     }
     const file = await readUserFile(user.id, storageKey);
     if (!file) return new Response("Not Found", { status: 404 });
+    const mimeType = resolveImageMimeType(file.content, file.mime_type);
     return new Response(new Uint8Array(file.content), {
         headers: {
-            "content-type": file.mime_type,
+            "content-type": mimeType,
             "content-length": file.bytes,
             "accept-ranges": "bytes",
             "cache-control": "private, max-age=3600",

@@ -15,6 +15,7 @@
 
 ## 开发与数据
 
+- [外部统一 API](/external-api.html)
 - [本地开发](/zh-CN/docs/development/local-development)
 - [画布数据结构](/zh-CN/docs/development/canvas-data-structure)
 

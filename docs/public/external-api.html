@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="MoAI 外部用户统一生成 API 文档">
+  <title>MoAI 统一 API 文档</title>
+  <style>
+    :root { --bg:#0b0e0e; --panel:#141919; --panel-2:#101414; --line:#2b3534; --text:#eef3ee; --muted:#9ba8a2; --accent:#cbfb64; --accent-ink:#172000; --orange:#ff8a4d; --code:#080b0b; }
+    * { box-sizing:border-box; }
+    html { scroll-behavior:smooth; }
+    body { margin:0; color:var(--text); background:var(--bg); font:15px/1.72 Consolas, "SFMono-Regular", "PingFang SC", monospace; }
+    body::before { content:""; pointer-events:none; position:fixed; inset:0; opacity:.22; background-image:linear-gradient(#ffffff08 1px, transparent 1px),linear-gradient(90deg,#ffffff08 1px,transparent 1px); background-size:34px 34px; }
+    a { color:inherit; text-decoration:none; }
+    .layout { position:relative; display:grid; grid-template-columns:238px minmax(0,960px); gap:58px; max-width:1300px; margin:0 auto; padding:38px 30px 100px; }
+    .sidebar { position:sticky; top:28px; align-self:start; max-height:calc(100vh - 56px); overflow:auto; padding-bottom:20px; }
+    .logo { font:800 27px/1 Georgia, "Songti SC", serif; letter-spacing:-.04em; }
+    .sub { margin-top:7px; color:var(--muted); font-size:11px; }
+    .nav { display:grid; gap:4px; margin-top:35px; }
+    .nav strong { margin:16px 0 3px; padding-left:11px; color:var(--orange); font-size:11px; letter-spacing:.08em; }
+    .nav a { border-left:2px solid var(--line); padding:6px 11px; color:var(--muted); font-size:12px; }
+    .nav a:hover { border-color:var(--accent); color:var(--accent); }
+    main { min-width:0; }
+    .hero { padding:48px 0 54px; border-bottom:1px solid var(--line); }
+    h1 { margin:0 0 17px; font:800 clamp(52px,8vw,84px)/.94 Georgia, "Songti SC", serif; letter-spacing:-.06em; }
+    .lead { max-width:760px; margin:0; color:#c6d0ca; font-size:17px; }
+    .base { display:grid; grid-template-columns:112px 1fr; margin-top:28px; border:1px solid var(--accent); background:#12180c; }
+    .base b { display:flex; align-items:center; padding:12px; background:var(--accent); color:var(--accent-ink); font-size:12px; }
+    .base code { overflow:auto; padding:12px 15px; color:var(--accent); white-space:nowrap; }
+    .notice { margin-top:18px; padding:14px 17px; border-left:3px solid var(--orange); background:#1a1510; color:#dfcec2; font-size:13px; }
+    section { padding:72px 0 8px; border-top:1px solid var(--line); scroll-margin-top:22px; }
+    section:first-of-type { border-top:0; }
+    .tag { display:inline-block; padding:5px 9px; background:var(--orange); color:#271007; font-size:11px; font-weight:800; letter-spacing:.06em; }
+    h2 { margin:15px 0 8px; font:700 36px/1.1 Georgia, "Songti SC", serif; letter-spacing:-.03em; }
+    h3 { display:flex; gap:12px; align-items:center; margin:52px 0 8px; font:700 28px/1.12 Georgia, "Songti SC", serif; letter-spacing:-.02em; scroll-margin-top:22px; }
+    h3 span { color:var(--orange); font:11px Consolas, monospace; letter-spacing:.05em; }
+    h4 { margin:27px 0 10px; color:var(--accent); font-size:13px; letter-spacing:.05em; }
+    p { margin:0 0 16px; }
+    .muted { color:var(--muted); }
+    .endpoint { margin:17px 0; border:1px solid var(--line); background:var(--panel); }
+    .endpoint div { display:grid; grid-template-columns:76px 1fr; gap:10px; padding:11px 14px; }
+    .method { color:var(--accent); font-weight:800; }
+    .method.get { color:#82cfff; }
+    .table { overflow:auto; border:1px solid var(--line); background:var(--panel); }
+    table { width:100%; min-width:680px; border-collapse:collapse; font-size:12px; }
+    th, td { padding:11px 12px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { color:var(--accent); background:var(--panel-2); }
+    th:last-child, td:last-child { border-right:0; }
+    tr:last-child td { border-bottom:0; }
+    .required { color:var(--accent); font-weight:700; }
+    .optional { color:var(--muted); }
+    .code { margin:12px 0; border:1px solid var(--line); background:var(--code); }
+    .code-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:8px 11px; border-bottom:1px solid var(--line); color:var(--muted); font-size:11px; }
+    button { border:0; cursor:pointer; font:inherit; }
+    .copy { padding:4px 9px; background:#25302d; color:var(--accent); }
+    .copy:hover, .copy-all:hover { background:var(--orange); color:#231008; }
+    pre { overflow:auto; margin:0; padding:17px; color:#dce6de; font:12px/1.65 Consolas, "SFMono-Regular", monospace; white-space:pre; }
+    code { font-family:inherit; }
+    .inline { color:var(--accent); }
+    .pill-row { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+    .pill { padding:5px 9px; border:1px solid var(--line); color:var(--muted); font-size:11px; }
+    .pill b { color:var(--accent); }
+    .copy-all-box { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-top:26px; padding:16px; border:1px solid var(--line); background:var(--panel); }
+    .copy-all-box p { margin:0; color:var(--muted); font-size:12px; }
+    .copy-all { flex:none; padding:11px 16px; background:var(--accent); color:var(--accent-ink); font-weight:800; }
+    footer { margin-top:70px; padding-top:20px; border-top:1px solid var(--line); color:#77827c; font-size:11px; }
+    @media (max-width:820px) { .layout { display:block; padding:20px 18px 72px; } .sidebar { position:relative; top:auto; max-height:none; overflow:visible; } .nav { display:flex; overflow:auto; margin:22px -18px 0; padding:0 18px 12px; } .nav strong { display:none; } .nav a { flex:none; border-left:0; border-bottom:2px solid var(--line); white-space:nowrap; } .hero { padding-top:38px; } .base { grid-template-columns:1fr; } h2 { font-size:31px; } h3 { font-size:25px; } .copy-all-box { align-items:flex-start; flex-direction:column; } }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <a class="logo" href="#top">MoAI / API</a>
+      <div class="sub">外部用户统一调用文档</div>
+      <nav class="nav">
+        <strong>开始使用</strong>
+        <a href="#auth">鉴权与约定</a>
+        <a href="#models">读取模型</a>
+        <strong>图像</strong>
+        <a href="#image-generation">文生图</a>
+        <a href="#image-edit">图生图 / 编辑图</a>
+        <a href="#gemini-image">Gemini 原生图像</a>
+        <strong>视频</strong>
+        <a href="#video-create">创建视频任务</a>
+        <a href="#video-status">查询视频任务</a>
+        <a href="#video-content">下载视频内容</a>
+        <strong>通用</strong>
+        <a href="#errors">错误处理</a>
+      </nav>
+    </aside>
+
+    <main id="top">
+      <header class="hero">
+        <h1>统一 API<br>接口文档</h1>
+        <p class="lead">面向外部调用方的图片与视频生成接口。每个场景均列出请求参数、cURL 示例与响应结构，可直接复制后替换 API Key 和模型名。</p>
+        <div class="base"><b>Base URL</b><code id="base-url">https://image.moai.wiki</code></div>
+        <div class="notice">本页描述的是外部调用网关，不是 Infinite Canvas 的登录态接口 <code>/api/ai-proxy</code>。请不要把浏览器会话 Cookie 当作 API Key 使用。</div>
+        <div class="copy-all-box"><p>可一键复制正文，交给代码助手生成 SDK、调试 cURL 或排查参数。</p><button class="copy-all" type="button">复制全文</button></div>
+      </header>
+
+      <section id="auth">
+        <span class="tag">START</span>
+        <h2>鉴权与调用约定</h2>
+        <p class="muted">除 Gemini 原生接口外，所有请求使用 Bearer API Key。文生图与当前兼容编辑图使用 JSON；视频创建使用 <code class="inline">multipart/form-data</code>，不要手动指定带 boundary 的 Content-Type，HTTP 客户端会自动生成。</p>
+        <div class="code"><div class="code-head"><span>通用请求头</span><button class="copy" type="button">复制</button></div><pre>Authorization: Bearer &lt;API_KEY&gt;
+Content-Type: application/json</pre></div>
+        <div class="pill-row"><span class="pill"><b>参考图</b> 真实文件 MIME 必须正确</span><span class="pill"><b>视频</b> 创建后需要轮询</span><span class="pill"><b>任务 ID</b> 请妥善保存</span></div>
+      </section>
+
+      <section id="models">
+        <span class="tag">OPENAI COMPATIBLE</span>
+        <h2>模型</h2>
+        <h3><span>01</span>读取可用模型</h3>
+        <p class="muted">返回当前 API Key 可用的模型列表。请按业务能力选择图像或视频模型。</p>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/models</code></div></div>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/models" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
+  "object": "list",
+  "data": [
+    { "id": "gpt-image-2", "object": "model" },
+    { "id": "your-video-model", "object": "model" }
+  ]
+}</pre></div>
+      </section>
+
+      <section id="image-generation">
+        <span class="tag">IMAGE</span>
+        <h2>OpenAI 兼容图像接口</h2>
+        <h3><span>02</span>文生图</h3>
+        <p class="muted">仅使用文字提示词生成图片。请求体为 JSON，成功响应在 <code class="inline">data[]</code> 中返回图片 URL 或 Base64。</p>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/images/generations</code></div></div>
+        <h4>请求参数</h4>
+        <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
+          <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>图像生成模型名。</td></tr>
+          <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>图像描述与创作要求。</td></tr>
+          <tr><td><code>n</code></td><td class="optional">否</td><td>integer</td><td>生成数量；建议传 <code>1</code>。</td></tr>
+          <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>如 <code>1024x1024</code>、<code>1024x1536</code>，以模型能力为准。</td></tr>
+          <tr><td><code>quality</code></td><td class="optional">否</td><td>string</td><td>如 <code>medium</code>、<code>high</code>，不支持时省略。</td></tr>
+          <tr><td><code>background</code></td><td class="optional">否</td><td>string</td><td>支持透明背景的模型可传 <code>transparent</code>。</td></tr>
+          <tr><td><code>response_format</code></td><td class="optional">否</td><td>string</td><td><code>url</code> 或 <code>b64_json</code>。</td></tr>
+        </tbody></table></div>
+        <h4>请求</h4>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/generations" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "湖蓝色山谷，清晨薄雾，极简插画风",
+    "size": "1024x1536",
+    "quality": "medium",
+    "n": 1,
+    "response_format": "url"
+  }'</pre></div>
+        <h4>响应</h4>
+        <div class="code"><div class="code-head"><span>URL 格式</span><button class="copy" type="button">复制</button></div><pre>{
+  "created": 1781837823,
+  "data": [
+    { "url": "https://example.com/generated-image.png" }
+  ]
+}</pre></div>
+        <div class="code"><div class="code-head"><span>Base64 格式</span><button class="copy" type="button">复制</button></div><pre>{
+  "created": 1781837823,
+  "data": [
+    { "b64_json": "iVBORw0KGgoAAAANSUhEUg..." }
+  ]
+}</pre></div>
+      </section>
+
+      <section id="image-edit">
+        <h3><span>03</span>图生图 / 编辑图</h3>
+        <p class="muted">传入一张或多张参考图的 URL 或 Data URL 进行编辑。图片必须是实际格式与声明 MIME 一致的 PNG、JPEG、WebP 或 GIF；例如 JPEG 不能以 <code class="inline">image/png</code> 声明。</p>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/images/edits</code></div></div>
+        <h4>请求参数</h4>
+        <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
+          <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>图像编辑模型名。</td></tr>
+          <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>编辑要求；多图时可用“第一张 / 第二张”指代。</td></tr>
+          <tr><td><code>images</code></td><td class="required">是</td><td>array</td><td>参考图数组，每项为 <code>{ "image_url": "..." }</code>。支持可访问 URL 或正确 MIME 的 Data URL。</td></tr>
+          <tr><td><code>mask</code></td><td class="optional">否</td><td>object</td><td><code>{ "image_url": "..." }</code>；蒙版白色区域允许编辑，黑色区域保留。模型不支持时请省略。</td></tr>
+          <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>输出尺寸；省略时由模型或参考图决定。</td></tr>
+          <tr><td><code>n</code></td><td class="optional">否</td><td>integer</td><td>建议传 <code>1</code>。</td></tr>
+          <tr><td><code>response_format</code></td><td class="optional">否</td><td>string</td><td><code>url</code> 或 <code>b64_json</code>。</td></tr>
+        </tbody></table></div>
+        <h4>请求</h4>
+        <div class="code"><div class="code-head"><span>单张参考图</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/edits" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "将背景替换成赛博朋克城市夜景，保留人物姿势",
+    "images": [
+      { "image_url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..." }
+    ],
+    "size": "1024x1024",
+    "n": 1,
+    "response_format": "url"
+  }'</pre></div>
+        <div class="code"><div class="code-head"><span>多图与蒙版</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/edits" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-image-2",
+    "prompt": "把第一张人物放入第二张背景，只修改蒙版指定的背景区域",
+    "images": [
+      { "image_url": "https://example.com/person.jpg" },
+      { "image_url": "https://example.com/background.png" }
+    ],
+    "mask": { "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..." },
+    "n": 1
+  }'</pre></div>
+        <div class="notice">本页记录的是当前画布使用的 JSON 兼容请求结构。不要将 JPEG 二进制伪装成 <code>data:image/png</code>；Data URL 前缀、请求中的 MIME 字段和实际文件内容必须一致。</div>
+      </section>
+
+      <section id="gemini-image">
+        <span class="tag">GEMINI NATIVE</span>
+        <h2>Gemini 原生图像接口</h2>
+        <h3><span>04</span>文生图与参考图编辑</h3>
+        <p class="muted">Gemini 模型使用原生 <code class="inline">generateContent</code> 协议。模型名位于 URL 中，参考图放入 <code class="inline">contents[].parts[].inlineData</code>。</p>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1beta/models/{model}:generateContent</code></div></div>
+        <h4>请求参数</h4>
+        <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>说明</th></tr></thead><tbody>
+          <tr><td><code>{model}</code></td><td class="required">是</td><td>例如可用的 Gemini 图像模型名。</td></tr>
+          <tr><td><code>contents[].parts[].text</code></td><td class="required">是</td><td>文字提示词。</td></tr>
+          <tr><td><code>contents[].parts[].inlineData</code></td><td class="optional">否</td><td>参考图的真实 MIME 与不含 data URL 前缀的 Base64 数据。</td></tr>
+          <tr><td><code>generationConfig.responseModalities</code></td><td class="optional">否</td><td>建议使用 <code>["TEXT", "IMAGE"]</code>。</td></tr>
+          <tr><td><code>generationConfig.imageConfig</code></td><td class="optional">否</td><td>可传 <code>aspectRatio</code> 与 <code>imageSize</code>，以模型能力为准。</td></tr>
+        </tbody></table></div>
+        <h4>请求</h4>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1beta/models/gemini-image-model:generateContent" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -H "x-goog-api-key: &lt;API_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [{
+      "role": "user",
+      "parts": [
+        { "text": "保留人物主体，将背景改为沙漠日落" },
+        {
+          "inlineData": {
+            "mimeType": "image/jpeg",
+            "data": "/9j/4AAQSkZJRgABAQ..."
+          }
+        }
+      ]
+    }],
+    "generationConfig": {
+      "responseModalities": ["TEXT", "IMAGE"],
+      "imageConfig": { "aspectRatio": "16:9", "imageSize": "1K" }
+    }
+  }'</pre></div>
+        <h4>响应中的图片位置</h4>
+        <div class="table"><table><thead><tr><th>返回模式</th><th>图片数据位置</th></tr></thead><tbody>
+          <tr><td><code>["IMAGE"]</code></td><td><code>candidates[0].content.parts[].inlineData.data</code></td></tr>
+          <tr><td><code>["TEXT"]</code></td><td><code>candidates[0].content.parts[].fileData.fileUri</code>（模型支持时）</td></tr>
+          <tr><td><code>["TEXT", "IMAGE"]</code></td><td>遍历 <code>parts[]</code>，分别读取 <code>inlineData</code> 与 <code>fileData</code>。</td></tr>
+        </tbody></table></div>
+      </section>
+
+      <section id="video-create">
+        <span class="tag">VIDEO</span>
+        <h2>OpenAI 兼容视频接口</h2>
+        <h3><span>05</span>创建视频任务</h3>
+        <p class="muted">视频生成是异步任务：先创建任务并保存返回的 <code class="inline">id</code>，再轮询任务状态。参考图使用 multipart 文件字段上传，当前最多建议传 7 张。</p>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/videos</code></div></div>
+        <h4>请求参数</h4>
+        <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
+          <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>视频模型名。</td></tr>
+          <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>视频提示词。</td></tr>
+          <tr><td><code>seconds</code></td><td class="required">是</td><td>integer</td><td>时长（秒）。当前画布发送范围为 1–20 秒，最终以模型限制为准。</td></tr>
+          <tr><td><code>aspect_ratio</code></td><td class="required">是</td><td>string</td><td>如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code>。</td></tr>
+          <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>像素尺寸，如 <code>1280x720</code>；上游不需要时可省略。</td></tr>
+          <tr><td><code>resolution_name</code></td><td class="required">是</td><td>string</td><td>如 <code>480p</code>、<code>720p</code>、<code>1080p</code>，以模型能力为准。</td></tr>
+          <tr><td><code>preset</code></td><td class="optional">否</td><td>string</td><td>预设档位；默认 <code>normal</code>。</td></tr>
+          <tr><td><code>input_reference[]</code></td><td class="optional">否</td><td>file</td><td>可重复传入的参考图文件。</td></tr>
+        </tbody></table></div>
+        <h4>请求</h4>
+        <div class="code"><div class="code-head"><span>文生视频</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -F "model=your-video-model" \
+  -F "prompt=镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感" \
+  -F "seconds=10" \
+  -F "aspect_ratio=16:9" \
+  -F "size=1280x720" \
+  -F "resolution_name=720p" \
+  -F "preset=normal"</pre></div>
+        <div class="code"><div class="code-head"><span>参考图生视频</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -F "model=your-video-model" \
+  -F "prompt=让图中的角色自然转身并向镜头微笑" \
+  -F "seconds=6" \
+  -F "aspect_ratio=9:16" \
+  -F "resolution_name=720p" \
+  -F "input_reference[]=@character.jpg;type=image/jpeg"</pre></div>
+        <h4>创建响应</h4>
+        <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
+  "id": "video_01JQEXAMPLE",
+  "object": "video",
+  "status": "queued",
+  "model": "your-video-model",
+  "created_at": 1781837823
+}</pre></div>
+      </section>
+
+      <section id="video-status">
+        <h3><span>06</span>查询视频任务</h3>
+        <p class="muted">建议每 2–5 秒轮询一次，直到任务进入成功或失败的终态。服务可能将数据直接返回在顶层，也可能包在 <code class="inline">data</code> 字段内；客户端应兼容两种形式。</p>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}</code></div></div>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/videos/video_01JQEXAMPLE" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <div class="code"><div class="code-head"><span>进行中响应</span><button class="copy" type="button">复制</button></div><pre>{
+  "id": "video_01JQEXAMPLE",
+  "status": "processing",
+  "progress": "42%"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>成功响应</span><button class="copy" type="button">复制</button></div><pre>{
+  "id": "video_01JQEXAMPLE",
+  "status": "completed",
+  "video_url": "https://example.com/videos/video_01JQEXAMPLE.mp4"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>失败响应</span><button class="copy" type="button">复制</button></div><pre>{
+  "id": "video_01JQEXAMPLE",
+  "status": "failed",
+  "error": { "message": "上游返回了具体失败原因" }
+}</pre></div>
+        <div class="pill-row"><span class="pill"><b>成功</b> completed / succeeded</span><span class="pill"><b>处理中</b> queued / running / processing</span><span class="pill"><b>失败</b> failed / cancelled / expired</span></div>
+      </section>
+
+      <section id="video-content">
+        <h3><span>07</span>下载视频内容</h3>
+        <p class="muted">当查询接口未直接返回视频 URL，但状态已完成时，可请求视频二进制内容。调用方应按流保存为 <code class="inline">.mp4</code>，并检查响应 Content-Type 不是 JSON 错误对象。</p>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}/content</code></div></div>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -L "{{base_url}}/v1/videos/video_01JQEXAMPLE/content" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -o output.mp4</pre></div>
+      </section>
+
+      <section id="errors">
+        <span class="tag">ERRORS</span>
+        <h2>错误处理</h2>
+        <p class="muted">失败时优先读取 <code class="inline">error.message</code>、<code class="inline">message</code>、<code class="inline">msg</code> 或封装响应中的对应字段，并保留 HTTP 状态码与完整响应体以便排查。</p>
+        <div class="table"><table><thead><tr><th>HTTP 状态</th><th>常见原因</th><th>建议</th></tr></thead><tbody>
+          <tr><td>400</td><td>参数不完整、模型不支持字段、文件格式不正确</td><td>核对字段名、枚举值以及图片真实 MIME。</td></tr>
+          <tr><td>401 / 403</td><td>API Key 无效、无模型权限</td><td>检查 Authorization 头和账号套餐权限。</td></tr>
+          <tr><td>404</td><td>URL、模型名或任务 ID 不存在</td><td>确认 Base URL 不重复包含 <code>/v1</code>，并保存创建任务返回的 ID。</td></tr>
+          <tr><td>429</td><td>频率或额度限制</td><td>退避重试，避免并发轮询过密。</td></tr>
+          <tr><td>5xx</td><td>上游暂时不可用或任务执行失败</td><td>记录响应体、任务 ID 和模型名，再按需重试。</td></tr>
+        </tbody></table></div>
+        <div class="code"><div class="code-head"><span>错误响应示例</span><button class="copy" type="button">复制</button></div><pre>{
+  "error": {
+    "message": "参考图链接无效",
+    "type": "invalid_request_error",
+    "code": "invalid_image"
+  }
+}</pre></div>
+      </section>
+
+      <footer>MoAI 统一 API 文档 · 使用前请以账户实际可用模型和上游能力为准。</footer>
+    </main>
+  </div>
+  <script>
+    const baseUrl = 'https://image.moai.wiki';
+    document.getElementById('base-url').textContent = baseUrl;
+    document.querySelectorAll('[data-path]').forEach((el) => { el.textContent = baseUrl + el.textContent; });
+    document.querySelectorAll('[data-template]').forEach((el) => { el.textContent = el.textContent.replaceAll('{{base_url}}', baseUrl); });
+    document.querySelectorAll('.copy').forEach((button) => {
+      button.addEventListener('click', async () => {
+        await navigator.clipboard.writeText(button.closest('.code').querySelector('pre').textContent);
+        const text = button.textContent; button.textContent = '已复制'; setTimeout(() => { button.textContent = text; }, 1200);
+      });
+    });
+    document.querySelector('.copy-all').addEventListener('click', async (event) => {
+      await navigator.clipboard.writeText(document.querySelector('main').innerText);
+      const button = event.currentTarget; const text = button.textContent; button.textContent = '全文已复制'; setTimeout(() => { button.textContent = text; }, 1500);
+    });
+  </script>
+</body>
+</html>

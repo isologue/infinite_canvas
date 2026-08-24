@@ -32,6 +32,16 @@ async function proxyAiRequest(request: NextRequest) {
         if (!blockedRequestHeaders.has(normalizedKey) && !normalizedKey.startsWith("sec-") && !normalizedKey.startsWith("x-forwarded-")) headers.set(key, value);
     });
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
+    const isMultipart = (request.headers.get("content-type") || "").toLowerCase().startsWith("multipart/form-data");
+    if (isMultipart) {
+        console.info("[ai-proxy] multipart received", {
+            method: request.method,
+            targetPath: target.pathname,
+            contentType: request.headers.get("content-type"),
+            bodyBytes: body?.byteLength ?? 0,
+            hasImageFieldMarker: hasMultipartImageField(body),
+        });
+    }
 
     try {
         let currentUrl = target;
@@ -39,7 +49,25 @@ async function proxyAiRequest(request: NextRequest) {
         let currentBody = body;
         let upstream: Response | undefined;
         for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
+            if (isMultipart) {
+                console.info("[ai-proxy] multipart forwarding", {
+                    method,
+                    targetPath: currentUrl.pathname,
+                    contentType: headers.get("content-type"),
+                    bodyBytes: currentBody?.byteLength ?? 0,
+                    hasImageFieldMarker: hasMultipartImageField(currentBody),
+                    redirectCount,
+                });
+            }
             upstream = await fetch(currentUrl, { method, headers, body: currentBody, cache: "no-store", redirect: "manual", signal: request.signal });
+            if (isMultipart) {
+                console.info("[ai-proxy] multipart upstream response", {
+                    status: upstream.status,
+                    targetPath: currentUrl.pathname,
+                    contentType: upstream.headers.get("content-type"),
+                    location: Boolean(upstream.headers.get("location")),
+                });
+            }
             const location = upstream.headers.get("location");
             if (![301, 302, 303, 307, 308].includes(upstream.status) || !location) break;
             currentUrl = new URL(location, currentUrl);
@@ -66,6 +94,12 @@ async function proxyAiRequest(request: NextRequest) {
     } catch (error) {
         return Response.json({ code: 502, msg: error instanceof Error ? error.message : "\u4e0a\u6e38\u8bf7\u6c42\u5931\u8d25" }, { status: 502 });
     }
+}
+
+function hasMultipartImageField(body: ArrayBuffer | undefined) {
+    if (!body) return false;
+    const sample = new Uint8Array(body, 0, Math.min(body.byteLength, 256 * 1024));
+    return new TextDecoder().decode(sample).includes('name="image[]"');
 }
 
 function isUrlUnderBase(target: URL, rawBaseUrl: string) {

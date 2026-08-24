@@ -44,6 +44,12 @@ export function AboutModal({ className, style }: AboutModalProps) {
                             Milo_wr
                         </a>
                     </div>
+                    <div>
+                        外部统一 API 文档：
+                        <a className="ml-1 text-blue-600 hover:underline dark:text-blue-400" href="/external-api.html" target="_blank" rel="noreferrer">
+                            点击查看
+                        </a>
+                    </div>
                 </div>
             </Modal>
         </>

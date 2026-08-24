@@ -280,7 +280,7 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
 }
 
 const GEMINI_MODEL_NAME_PATTERN = /(^|[/:._-])gemini(?:$|[/:._-])/i;
-const OPENAI_MODEL_NAME_PATTERN = /(^|[/:._-])(?:openai|gpt|dall[-_]?e|dalle|o[1-9])(?:$|[/:._-])/i;
+const OPENAI_MODEL_NAME_PATTERN = /(^|[/:._-])(?:openai|gpt|dall[-_]?e|dalle|grok|o[1-9])(?:$|[/:._-])/i;
 
 export function inferModelApiFormat(modelName: string): ApiCallFormat | undefined {
     const value = modelName.trim();

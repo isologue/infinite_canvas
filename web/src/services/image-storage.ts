@@ -2,6 +2,7 @@
 
 import { nanoid } from "nanoid";
 
+import { resolveImageMimeType } from "@/lib/image-mime";
 import { compressImageIfLarge, readImageMeta } from "@/lib/image-utils";
 import { storageFileUrl } from "@/services/storage-url";
 
@@ -17,7 +18,7 @@ export type UploadedImage = {
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
-    const raw = typeof input === "string" ? await (await fetch(input)).blob() : input;
+    const raw = await normalizeImageBlobMimeType(typeof input === "string" ? await (await fetch(input)).blob() : input);
     // 仅对用户上传的大图压缩（超过 10MB 等比缩放重编码）；生成结果不传 compress，保持原图。
     const blob = options?.compress ? await compressImageIfLarge(raw) : raw;
     const storageKey = `image:${nanoid()}`;
@@ -43,16 +44,20 @@ export async function getImageBlob(storageKey: string) {
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
-    await uploadFile(storageKey, blob, options);
-    const url = URL.createObjectURL(blob);
+    const normalized = await normalizeImageBlobMimeType(blob);
+    await uploadFile(storageKey, normalized, options);
+    const url = URL.createObjectURL(normalized);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
     const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
-    if (!url || url.startsWith("data:")) return url;
-    return blobToDataUrl(await (await fetch(url)).blob());
+    if (!url) return url;
+    if (url.startsWith("data:")) return normalizeImageDataUrlMimeType(url);
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`读取参考图失败（HTTP ${response.status}）`);
+    return blobToDataUrl(await normalizeImageBlobMimeType(await response.blob()));
 }
 
 export async function createVideoThumbnail(videoUrl: string, title = "??") {
@@ -136,6 +141,24 @@ async function downloadFile(storageKey: string) {
     const response = await fetch(`/api/storage/files/${encodeURIComponent(storageKey)}`, { cache: "no-store" }).catch(() => null);
     if (!response || !response.ok) return null;
     return response.blob();
+}
+
+async function normalizeImageBlobMimeType(blob: Blob) {
+    const mimeType = resolveImageMimeType(new Uint8Array(await blob.slice(0, 16).arrayBuffer()), blob.type);
+    return mimeType && mimeType !== blob.type ? new Blob([blob], { type: mimeType }) : blob;
+}
+
+function normalizeImageDataUrlMimeType(dataUrl: string) {
+    const match = dataUrl.match(/^data:([^;,]+);base64,([\s\S]*)$/);
+    if (!match) return dataUrl;
+    try {
+        const binary = atob(match[2].slice(0, 64));
+        const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+        const mimeType = resolveImageMimeType(bytes, match[1]);
+        return mimeType && mimeType !== match[1] ? `data:${mimeType};base64,${match[2]}` : dataUrl;
+    } catch {
+        return dataUrl;
+    }
 }
 
 function blobToDataUrl(blob: Blob) {

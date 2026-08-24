@@ -3,6 +3,7 @@
   "root": true,
   "defaultOpen": true,
   "pages": [
+    "external-api",
     "local-development",
     "canvas-data-structure",
     "backend-database",
