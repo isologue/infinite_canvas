@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Group, Video } from "lucide-react";
+import { Check, Group, Video, X } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
@@ -51,7 +51,7 @@ import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
 import { useAgentBridge } from "@/views/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/views/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
-import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { exportCanvasNodes, exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
 import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, nodeBounds, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
@@ -114,6 +114,8 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
 };
+
+type CanvasSelectionMode = "group" | "batch-download" | null;
 
 type CanvasGenerationRequest = {
     targetNodeId: string;
@@ -299,6 +301,11 @@ function InfiniteCanvasPage() {
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [isGrouping, setIsGrouping] = useState(false);
+    const [batchDownloadMode, setBatchDownloadMode] = useState(false);
+    const [batchDownloadOpen, setBatchDownloadOpen] = useState(false);
+    const [batchDownloadName, setBatchDownloadName] = useState("");
+    const [batchDownloading, setBatchDownloading] = useState(false);
+    const selectionMode: CanvasSelectionMode = isGrouping ? "group" : batchDownloadMode ? "batch-download" : null;
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -806,6 +813,16 @@ function InfiniteCanvasPage() {
         [message],
     );
 
+    const exitSelectionMode = useCallback(() => {
+        isGroupingRef.current = false;
+        setIsGrouping(false);
+        setBatchDownloadMode(false);
+        setSelectedNodeIds(new Set());
+        setSelectionBox(null);
+        setToolbarNodeId(null);
+        setDialogNodeId(null);
+    }, []);
+
     const confirmCreateGroupFromNodeIds = useCallback(
         (nodeIds: Iterable<string>) => {
             const ids = Array.from(nodeIds);
@@ -843,26 +860,28 @@ function InfiniteCanvasPage() {
                         return Promise.reject(new Error("duplicate group name"));
                     }
                     createGroupFromNodeIds(ids, trimmedGroupName);
+                    exitSelectionMode();
                 },
             });
         },
-        [createGroupFromNodeIds, message, modal],
+        [createGroupFromNodeIds, exitSelectionMode, message, modal],
     );
 
     const toggleGrouping = useCallback(() => {
-        setIsGrouping((current) => {
-            const next = !current;
-            isGroupingRef.current = next;
-            if (next) {
-                setCanvasTool("select");
-                setSelectedNodeIds(new Set());
-                setSelectedConnectionId(null);
-                setToolbarNodeId(null);
-                message.info("请在画布空白处框选需要成组的节点");
-            }
-            return next;
-        });
-    }, [message]);
+        if (isGrouping) {
+            exitSelectionMode();
+            return;
+        }
+        setBatchDownloadMode(false);
+        isGroupingRef.current = true;
+        setIsGrouping(true);
+        setCanvasTool("select");
+        setSelectedNodeIds(new Set());
+        setSelectedConnectionId(null);
+        setToolbarNodeId(null);
+        setDialogNodeId(null);
+        message.info("请单击或框选需要成组的节点，然后点击确定");
+    }, [exitSelectionMode, isGrouping, message]);
 
     const dissolveGroup = useCallback(
         (groupId: string) => {
@@ -1160,6 +1179,66 @@ function InfiniteCanvasPage() {
         }
     }, [message, projectId]);
 
+    const handleBatchDownload = useCallback(() => {
+        if (batchDownloadMode) {
+            exitSelectionMode();
+            return;
+        }
+        setIsGrouping(false);
+        isGroupingRef.current = false;
+        setCanvasTool("select");
+        setSelectedNodeIds(new Set());
+        setSelectedConnectionId(null);
+        setToolbarNodeId(null);
+        setDialogNodeId(null);
+        setBatchDownloadMode(true);
+        message.info("请单击或框选要下载的节点，然后点击确定");
+    }, [batchDownloadMode, exitSelectionMode, message]);
+
+    const confirmSelectionMode = useCallback(() => {
+        const ids = Array.from(selectedNodeIdsRef.current);
+        if (selectionMode === "group") {
+            confirmCreateGroupFromNodeIds(ids);
+            return;
+        }
+        if (selectionMode !== "batch-download") return;
+        if (!ids.length) {
+            message.warning("请至少选择一个节点");
+            return;
+        }
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+        setBatchDownloadName(`${projectTitle || "未命名画布"}-${stamp}`);
+        setBatchDownloadOpen(true);
+    }, [confirmCreateGroupFromNodeIds, message, projectTitle, selectionMode]);
+
+    const confirmBatchDownload = useCallback(async () => {
+        const name = batchDownloadName.trim();
+        if (!name) {
+            message.warning("请输入压缩包名称");
+            return;
+        }
+        const targets = nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id));
+        if (!targets.length) {
+            setBatchDownloadOpen(false);
+            exitSelectionMode();
+            return;
+        }
+        setBatchDownloading(true);
+        const hide = message.loading("正在打包选中节点…", 0);
+        try {
+            await exportCanvasNodes(targets, name);
+            message.success(`已打包下载 ${targets.length} 个节点`);
+            setBatchDownloadOpen(false);
+            exitSelectionMode();
+        } catch (error) {
+            console.error(error);
+            message.error("批量下载失败，请重试");
+        } finally {
+            hide();
+            setBatchDownloading(false);
+        }
+    }, [batchDownloadName, exitSelectionMode, message]);
+
     const handleCanvasMouseDown = useCallback(
         (event: ReactPointerEvent<HTMLDivElement>) => {
             setContextMenu(null);
@@ -1167,31 +1246,40 @@ function InfiniteCanvasPage() {
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
-            // 选择工具下直接在空白处左键拖动即可框选；Shift 保留已有选区并追加。
+            // 选择模式下框选采用追加逻辑，避免框选时清掉已经单击选中的节点。
             const world = screenToCanvas(event.clientX, event.clientY);
+            const additive = selectionMode !== null || event.shiftKey;
             const nextSelectionBox = {
                 startWorldX: world.x,
                 startWorldY: world.y,
                 currentWorldX: world.x,
                 currentWorldY: world.y,
-                additive: event.shiftKey,
-                initialSelectedNodeIds: event.shiftKey ? Array.from(selectedNodeIdsRef.current) : [],
+                additive,
+                initialSelectedNodeIds: additive ? Array.from(selectedNodeIdsRef.current) : [],
             };
             selectionBoxRef.current = nextSelectionBox;
             setSelectionBox(nextSelectionBox);
-            if (!event.shiftKey) {
+            if (!additive) {
                 setSelectedNodeIds(new Set());
             }
 
             setSelectedConnectionId(null);
         },
-        [cancelPendingConnectionCreate, screenToCanvas],
+        [cancelPendingConnectionCreate, screenToCanvas, selectionMode],
     );
 
     // 仅处理「选中」的纯逻辑,供 body 冒泡拖拽入口与外层 capture 入口共用。
     // 返回本次点击后的单选目标 id(多选/取消时为 null),用于同步工具条。
     const selectNodeByEvent = useCallback((event: Pick<ReactMouseEvent, "shiftKey" | "metaKey" | "ctrlKey">, nodeId: string) => {
         const nextSelected = new Set(selectedNodeIdsRef.current);
+        if (selectionMode) {
+            if (nextSelected.has(nodeId)) nextSelected.delete(nodeId);
+            else nextSelected.add(nodeId);
+            setSelectedNodeIds(nextSelected);
+            setToolbarNodeId(null);
+            setDialogNodeId(null);
+            return { nextSelected, soloId: null };
+        }
         if (event.shiftKey || event.metaKey || event.ctrlKey) {
             if (nextSelected.has(nodeId)) nextSelected.delete(nodeId);
             else nextSelected.add(nodeId);
@@ -1203,7 +1291,7 @@ function InfiniteCanvasPage() {
         const soloId = nextSelected.size === 1 && nextSelected.has(nodeId) ? nodeId : null;
         setToolbarNodeId(soloId);
         return { nextSelected, soloId };
-    }, []);
+    }, [selectionMode]);
 
     // capture 阶段选中:点击节点内部任意元素(含吞掉 mousedown 的 textarea/iframe)都能选中并弹出工具条。
     // 只做选中,不启动拖拽 —— 拖拽仍由 body 的 onMouseDown(冒泡)负责,故编辑器内选词不会拖动节点。
@@ -1223,6 +1311,10 @@ function InfiniteCanvasPage() {
 
     const handleNodeMouseDown = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.stopPropagation();
+        if (selectionMode) {
+            pendingSelectionRef.current = null;
+            return;
+        }
         // 选中已由 capture 阶段完成;这里只负责建立拖拽。若因故没走 capture,则兜底再选一次。
         const currentNodes = nodesRef.current;
         const nextSelected = pendingSelectionRef.current ?? selectNodeByEvent(event, nodeId).nextSelected;
@@ -1247,7 +1339,7 @@ function InfiniteCanvasPage() {
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
-    }, []);
+    }, [selectNodeByEvent, selectionMode]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (rafRef.current) {
@@ -1288,7 +1380,7 @@ function InfiniteCanvasPage() {
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.initialSelectedNodes = [];
-        if (wasClick && clickedNodeId) {
+        if (wasClick && clickedNodeId && !selectionMode) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             const clickedDefinition = clickedNode ? getNodeDefinition(clickedNode.type) : undefined;
             if (clickedNode?.type === CanvasNodeType.Text) {
@@ -1300,7 +1392,7 @@ function InfiniteCanvasPage() {
                 setDialogNodeId(clickedNodeId);
             }
         }
-    }, []);
+    }, [selectionMode]);
 
     const handleGlobalMouseMove = useCallback(
         (event: MouseEvent) => {
@@ -1382,22 +1474,6 @@ function InfiniteCanvasPage() {
             selectionBoxRef.current = null;
             setSelectionBox(null);
 
-            if (isGroupingRef.current && completedSelection) {
-                const left = Math.min(completedSelection.startWorldX, completedSelection.currentWorldX);
-                const top = Math.min(completedSelection.startWorldY, completedSelection.currentWorldY);
-                const right = Math.max(completedSelection.startWorldX, completedSelection.currentWorldX);
-                const bottom = Math.max(completedSelection.startWorldY, completedSelection.currentWorldY);
-                confirmCreateGroupFromNodeIds(
-                    nodesRef.current
-                        .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
-                        .filter((node) => left < node.position.x + node.width && right > node.position.x && top < node.position.y + node.height && bottom > node.position.y)
-                        .map((node) => node.id),
-                );
-                isGroupingRef.current = false;
-                setIsGrouping(false);
-                return;
-            }
-
             if (pendingConnectionCreateRef.current) return;
 
             const currentConnection = connectingParamsRef.current;
@@ -1414,7 +1490,7 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [confirmCreateGroupFromNodeIds, connectNodes, finishNodeDrag, getConnectionDropTarget, screenToCanvas, setConnecting],
+        [connectNodes, finishNodeDrag, getConnectionDropTarget, screenToCanvas, setConnecting],
     );
 
     useEffect(() => {
@@ -1595,17 +1671,13 @@ function InfiniteCanvasPage() {
             }
 
             if (event.key === "Escape") {
-                isGroupingRef.current = false;
-                setIsGrouping(false);
-                setSelectedNodeIds(new Set());
+                exitSelectionMode();
                 setSelectedConnectionId(null);
                 setContextMenu(null);
                 setNodeCreatePosition(null);
                 setSelectionBox(null);
                 setConnecting(null);
                 setHoveredNodeId(null);
-                setToolbarNodeId(null);
-                setDialogNodeId(null);
                 setEditingNodeId(null);
                 setInfoNodeId(null);
                 setCropNodeId(null);
@@ -1616,7 +1688,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteConnection, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
+    }, [copySelectedNodes, deleteConnection, deleteNodes, exitSelectionMode, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -3131,7 +3203,8 @@ function InfiniteCanvasPage() {
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
                             editRequestNonce={editingNodeId === node.id ? editRequestNonce : 0}
-                            showPanel={dialogNodeId === node.id && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
+                            showPanel={dialogNodeId === node.id && !selectionMode && !selectionBox && !getNodeDefinition(node.type)?.hidePanel}
+                            selectionMode={selectionMode !== null}
                             batchCount={batchChildCountById.get(node.id) || 0}
                             groupChildCount={groupChildCountById.get(node.id) || 0}
                             isGroupDropTarget={dropTargetGroupId === node.id}
@@ -3192,7 +3265,7 @@ function InfiniteCanvasPage() {
                 </InfiniteCanvas>
 
                 <CanvasNodeHoverToolbar
-                    node={isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
+                    node={selectionMode || isNodeDragging || isNodeResizing || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     extraTools={toolbarNode ? buildNodeToolbarItems(toolbarNode) : undefined}
                     onKeep={keepNodeToolbar}
@@ -3221,10 +3294,15 @@ function InfiniteCanvasPage() {
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
 
-                <CanvasToolbar
+                {selectionMode ? (
+                    <CanvasSelectionToolbar mode={selectionMode} selectedCount={selectedNodeIds.size} onExit={exitSelectionMode} onConfirm={confirmSelectionMode} />
+                ) : null}
+
+                {!selectionMode ? <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
                     groupingActive={isGrouping}
+                    batchDownloadMode={batchDownloadMode}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
@@ -3235,6 +3313,7 @@ function InfiniteCanvasPage() {
                     onAddText={() => createNode(CanvasNodeType.Text)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={toggleGrouping}
+                    onBatchDownload={handleBatchDownload}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -3244,7 +3323,7 @@ function InfiniteCanvasPage() {
                     onCanvasToolChange={setCanvasTool}
                     onBackgroundModeChange={setBackgroundMode}
                     onShowImageInfoChange={setShowImageInfo}
-                />
+                /> : null}
 
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
@@ -3306,6 +3385,22 @@ function InfiniteCanvasPage() {
                 </Modal>
 
                 <Modal
+                    title="批量下载"
+                    open={batchDownloadOpen}
+                    centered
+                    confirmLoading={batchDownloading}
+                    onCancel={() => setBatchDownloadOpen(false)}
+                    onOk={() => void confirmBatchDownload()}
+                    okText="打包下载"
+                    cancelText="取消"
+                >
+                    <div className="space-y-2">
+                        <p className="text-sm opacity-60">将下载当前已选择的 {selectedNodeIds.size} 个节点及其媒体文件。</p>
+                        <Input autoFocus value={batchDownloadName} maxLength={120} placeholder="请输入压缩包名称" onChange={(event) => setBatchDownloadName(event.target.value)} onPressEnter={() => void confirmBatchDownload()} />
+                    </div>
+                </Modal>
+
+                <Modal
                     title="清空画布？"
                     open={clearConfirmOpen}
                     centered
@@ -3325,5 +3420,22 @@ function InfiniteCanvasPage() {
                 <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
         </main>
+    );
+}
+
+function CanvasSelectionToolbar({ mode, selectedCount, onExit, onConfirm }: { mode: Exclude<CanvasSelectionMode, null>; selectedCount: number; onExit: () => void; onConfirm: () => void }) {
+    const colorTheme = useThemeStore((state) => state.theme);
+    const theme = canvasThemes[colorTheme];
+    const label = mode === "group" ? "成组" : "批量下载";
+
+    return (
+        <div className="pointer-events-none absolute bottom-5 left-[300px] right-4 z-50 flex justify-center">
+            <div className="pointer-events-auto flex h-14 max-w-full items-center gap-3 overflow-x-auto rounded-xl border px-3 shadow-lg backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}>
+                <span className="whitespace-nowrap px-1 text-sm font-medium">已选择 {selectedCount} 个节点</span>
+                <div className="h-6 w-px" style={{ background: theme.toolbar.border }} />
+                <Button type="text" icon={<X className="size-4" />} onClick={onExit} style={{ color: theme.toolbar.item }}>退出选择</Button>
+                <Button type="primary" icon={<Check className="size-4" />} disabled={!selectedCount} onClick={onConfirm}>确定{label}</Button>
+            </div>
+        </div>
     );
 }

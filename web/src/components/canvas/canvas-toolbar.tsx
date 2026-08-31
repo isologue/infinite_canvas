@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Download, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -13,6 +13,7 @@ export function CanvasToolbar({
     selectedCount,
     canvasTool,
     groupingActive,
+    batchDownloadMode,
     canUndo,
     canRedo,
     backgroundMode,
@@ -23,6 +24,7 @@ export function CanvasToolbar({
     onAddText,
     onAddConfig,
     onAddGroup,
+    onBatchDownload,
     onAddExtensionNode,
     onUndo,
     onRedo,
@@ -36,6 +38,7 @@ export function CanvasToolbar({
     selectedCount: number;
     canvasTool: "select" | "pan";
     groupingActive: boolean;
+    batchDownloadMode: boolean;
     canUndo: boolean;
     canRedo: boolean;
     backgroundMode: CanvasBackgroundMode;
@@ -46,6 +49,7 @@ export function CanvasToolbar({
     onAddText: () => void;
     onAddConfig: () => void;
     onAddGroup: () => void;
+    onBatchDownload: () => void;
     onAddExtensionNode: (type: string) => void;
     onUndo: () => void;
     onRedo: () => void;
@@ -95,6 +99,9 @@ export function CanvasToolbar({
             <div ref={wrapRef} className="thin-scrollbar pointer-events-auto flex h-14 max-w-full items-center gap-1 overflow-x-auto rounded-xl border px-2 shadow-lg backdrop-blur [&>*]:shrink-0" style={dockStyle}>
                 <ToolbarButton id={`tool-${canvasTool}`} label={t(`canvas.toolbar.${canvasTool}`)} active hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={() => onCanvasToolChange(canvasTool === "select" ? "pan" : "select")}>
                     {canvasTool === "select" ? <MousePointer2 className="size-4.5" /> : <Hand className="size-4.5" />}
+                </ToolbarButton>
+                <ToolbarButton id="tool-batch-download" label={batchDownloadMode ? (selectedCount ? `下载已选（${selectedCount}）` : "退出批量下载") : "批量下载"} active={batchDownloadMode} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onBatchDownload}>
+                    <Download className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-undo" label={t("canvas.undo")} disabled={!canUndo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUndo}>
                     <Undo2 className="size-4.5" />
@@ -356,6 +363,7 @@ function DockTip({ label, x, theme }: { label: string; x: number; theme: CanvasT
 function toolLabel(id: string, t: (key: string) => string, groupingActive = false) {
     if (id === "tool-select") return t("canvas.toolbar.select");
     if (id === "tool-pan") return t("canvas.toolbar.pan");
+    if (id === "tool-batch-download") return "批量下载";
     if (id === "tool-undo") return t("canvas.undo");
     if (id === "tool-redo") return t("canvas.redo");
     if (id === "tool-text") return t("canvas.toolbar.text");

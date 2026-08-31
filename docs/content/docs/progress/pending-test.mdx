@@ -135,3 +135,4 @@ description: 当前版本已实现但仍需人工验证的变更项
 - Reference-image MIME validation: when JPEG, PNG, GIF, or WebP reference files are uploaded or read, the resource response `Content-Type` and the Gemini/Grok `inlineData.mimeType` must match the actual binary format. A legacy JPEG previously labeled `image/png` must be sent as `image/jpeg` after reopening the canvas, without an upstream failure caused by the mismatched format.
 - 组资产：选中组框后点击「存资产」应保存组内节点、提示词、内部连线和媒体引用；在另一张画布插入该资产后，节点应生成新 ID 并保留布局、组框、内部连线、提示词及图片、视频、音频。组资产引用的资源应标记为已保存，定时资源清理不得删除；导出并重新导入资产包后，组内媒体仍可正常加载。侧边栏资产卡片应显示组名称。
 - 组名校验：成组确认弹窗必须填写组名，组名不得与当前画布已有组名重复；将组保存到我的资产时，组名不得与已有组资产重复。
+- 画布选择与批量下载：点击「组」或「批量下载」后进入独立选择模式，显示已选节点数量、退出和确定按钮；单击节点可选中/再次单击取消，空白处框选会追加选择，选择时不显示节点普通功能导航条、配置面板、缩放/连线控制点。组模式点击确定后进入组名确认，批量下载点击确定后进入压缩包命名。下载 ZIP 仅包含选中的文字、图片、视频、音频等实际资源，不包含 `nodes.json` 或其他节点 JSON；侧边栏画布元素的多选导出仍应能正常打开图片文件。

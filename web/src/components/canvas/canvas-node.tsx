@@ -26,6 +26,7 @@ type CanvasNodeProps = {
     isConnecting: boolean;
     editRequestNonce?: number;
     showPanel: boolean;
+    selectionMode?: boolean;
     showImageInfo: boolean;
     mentionReferences?: CanvasResourceReference[];
     pluginHost?: CanvasPluginHost;
@@ -90,6 +91,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     isConnecting,
     editRequestNonce = 0,
     showPanel,
+    selectionMode = false,
     showImageInfo,
     mentionReferences = [],
     pluginHost,
@@ -319,7 +321,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             onMouseDownCapture={(event) => onSelectCapture?.(event, data.id)}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            {(!isGroup && (isSelected || hovered || isEditingTitle)) && (
+            {(!isGroup && !selectionMode && (isSelected || hovered || isEditingTitle)) && (
                 <div className="absolute left-3 top-[-28px] z-[65] max-w-[calc(100%-24px)]" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {isEditingTitle ? (
                         <input
@@ -389,7 +391,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     style={
                         {
                             background: isGroup ? "transparent" : hasImageContent || hasVideoContent || transparentBg ? "transparent" : theme.node.fill,
-                            pointerEvents: contentInteractive ? undefined : "none",
+                            pointerEvents: selectionMode || !contentInteractive ? "none" : undefined,
                             "--batch-from-x": `${batchMotion?.x || 0}px`,
                             "--batch-from-y": `${batchMotion?.y || 0}px`,
                             "--batch-from-rotate": `${6 + (batchMotion?.index || 0) * 4}deg`,
@@ -425,14 +427,16 @@ export const CanvasNode = React.memo(function CanvasNode({
 
                 {!isGroup && !hasImageContent && !hasVideoContent && !hasAudioContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
-                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                {!selectionMode ? <>
+                    <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                    <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
+                </> : null}
             </div>
 
-            {!isGroup ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
-            {!isGroup ? <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
+            {!isGroup && !selectionMode ? <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} /> : null}
+            {!isGroup && !selectionMode ? <ConnectionHandleDot side="right" visible={(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} /> : null}
 
             {showPanel && !isGroup && renderPanel ? <div className="absolute left-1/2 top-full z-[70] w-[600px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>

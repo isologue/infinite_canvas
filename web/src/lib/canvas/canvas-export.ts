@@ -1,11 +1,15 @@
 import { saveAs } from "file-saver";
 
 import { createZip } from "@/lib/zip";
+
+import { resolveImageMimeType } from "@/lib/image-mime";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "@/types/canvas-export";
 import { fetchCanvasProject, type CanvasProject, type CanvasProjectSummary } from "@/services/api/canvas-projects";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
+
+type MediaSource = { storageKey?: string; url?: string };
 
 export async function exportCanvasProjects(sources: Array<CanvasProject | CanvasProjectSummary>, fileName = "无限画布") {
     const projects = await Promise.all(sources.map((project) => ("nodes" in project ? project : fetchCanvasProject(project.id))));
@@ -33,35 +37,82 @@ export async function exportCanvasProjects(sources: Array<CanvasProject | Canvas
 
 export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = "画布元素") {
     const zipFiles: { name: string; data: BlobPart }[] = [];
-    const used = new Set<string>();
+    const usedNames = new Set<string>();
+    const exportedSources = new Set<string>();
     const uniqueName = (base: string, ext: string) => {
         const safe = safeFileName(base) || "元素";
         let name = `${safe}.${ext}`;
-        for (let i = 1; used.has(name); i += 1) name = `${safe}-${i}.${ext}`;
-        used.add(name);
+        for (let i = 1; usedNames.has(name); i += 1) name = `${safe}-${i}.${ext}`;
+        usedNames.add(name);
         return name;
     };
 
-    await Promise.all(
-        nodes.map(async (node) => {
-            const title = node.title || node.type;
-            const storageKey = node.metadata?.storageKey || "";
-            if (storageKey) {
-                const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                if (blob) return void zipFiles.push({ name: uniqueName(title, fileExtension(blob.type, storageKey)), data: blob });
-            }
-            if (node.type === CanvasNodeType.Text) return void zipFiles.push({ name: uniqueName(title, "txt"), data: node.metadata?.content || node.metadata?.prompt || "" });
-            const content = node.metadata?.content;
-            if (content && content.startsWith("data:")) {
-                const blob = await (await fetch(content)).blob();
-                return void zipFiles.push({ name: uniqueName(title, fileExtension(blob.type, storageKey)), data: blob });
-            }
-            zipFiles.push({ name: uniqueName(title, "json"), data: JSON.stringify(node, null, 2) });
-        }),
-    );
+    for (const node of nodes) {
+        if (![CanvasNodeType.Text, CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].includes(node.type as CanvasNodeType)) continue;
+        const title = node.title || node.type;
+        let exported = false;
+        const allowContentUrl = [CanvasNodeType.Image, CanvasNodeType.Video, CanvasNodeType.Audio].includes(node.type as CanvasNodeType);
+        for (const source of collectNodeMediaSources(node)) {
+            const sourceId = source.storageKey || source.url;
+            if (!sourceId || exportedSources.has(sourceId)) continue;
+            const blob = (source.storageKey ? await readStorageBlob(source.storageKey) : null) || (allowContentUrl && source.url ? await readUrlBlob(source.url) : null);
+            if (!blob) continue;
+            const normalizedBlob = await normalizeExportBlob(blob);
+            if (source.storageKey) exportedSources.add(source.storageKey);
+            if (source.url) exportedSources.add(source.url);
+            zipFiles.push({ name: uniqueName(title, fileExtension(normalizedBlob.type, source.storageKey || source.url || "")), data: normalizedBlob });
+            exported = true;
+        }
+
+        if (!exported && node.type === CanvasNodeType.Text) {
+            const content = node.metadata?.content || node.metadata?.prompt || "";
+            if (content.trim()) zipFiles.push({ name: uniqueName(title, "txt"), data: content });
+        }
+    }
 
     const zip = await createZip(zipFiles);
     saveAs(zip, `${safeFileName(fileName)}.zip`);
+}
+
+async function readStorageBlob(storageKey: string) {
+    return storageKey.startsWith("image:") ? getImageBlob(storageKey) : getMediaBlob(storageKey);
+}
+
+async function readUrlBlob(url: string) {
+    try {
+        const response = await fetch(url, { cache: "no-store" });
+        return response.ok ? await response.blob() : null;
+    } catch {
+        return null;
+    }
+}
+
+async function normalizeExportBlob(blob: Blob) {
+    if (!blob.type.startsWith("image/")) return blob;
+    const mimeType = resolveImageMimeType(new Uint8Array(await blob.slice(0, 16).arrayBuffer()), blob.type);
+    return mimeType && mimeType !== blob.type ? new Blob([blob], { type: mimeType }) : blob;
+}
+
+function collectNodeMediaSources(value: unknown, sources: MediaSource[] = [], seen = new Set<string>()) {
+    if (!value || typeof value !== "object") return sources;
+    if (Array.isArray(value)) {
+        value.forEach((item) => collectNodeMediaSources(item, sources, seen));
+        return sources;
+    }
+    const item = value as Record<string, unknown>;
+    const storageKey = typeof item.storageKey === "string" && item.storageKey.includes(":") ? item.storageKey : undefined;
+    const url = typeof item.content === "string" && isMediaUrl(item.content) ? item.content : undefined;
+    const id = storageKey || url;
+    if (id && !seen.has(id)) {
+        seen.add(id);
+        sources.push({ storageKey, url });
+    }
+    Object.values(item).forEach((child) => collectNodeMediaSources(child, sources, seen));
+    return sources;
+}
+
+function isMediaUrl(value: string) {
+    return value.startsWith("data:") || value.startsWith("blob:") || value.startsWith("/") || /^https?:\/\//i.test(value);
 }
 
 function collectStorageKeys(value: unknown, keys = new Set<string>()) {
@@ -75,7 +126,7 @@ function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_");
 }
 
-function fileExtension(mimeType: string, storageKey: string) {
+function fileExtension(mimeType: string, source: string) {
     if (mimeType.includes("png")) return "png";
     if (mimeType.includes("jpeg")) return "jpg";
     if (mimeType.includes("webp")) return "webp";
@@ -85,5 +136,6 @@ function fileExtension(mimeType: string, storageKey: string) {
     if (mimeType.includes("mpeg") || mimeType.includes("mp3")) return "mp3";
     if (mimeType.includes("wav")) return "wav";
     if (mimeType.includes("ogg")) return "ogg";
-    return storageKey.startsWith("image:") ? "png" : "bin";
+    const extension = source.split(/[?#]/)[0].match(/\.([a-z0-9]{2,5})$/i)?.[1];
+    return extension || (source.startsWith("image:") ? "png" : "bin");
 }
