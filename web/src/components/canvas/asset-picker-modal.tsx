@@ -3,9 +3,10 @@ import { Empty, Input, Modal, Pagination, Tag } from "antd";
 import { Search } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { type CanvasGroupAssetData } from "@/lib/canvas/canvas-group-asset";
 import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 
-export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string; bytes?: number } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number } | { kind: "audio"; url: string; title: string; storageKey?: string; durationMs?: number };
+export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string; bytes?: number } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number } | { kind: "audio"; url: string; title: string; storageKey?: string; durationMs?: number } | { kind: "group"; data: CanvasGroupAssetData; title: string };
 
 type Props = {
     open: boolean;
@@ -30,6 +31,7 @@ const kindOptions = [
     { label: "图片", value: "image" },
     { label: "视频", value: "video" },
     { label: "音频", value: "audio" },
+    { label: "组", value: "group" },
 ];
 
 function PickerCard({ title, kind, cover, deleted, onClick }: { title: string; kind: string; cover: string; deleted: boolean; onClick: () => void }) {
@@ -50,7 +52,7 @@ function PickerCard({ title, kind, cover, deleted, onClick }: { title: string; k
             <div className="p-2.5">
                 <div className="flex items-center justify-between gap-2">
                     <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
-                    <Tag className="m-0 shrink-0 text-[10px]">{kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文本"}</Tag>
+                    <Tag className="m-0 shrink-0 text-[10px]">{kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : kind === "group" ? "组" : "文本"}</Tag>
                 </div>
             </div>
             {!deleted ? <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div> : null}
@@ -67,7 +69,7 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video" || a.kind === "audio")
+            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video" || a.kind === "audio" || a.kind === "group")
             .filter((a) => kindFilter === "all" || a.kind === kindFilter)
             .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
     }, [assets, keyword, kindFilter]);
@@ -80,7 +82,9 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
     }, [filtered.length]);
 
     const handleInsert = (asset: Asset) => {
-        if (asset.kind === "text") {
+        if (asset.kind === "group") {
+            onInsert({ kind: "group", data: asset.data, title: asset.title });
+        } else if (asset.kind === "text") {
             onInsert({ kind: "text", content: asset.data.content, title: asset.title });
         } else if (asset.kind === "video") {
             onInsert({ kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height });

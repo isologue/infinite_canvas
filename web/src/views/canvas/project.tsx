@@ -24,7 +24,8 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl, splitDataUrl, upscaleDataUrl } from "@/lib/canvas/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "@/lib/canvas/canvas-node-size";
-import { App, Button, Modal } from "antd";
+import { createCanvasGroupAssetData, getCanvasGroupAssetCover, instantiateCanvasGroupAsset } from "@/lib/canvas/canvas-group-asset";
+import { App, Button, Input, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "@/constant/canvas";
 import { ActiveConnectionPath, ConnectionPath } from "@/components/canvas/canvas-connections";
 import { CanvasConfigComposer } from "@/components/canvas/canvas-config-composer";
@@ -131,6 +132,10 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const NODE_STATUS_ERROR = "error" as const;
+function normalizeGroupName(value: string) {
+    return value.trim().toLocaleLowerCase();
+}
+
 const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用于 AI 生图的提示词。
 
 要求：
@@ -766,7 +771,17 @@ function InfiniteCanvasPage() {
     );
 
     const createGroupFromNodeIds = useCallback(
-        (nodeIds: Iterable<string>) => {
+        (nodeIds: Iterable<string>, groupName: string) => {
+            const normalizedGroupName = normalizeGroupName(groupName);
+            if (!normalizedGroupName) {
+                message.error("请输入组名");
+                return;
+            }
+            if (nodesRef.current.some((node) => node.type === CanvasNodeType.Group && normalizeGroupName(node.title || "") === normalizedGroupName)) {
+                message.error("当前画布已有同名组");
+                return;
+            }
+
             const ids = new Set(nodeIds);
             const members = nodesRef.current.filter((node) => ids.has(node.id) && node.type !== CanvasNodeType.Group && !isHiddenBatchChild(node, nodesRef.current));
             if (members.length < 2) {
@@ -777,6 +792,7 @@ function InfiniteCanvasPage() {
             const bounds = nodeBounds(members);
             const padding = 24;
             const group = createCanvasNode(CanvasNodeType.Group, { x: bounds.left, y: bounds.top });
+            group.title = groupName.trim();
             group.position = { x: bounds.left - padding, y: bounds.top - padding };
             group.width = bounds.right - bounds.left + padding * 2;
             group.height = bounds.bottom - bounds.top + padding * 2;
@@ -798,12 +814,36 @@ function InfiniteCanvasPage() {
                 message.warning("请至少框选两个节点");
                 return;
             }
+
+            let groupName = "";
             modal.confirm({
                 title: "确认成组？",
-                content: `将 ${memberCount} 个节点成组，节点及现有连线会保留。`,
+                content: (
+                    <div>
+                        <div style={{ marginBottom: 8 }}>将 {memberCount} 个节点成组，节点及现有连线会保留。</div>
+                        <Input
+                            autoFocus
+                            placeholder="请输入组名"
+                            onChange={(event) => {
+                                groupName = event.target.value;
+                            }}
+                        />
+                    </div>
+                ),
                 okText: "确认成组",
                 cancelText: "取消",
-                onOk: () => createGroupFromNodeIds(ids),
+                onOk: () => {
+                    const trimmedGroupName = groupName.trim();
+                    if (!trimmedGroupName) {
+                        message.error("请输入组名");
+                        return Promise.reject(new Error("group name is required"));
+                    }
+                    if (nodesRef.current.some((node) => node.type === CanvasNodeType.Group && normalizeGroupName(node.title || "") === normalizeGroupName(trimmedGroupName))) {
+                        message.error("当前画布已有同名组");
+                        return Promise.reject(new Error("duplicate group name"));
+                    }
+                    createGroupFromNodeIds(ids, trimmedGroupName);
+                },
             });
         },
         [createGroupFromNodeIds, message, modal],
@@ -1695,6 +1735,18 @@ function InfiniteCanvasPage() {
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
+            if (node.type === CanvasNodeType.Group) {
+                const groupTitle = (node.title || "").trim();
+                if (!groupTitle) return message.error("组名不能为空，请先编辑组名");
+                if (useAssetStore.getState().assets.some((asset) => asset.kind === "group" && normalizeGroupName(asset.title) === normalizeGroupName(groupTitle))) {
+                    return message.error("我的资产中已有同名组");
+                }
+                const data = createCanvasGroupAssetData(node, nodesRef.current, connectionsRef.current);
+                if (!data) return message.error("组内没有可保存的节点");
+                addAsset({ kind: "group", title: groupTitle, coverUrl: getCanvasGroupAssetCover(data), tags: [], source: "Canvas", data, metadata: { source: "canvas", groupId: node.id } });
+                message.success("组已加入我的资产");
+                return;
+            }
             if (node.type === CanvasNodeType.Text) {
                 const content = node.metadata?.content?.trim();
                 if (!content) return message.error("没有可保存的文本");
@@ -2872,7 +2924,19 @@ function InfiniteCanvasPage() {
 
     const handleAssetInsert = useCallback(
         (payload: InsertAssetPayload) => {
-            if (payload.kind === "text") {
+            if (payload.kind === "group") {
+                const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                const groupAsset = instantiateCanvasGroupAsset(payload.data, center);
+                if (!groupAsset) {
+                    message.error("组资产数据无效");
+                    return;
+                }
+                setNodes((prev) => [...prev, ...groupAsset.nodes, groupAsset.group]);
+                setConnections((prev) => [...prev, ...groupAsset.connections]);
+                setSelectedNodeIds(new Set([groupAsset.group.id]));
+                setSelectedConnectionId(null);
+                setToolbarNodeId(groupAsset.group.id);
+            } else if (payload.kind === "text") {
                 insertAssistantText(payload.content, payload.title);
             } else if (payload.kind === "video") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
@@ -2903,7 +2967,7 @@ function InfiniteCanvasPage() {
             }
             setAssetPickerOpen(false);
         },
-        [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
+        [insertAssistantImage, insertAssistantText, message, screenToCanvas, size.height, size.width],
     );
 
     // --- 传给 CanvasNode 的回调/渲染函数统一 memo 化 ---

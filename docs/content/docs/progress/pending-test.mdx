@@ -133,3 +133,5 @@ description: 当前版本已实现但仍需人工验证的变更项
 - ?????????????????????????????????????????? JPEG ????????????????????????????????????????
 - 画布组装提示词参考资源：配置节点连接图片、视频或音频但未在组装提示词中插入 `@[node:id]` 时，生成请求应默认携带全部已连接资源；插入引用后仍只携带被引用的资源，并在调用日志中正确显示参考资源数量。
 - Reference-image MIME validation: when JPEG, PNG, GIF, or WebP reference files are uploaded or read, the resource response `Content-Type` and the Gemini/Grok `inlineData.mimeType` must match the actual binary format. A legacy JPEG previously labeled `image/png` must be sent as `image/jpeg` after reopening the canvas, without an upstream failure caused by the mismatched format.
+- 组资产：选中组框后点击「存资产」应保存组内节点、提示词、内部连线和媒体引用；在另一张画布插入该资产后，节点应生成新 ID 并保留布局、组框、内部连线、提示词及图片、视频、音频。组资产引用的资源应标记为已保存，定时资源清理不得删除；导出并重新导入资产包后，组内媒体仍可正常加载。侧边栏资产卡片应显示组名称。
+- 组名校验：成组确认弹窗必须填写组名，组名不得与当前画布已有组名重复；将组保存到我的资产时，组名不得与已有组资产重复。

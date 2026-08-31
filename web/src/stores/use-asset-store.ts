@@ -2,15 +2,18 @@ import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import { nanoid } from "nanoid";
+import { getCanvasGroupAssetCover, type CanvasGroupAssetData } from "@/lib/canvas/canvas-group-asset";
 import { cleanupUnusedImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
+import type { CanvasNodeData } from "@/types/canvas";
 
-export type AssetKind = "text" | "image" | "video" | "audio";
+export type AssetKind = "text" | "image" | "video" | "audio" | "group";
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
 export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; coverStorageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type AudioAsset = AssetBase<"audio"> & { data: { url: string; storageKey?: string; bytes: number; mimeType: string; durationMs?: number } };
-export type Asset = TextAsset | ImageAsset | VideoAsset | AudioAsset;
+export type GroupAsset = AssetBase<"group"> & { data: CanvasGroupAssetData };
+export type Asset = TextAsset | ImageAsset | VideoAsset | AudioAsset | GroupAsset;
 
 type AssetBase<T extends AssetKind> = {
     id: string;
@@ -118,6 +121,11 @@ export const useAssetStore = create<AssetStore>()(
 );
 
 async function hydrateAsset(asset: Asset): Promise<Asset> {
+    if (asset.kind === "group") {
+        const nodes = await Promise.all(asset.data.nodes.map(hydrateGroupNode));
+        const data = { ...asset.data, nodes };
+        return { ...asset, coverUrl: getCanvasGroupAssetCover(data), data };
+    }
     if (asset.kind === "video") {
         const [url, coverUrl] = await Promise.all([
             asset.data.storageKey ? resolveMediaUrl(asset.data.storageKey, asset.data.url) : asset.data.url,
@@ -139,8 +147,29 @@ async function hydrateAsset(asset: Asset): Promise<Asset> {
 }
 
 function serializeAsset(asset: Asset): Asset {
+    if (asset.kind === "group") return { ...asset, coverUrl: "", data: { ...asset.data, group: serializeGroupNode(asset.data.group), nodes: asset.data.nodes.map(serializeGroupNode) } };
     if (asset.kind === "video") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
     if (asset.kind === "audio") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, url: "" } } : asset;
     if (asset.kind === "image") return asset.data.storageKey ? { ...asset, coverUrl: "", data: { ...asset.data, dataUrl: "" } } : asset;
     return asset;
+}
+
+async function hydrateGroupNode(node: CanvasNodeData): Promise<CanvasNodeData> {
+    if (!node.metadata) return node;
+    const metadata = { ...node.metadata };
+    if (metadata.storageKey) metadata.content = await resolveStoredContent(metadata.storageKey, metadata.content || "");
+    if (metadata.images?.length) metadata.images = await Promise.all(metadata.images.map(async (image) => (image.storageKey ? { ...image, content: await resolveStoredContent(image.storageKey, image.content) } : image)));
+    return { ...node, metadata };
+}
+
+function serializeGroupNode(node: CanvasNodeData): CanvasNodeData {
+    if (!node.metadata) return node;
+    const metadata = { ...node.metadata };
+    if (metadata.storageKey) metadata.content = "";
+    if (metadata.images?.length) metadata.images = metadata.images.map((image) => (image.storageKey ? { ...image, content: "" } : image));
+    return { ...node, metadata };
+}
+
+function resolveStoredContent(storageKey: string, fallback: string) {
+    return storageKey.startsWith("image:") ? resolveImageUrl(storageKey, fallback) : resolveMediaUrl(storageKey, fallback);
 }

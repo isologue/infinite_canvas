@@ -123,10 +123,11 @@ export async function syncUserSavedResources(userId: string, assets: unknown) {
     for (const raw of list) {
         if (!raw || typeof raw !== "object") continue;
         const asset = raw as Record<string, any>;
-        const storageKey = typeof asset.data?.storageKey === "string" ? asset.data.storageKey : "";
-        if (storageKey) {
-            await db.query(`UPDATE user_resources SET is_saved = TRUE, title = CASE WHEN $3 <> '' THEN $3 ELSE title END, updated_at = NOW() WHERE user_id = $1 AND storage_key = $2`, [userId, storageKey, typeof asset.title === "string" ? asset.title : ""]);
-        } else if (asset.kind === "text" && typeof asset.data?.content === "string") {
+        const title = typeof asset.title === "string" ? asset.title : "";
+        for (const storageKey of assetStorageKeys(asset)) {
+            await db.query(`UPDATE user_resources SET is_saved = TRUE, title = CASE WHEN $3 <> '' THEN $3 ELSE title END, updated_at = NOW() WHERE user_id = $1 AND storage_key = $2`, [userId, storageKey, title]);
+        }
+        if (asset.kind === "text" && typeof asset.data?.content === "string") {
             await registerTextResource(userId, { resourceId: `text:${asset.id || randomUUID()}`, title: asset.title, content: asset.data.content, source: asset.source || "assets", createdAt: asset.createdAt, isSaved: true, metadata: asset.metadata });
         }
     }
@@ -135,13 +136,12 @@ export async function syncUserSavedResources(userId: string, assets: unknown) {
 export async function markDeletedAssetResources(userId: string, assets: unknown) {
     await ensureUserDataTables();
     if (!Array.isArray(assets) || !assets.length) return assets;
-    const ids = assets.map((raw: any) => raw?.data?.storageKey || (raw?.kind === "text" && raw?.id ? `text:${raw.id}` : "")).filter(Boolean);
+    const ids = [...new Set(assets.flatMap(assetResourceIds))];
     if (!ids.length) return assets;
     const rows = await getPgPool().query<{ resource_id: string; storage_key: string | null }>(`SELECT resource_id, storage_key FROM user_resources WHERE user_id = $1 AND deleted_at IS NOT NULL AND (resource_id = ANY($2::text[]) OR storage_key = ANY($2::text[]))`, [userId, ids]);
     const deleted = new Set(rows.rows.flatMap((row) => [row.resource_id, row.storage_key || ""]));
     return assets.map((raw: any) => {
-        const key = raw?.data?.storageKey || (raw?.kind === "text" && raw?.id ? `text:${raw.id}` : "");
-        if (deleted.has(key)) return { ...raw, metadata: { ...(raw.metadata || {}), resourceDeleted: true } };
+        if (assetResourceIds(raw).some((id) => deleted.has(id))) return { ...raw, metadata: { ...(raw.metadata || {}), resourceDeleted: true } };
         if (raw?.metadata?.resourceDeleted === true) {
             const metadata = { ...raw.metadata };
             delete metadata.resourceDeleted;
@@ -149,6 +149,29 @@ export async function markDeletedAssetResources(userId: string, assets: unknown)
         }
         return raw;
     });
+}
+
+function assetResourceIds(asset: unknown) {
+    const ids = assetStorageKeys(asset);
+    if (asset && typeof asset === "object") {
+        const raw = asset as Record<string, any>;
+        if (raw.kind === "text" && typeof raw.id === "string" && raw.id) ids.push(`text:${raw.id}`);
+    }
+    return ids;
+}
+
+function assetStorageKeys(value: unknown) {
+    const keys = new Set<string>();
+    const visit = (current: unknown) => {
+        if (Array.isArray(current)) return current.forEach(visit);
+        if (!current || typeof current !== "object") return;
+        for (const [key, item] of Object.entries(current as Record<string, unknown>)) {
+            if ((key === "storageKey" || key === "coverStorageKey") && typeof item === "string" && item) keys.add(item);
+            else visit(item);
+        }
+    };
+    visit(value);
+    return [...keys];
 }
 
 export async function ensureResourceBackfill() {

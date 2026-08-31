@@ -23,16 +23,14 @@ type AssetExportItem = {
 export async function exportAssets(assets: Asset[], filename: string) {
     const files: AssetExportItem[] = [];
     const zipFiles: { name: string; data: BlobPart }[] = [];
+    const storageKeys = [...new Set(assets.flatMap(collectStorageKeys))];
 
     await Promise.all(
-        assets.map(async (asset) => {
-            if (asset.kind !== "image" && asset.kind !== "video" && asset.kind !== "audio") return;
-            const storageKey = asset.data.storageKey;
-            if (!storageKey) return;
-            const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+        storageKeys.map(async (storageKey) => {
+            const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
             if (!blob) return;
-            const path = `files/${safeFileName(storageKey)}.${fileExtension(blob.type, asset.kind)}`;
-            files.push({ storageKey, path, mimeType: blob.type || asset.data.mimeType, bytes: blob.size });
+            const path = `files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
+            files.push({ storageKey, path, mimeType: blob.type, bytes: blob.size });
             zipFiles.push({ name: path, data: blob });
         }),
     );
@@ -62,16 +60,30 @@ function safeFileName(value: string) {
     return value.replace(/[\\/:*?"<>|]/g, "_");
 }
 
-function fileExtension(mimeType: string, kind: Asset["kind"]) {
+function collectStorageKeys(value: unknown) {
+    const keys = new Set<string>();
+    const visit = (current: unknown) => {
+        if (Array.isArray(current)) return current.forEach(visit);
+        if (!current || typeof current !== "object") return;
+        for (const [key, item] of Object.entries(current as Record<string, unknown>)) {
+            if ((key === "storageKey" || key === "coverStorageKey") && typeof item === "string" && item) keys.add(item);
+            else visit(item);
+        }
+    };
+    visit(value);
+    return [...keys];
+}
+
+function fileExtension(mimeType: string, storageKey: string) {
     if (mimeType.includes("png")) return "png";
     if (mimeType.includes("jpeg")) return "jpg";
     if (mimeType.includes("webp")) return "webp";
     if (mimeType.includes("gif")) return "gif";
-    if (mimeType.includes("mp4")) return kind === "audio" ? "m4a" : "mp4";
+    if (mimeType.includes("mp4")) return "mp4";
     if (mimeType.includes("webm")) return "webm";
     if (mimeType.includes("mpeg")) return "mp3";
     if (mimeType.includes("wav")) return "wav";
     if (mimeType.includes("ogg")) return "ogg";
     if (mimeType.includes("m4a")) return "m4a";
-    return kind === "image" ? "png" : "bin";
+    return storageKey.startsWith("image:") ? "png" : "bin";
 }

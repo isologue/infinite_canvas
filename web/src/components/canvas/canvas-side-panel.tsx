@@ -1,10 +1,11 @@
 import { memo, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { App, Empty, Input, Popconfirm, Select, Spin, Tag } from "antd";
 import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
+import { BookOpen, Check, ChevronRight, Download, Eye, FileText, Group, Image as ImageIcon, ListChecks, Music2, Plus, Search, Settings2, Square, Trash2, Type, Video } from "lucide-react";
 import { motion } from "motion/react";
 
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
+import { canvasGroupAssetSummary } from "@/lib/canvas/canvas-group-asset";
 import { exportCanvasNodes } from "@/lib/canvas/canvas-export";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
@@ -283,9 +284,11 @@ const ASSET_GROUPS: { kind: AssetKind; label: string; icon: typeof Square }[] = 
     { kind: "image", label: "图片", icon: ImageIcon },
     { kind: "video", label: "视频", icon: Video },
     { kind: "text", label: "文本", icon: FileText },
+    { kind: "group", label: "组", icon: Group },
 ];
 
 function buildInsertPayload(asset: Asset): InsertAssetPayload {
+    if (asset.kind === "group") return { kind: "group", data: asset.data, title: asset.title };
     if (asset.kind === "text") return { kind: "text", content: asset.data.content, title: asset.title };
     if (asset.kind === "video") return { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height };
     if (asset.kind === "audio") return { kind: "audio", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, durationMs: asset.data.durationMs };
@@ -443,6 +446,23 @@ function AssetCard({ asset, theme, onInsert, onRemove }: { asset: Asset; theme: 
 }
 
 function AssetCover({ asset }: { asset: Asset }) {
+    if (asset.kind === "group") {
+        return (
+            <div className="relative size-full">
+                {asset.coverUrl ? (
+                    <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />
+                ) : (
+                    <div className="grid size-full place-items-center gap-1.5 text-center">
+                        <Group className="size-7 opacity-55" />
+                        <span className="px-2 text-[11px] opacity-60">{canvasGroupAssetSummary(asset.data)}</span>
+                    </div>
+                )}
+                <div className="absolute inset-x-0 bottom-0 truncate bg-black/45 px-2 py-1 text-xs font-medium text-white" title={asset.title}>
+                    {asset.title}
+                </div>
+            </div>
+        );
+    }
     if (asset.kind === "text") return <div className="size-full overflow-hidden whitespace-pre-wrap break-words p-2.5 text-[11px] leading-snug opacity-80">{asset.data.content}</div>;
     if (asset.kind === "video") {
         if (asset.coverUrl) return <img src={asset.coverUrl} alt="" className="size-full object-cover transition duration-300 group-hover:scale-[1.04]" />;
