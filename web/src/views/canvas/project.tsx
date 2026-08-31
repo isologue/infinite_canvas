@@ -876,7 +876,8 @@ function InfiniteCanvasPage() {
 
         clipboardRef.current = {
             nodes: copiedNodes,
-            connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.fromNodeId) && selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
+            // 保留选中节点与未选中节点之间的连线；粘贴时只替换被复制节点的端点。
+            connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.fromNodeId) || selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
         };
     }, []);
 
@@ -918,19 +919,12 @@ function InfiniteCanvasPage() {
             return { ...node, metadata: { ...node.metadata, groupId: idMap.get(groupId) } };
         });
 
-        const nextConnections = clipboard.connections.flatMap((connection, index) => {
-            const fromNodeId = idMap.get(connection.fromNodeId);
-            const toNodeId = idMap.get(connection.toNodeId);
-            if (!fromNodeId || !toNodeId) return [];
-            return [
-                {
-                    ...connection,
-                    id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-                    fromNodeId,
-                    toNodeId,
-                },
-            ];
-        });
+        const nextConnections = clipboard.connections.map((connection, index) => ({
+            ...connection,
+            id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+            fromNodeId: idMap.get(connection.fromNodeId) || connection.fromNodeId,
+            toNodeId: idMap.get(connection.toNodeId) || connection.toNodeId,
+        }));
 
         setNodes((prev) => [...prev, ...pastedNodes]);
         setConnections((prev) => [...prev, ...nextConnections]);
@@ -1061,13 +1055,7 @@ function InfiniteCanvasPage() {
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
-            if (!event.ctrlKey && !event.metaKey) {
-                setSelectionBox(null);
-                setSelectedNodeIds(new Set());
-                setSelectedConnectionId(null);
-                return;
-            }
-
+            // 选择工具下直接在空白处左键拖动即可框选；Shift 保留已有选区并追加。
             const world = screenToCanvas(event.clientX, event.clientY);
             const nextSelectionBox = {
                 startWorldX: world.x,
