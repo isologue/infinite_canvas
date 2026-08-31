@@ -52,7 +52,7 @@ import { usePluginHost } from "@/views/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
 import { applyNodeConfigPatch, audioMetadata, buildAudioGenerationMetadata, buildImageGenerationMetadata, createCanvasNode, imageMetadata, videoMetadata } from "@/lib/canvas/canvas-node-factory";
-import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
+import { findContainingGroupId, findGroupDropTarget, getConnectionTargetAnchor, isHiddenBatchChild, isHiddenBatchConnectionEndpoint, nodeBounds, normalizeConnection, snapNodesIntoGroup } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
     buildAngleLabel,
@@ -293,6 +293,7 @@ function InfiniteCanvasPage() {
     const [isNodeDragging, setIsNodeDragging] = useState(false);
     const [isNodeResizing, setIsNodeResizing] = useState(false);
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
+    const [isGrouping, setIsGrouping] = useState(false);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -303,6 +304,7 @@ function InfiniteCanvasPage() {
     const connectingParamsRef = useRef(connectingParams);
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
+    const isGroupingRef = useRef(false);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
 
@@ -473,7 +475,8 @@ function InfiniteCanvasPage() {
 
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
-    }, [selectionBox]);
+        isGroupingRef.current = isGrouping;
+    }, [isGrouping, selectionBox]);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -760,6 +763,75 @@ function InfiniteCanvasPage() {
             if (wantsPanel) setDialogNodeId(newNode.id);
         },
         [effectiveConfig.canvasImageCount, effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.resolution, effectiveConfig.size, getCanvasCenter],
+    );
+
+    const createGroupFromNodeIds = useCallback(
+        (nodeIds: Iterable<string>) => {
+            const ids = new Set(nodeIds);
+            const members = nodesRef.current.filter((node) => ids.has(node.id) && node.type !== CanvasNodeType.Group && !isHiddenBatchChild(node, nodesRef.current));
+            if (members.length < 2) {
+                message.warning("请至少框选两个节点");
+                return;
+            }
+
+            const bounds = nodeBounds(members);
+            const padding = 24;
+            const group = createCanvasNode(CanvasNodeType.Group, { x: bounds.left, y: bounds.top });
+            group.position = { x: bounds.left - padding, y: bounds.top - padding };
+            group.width = bounds.right - bounds.left + padding * 2;
+            group.height = bounds.bottom - bounds.top + padding * 2;
+            const memberIds = new Set(members.map((node) => node.id));
+            setNodes((prev) => [...prev.map((node) => (memberIds.has(node.id) ? { ...node, metadata: { ...node.metadata, groupId: group.id } } : node)), group]);
+            setSelectedNodeIds(new Set([group.id]));
+            setSelectedConnectionId(null);
+            setToolbarNodeId(group.id);
+            message.success(`已将 ${members.length} 个节点成组`);
+        },
+        [message],
+    );
+
+    const confirmCreateGroupFromNodeIds = useCallback(
+        (nodeIds: Iterable<string>) => {
+            const ids = Array.from(nodeIds);
+            const memberCount = nodesRef.current.filter((node) => ids.includes(node.id) && node.type !== CanvasNodeType.Group && !isHiddenBatchChild(node, nodesRef.current)).length;
+            if (memberCount < 2) {
+                message.warning("请至少框选两个节点");
+                return;
+            }
+            modal.confirm({
+                title: "确认成组？",
+                content: `将 ${memberCount} 个节点成组，节点及现有连线会保留。`,
+                okText: "确认成组",
+                cancelText: "取消",
+                onOk: () => createGroupFromNodeIds(ids),
+            });
+        },
+        [createGroupFromNodeIds, message, modal],
+    );
+
+    const toggleGrouping = useCallback(() => {
+        setIsGrouping((current) => {
+            const next = !current;
+            isGroupingRef.current = next;
+            if (next) {
+                setCanvasTool("select");
+                setSelectedNodeIds(new Set());
+                setSelectedConnectionId(null);
+                setToolbarNodeId(null);
+                message.info("请在画布空白处框选需要成组的节点");
+            }
+            return next;
+        });
+    }, [message]);
+
+    const dissolveGroup = useCallback(
+        (groupId: string) => {
+            setNodes((prev) => prev.filter((node) => node.id !== groupId).map((node) => (node.metadata?.groupId === groupId ? { ...node, metadata: { ...node.metadata, groupId: undefined } } : node)));
+            setSelectedNodeIds(new Set());
+            setToolbarNodeId(null);
+            message.success("已解散组");
+        },
+        [message],
     );
 
     const deleteNodes = useCallback(
@@ -1237,11 +1309,7 @@ function InfiniteCanvasPage() {
             const currentSelection = selectionBoxRef.current;
             if (!currentSelection) return;
 
-            if (event.buttons === 0) {
-                selectionBoxRef.current = null;
-                setSelectionBox(null);
-                return;
-            }
+            if (event.buttons === 0) return;
 
             const world = screenToCanvas(event.clientX, event.clientY);
             const rectX = Math.min(currentSelection.startWorldX, world.x);
@@ -1270,8 +1338,25 @@ function InfiniteCanvasPage() {
         (event: MouseEvent) => {
             finishNodeDrag(event.clientX, event.clientY);
 
+            const completedSelection = selectionBoxRef.current;
             selectionBoxRef.current = null;
             setSelectionBox(null);
+
+            if (isGroupingRef.current && completedSelection) {
+                const left = Math.min(completedSelection.startWorldX, completedSelection.currentWorldX);
+                const top = Math.min(completedSelection.startWorldY, completedSelection.currentWorldY);
+                const right = Math.max(completedSelection.startWorldX, completedSelection.currentWorldX);
+                const bottom = Math.max(completedSelection.startWorldY, completedSelection.currentWorldY);
+                confirmCreateGroupFromNodeIds(
+                    nodesRef.current
+                        .filter((node) => !isHiddenBatchChild(node, nodesRef.current))
+                        .filter((node) => left < node.position.x + node.width && right > node.position.x && top < node.position.y + node.height && bottom > node.position.y)
+                        .map((node) => node.id),
+                );
+                isGroupingRef.current = false;
+                setIsGrouping(false);
+                return;
+            }
 
             if (pendingConnectionCreateRef.current) return;
 
@@ -1289,22 +1374,19 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [connectNodes, finishNodeDrag, getConnectionDropTarget, screenToCanvas, setConnecting],
+        [confirmCreateGroupFromNodeIds, connectNodes, finishNodeDrag, getConnectionDropTarget, screenToCanvas, setConnecting],
     );
 
     useEffect(() => {
-        const handlePointerUp = (event: PointerEvent) => finishNodeDrag(event.clientX, event.clientY);
         const cancelNodeDrag = () => finishNodeDrag();
         window.addEventListener("mousemove", handleGlobalMouseMove);
-        window.addEventListener("mouseup", handleGlobalMouseUp);
-        window.addEventListener("pointerup", handlePointerUp);
+        window.addEventListener("pointerup", handleGlobalMouseUp);
         window.addEventListener("pointercancel", cancelNodeDrag);
         window.addEventListener("blur", cancelNodeDrag);
         window.addEventListener("pointermove", handleGlobalPointerMove);
         return () => {
             window.removeEventListener("mousemove", handleGlobalMouseMove);
-            window.removeEventListener("mouseup", handleGlobalMouseUp);
-            window.removeEventListener("pointerup", handlePointerUp);
+            window.removeEventListener("pointerup", handleGlobalMouseUp);
             window.removeEventListener("pointercancel", cancelNodeDrag);
             window.removeEventListener("blur", cancelNodeDrag);
             window.removeEventListener("pointermove", handleGlobalPointerMove);
@@ -1473,6 +1555,8 @@ function InfiniteCanvasPage() {
             }
 
             if (event.key === "Escape") {
+                isGroupingRef.current = false;
+                setIsGrouping(false);
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
                 setContextMenu(null);
@@ -2542,6 +2626,29 @@ function InfiniteCanvasPage() {
         },
         [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startGenerationRequest],
     );
+    const runGroup = useCallback(
+        async (group: CanvasNodeData) => {
+            const children = nodesRef.current.filter((node) => node.metadata?.groupId === group.id && node.type !== CanvasNodeType.Group && !isHiddenBatchChild(node, nodesRef.current));
+            let count = 0;
+            for (const node of children) {
+                if (node.metadata?.status === NODE_STATUS_LOADING || getNodeDefinition(node.type)?.Panel) continue;
+                const mode =
+                    getNodeDefinition(node.type)?.useBuiltinPanel?.mode ??
+                    (node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
+                const prompt = (node.metadata?.composerContent || node.metadata?.prompt || node.metadata?.resolvedPrompt || buildNodeGenerationContext(node.id, nodesRef.current, connectionsRef.current, "").prompt).trim();
+                if (!prompt) continue;
+                count += 1;
+                await handleGenerateNode(node.id, mode, prompt);
+            }
+            if (!count) {
+                message.warning("组内没有可运行的节点");
+                return;
+            }
+            message.success(`已批量运行 ${count} 个节点`);
+        },
+        [handleGenerateNode, message],
+    );
+
     useEffect(() => {
         generateNodeRef.current = handleGenerateNode;
     }, [handleGenerateNode]);
@@ -3045,12 +3152,15 @@ function InfiniteCanvasPage() {
                     onReversePrompt={createImageReversePromptNodes}
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
+                    onRunGroup={(node) => void runGroup(node)}
+                    onDissolveGroup={(node) => dissolveGroup(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
 
                 <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
                     canvasTool={canvasTool}
+                    groupingActive={isGrouping}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
@@ -3060,7 +3170,7 @@ function InfiniteCanvasPage() {
                     onAddAudio={() => createNode(CanvasNodeType.Audio)}
                     onAddText={() => createNode(CanvasNodeType.Text)}
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
-                    onAddGroup={() => createNode(CanvasNodeType.Group)}
+                    onAddGroup={toggleGrouping}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
