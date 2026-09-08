@@ -2205,14 +2205,16 @@ function InfiniteCanvasPage() {
                         event.target.value = "";
                         return;
                     }
-                    const s = fitUploadedImageNodeSize(image.width, image.height);
                     setNodes((prev) =>
-                        prev.map((node) =>
-                            node.id === target.nodeId
-                                ? {
+                        prev.map((node) => {
+                            if (node.id !== target.nodeId) return node;
+                            const edge = Math.max(node.width, node.height);
+                            const s = fitNodeSize(image.width, image.height, edge, edge);
+                            return {
                                       ...node,
                                       type: CanvasNodeType.Image,
                                       title: first.name,
+                                      position: { x: node.position.x + node.width / 2 - s.width / 2, y: node.position.y + node.height / 2 - s.height / 2 },
                                       width: s.width,
                                       height: s.height,
                                       metadata: {
@@ -2233,9 +2235,8 @@ function InfiniteCanvasPage() {
                                           primaryImageId: undefined,
                                           imageBatchExpanded: undefined,
                                       },
-                                  }
-                                : node,
-                        ),
+                                  };
+                        }),
                     );
                     setSelectedNodeIds(new Set([target.nodeId]));
                     setSelectedConnectionId(null);
