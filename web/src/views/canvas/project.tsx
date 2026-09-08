@@ -526,6 +526,14 @@ function InfiniteCanvasPage() {
         return screenToCanvas((rect?.left || 0) + (rect?.width || size.width) / 2, (rect?.top || 0) + (rect?.height || size.height) / 2);
     }, [screenToCanvas, size.height, size.width]);
 
+    const fitUploadedImageNodeSize = useCallback(
+        (width: number, height: number) => {
+            const zoom = Math.max(viewportRef.current.k, 0.05);
+            return fitNodeSize(width, height, Math.min(640, (size.width * 0.45) / zoom), Math.min(640, (size.height * 0.55) / zoom));
+        },
+        [size.height, size.width],
+    );
+
     const setConnecting = useCallback((next: ConnectionHandle | null) => {
         connectingParamsRef.current = next;
         setConnectingParams(next);
@@ -1517,7 +1525,7 @@ function InfiniteCanvasPage() {
         }
         try {
             const image = await uploadImage(file, { compress: true, title: file.name, source: "canvas-upload" });
-            const size = fitNodeSize(image.width, image.height);
+            const size = fitUploadedImageNodeSize(image.width, image.height);
             const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
             const newNode: CanvasNodeData = {
                 id,
@@ -1536,7 +1544,7 @@ function InfiniteCanvasPage() {
         } catch (error) {
             message.error(error instanceof Error ? error.message : "图片上传失败，请重试");
         }
-    }, [message]);
+    }, [fitUploadedImageNodeSize, message]);
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const video = await uploadMediaFile(file, "video", { title: file.name, source: "canvas-upload" });
@@ -2197,7 +2205,7 @@ function InfiniteCanvasPage() {
                         event.target.value = "";
                         return;
                     }
-                    const s = fitNodeSize(image.width, image.height);
+                    const s = fitUploadedImageNodeSize(image.width, image.height);
                     setNodes((prev) =>
                         prev.map((node) =>
                             node.id === target.nodeId
@@ -2264,7 +2272,7 @@ function InfiniteCanvasPage() {
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createAudioFileNode, createImageFileNode, createVideoFileNode, message, screenToCanvas, size.height, size.width],
+        [createAudioFileNode, createImageFileNode, createVideoFileNode, fitUploadedImageNodeSize, message, screenToCanvas, size.height, size.width],
     );
 
     const handleDrop = useCallback(
@@ -3053,7 +3061,6 @@ function InfiniteCanvasPage() {
     const handleNodeHoverEnd = useCallback((nodeId: string) => {
         setHoveredNodeId((current) => (current === nodeId ? null : current));
     }, []);
-    const handleNodeViewImage = useCallback((node: CanvasNodeData) => setPreviewNodeId(node.id), []);
     const handleNodeRetry = useCallback((node: CanvasNodeData) => void handleRetryNode(node), [handleRetryNode]);
     const handleNodeContextMenu = useCallback((event: ReactMouseEvent, nodeId: string) => {
         event.preventDefault();
@@ -3220,6 +3227,7 @@ function InfiniteCanvasPage() {
                             renderPanel={renderNodePanel}
                             renderNodeContent={renderNodeContentPanel}
                             onMouseDown={handleNodeMouseDown}
+                            onDoubleClickNode={selectionMode ? undefined : focusNode}
                             onSelectCapture={handleNodeSelectCapture}
                             onHoverStart={handleNodeHoverStart}
                             onHoverEnd={handleNodeHoverEnd}
@@ -3233,7 +3241,6 @@ function InfiniteCanvasPage() {
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={handleNodeRetry}
                             onGenerateImage={generateImageFromTextNode}
-                            onViewImage={handleNodeViewImage}
                             onContextMenu={handleNodeContextMenu}
                         />
                     ))}

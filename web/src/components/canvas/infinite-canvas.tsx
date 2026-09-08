@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -28,6 +28,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         initialY: 0,
         hasMoved: false,
         startedOnBackground: false,
+        pointerId: null as number | null,
     });
     const scaleRef = useRef(viewport.k);
     const frameRef = useRef<number | null>(null);
@@ -35,6 +36,21 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     const [isSpacePressed, setIsSpacePressed] = useState(false);
     const [isControlPressed, setIsControlPressed] = useState(false);
     const [isPanning, setIsPanning] = useState(false);
+
+    const finishPan = useCallback(
+        (shouldDeselect = false) => {
+            const pan = panState.current;
+            if (!pan.isPanning) return;
+            const pointerId = pan.pointerId;
+            const shouldClearSelection = shouldDeselect && !pan.hasMoved && pan.startedOnBackground;
+            pan.isPanning = false;
+            pan.pointerId = null;
+            if (pointerId !== null && containerRef.current?.hasPointerCapture(pointerId)) containerRef.current.releasePointerCapture(pointerId);
+            setIsPanning(false);
+            if (shouldClearSelection) onCanvasDeselect?.();
+        },
+        [containerRef, onCanvasDeselect],
+    );
 
     useEffect(() => {
         scaleRef.current = viewport.k;
@@ -69,9 +85,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
         const handleBlur = () => {
             setIsSpacePressed(false);
             setIsControlPressed(false);
-            panState.current.isPanning = false;
-            setIsPanning(false);
-            document.body.style.cursor = "";
+            finishPan();
         };
 
         window.addEventListener("keydown", handleKeyDown);
@@ -82,7 +96,7 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             window.removeEventListener("keyup", handleKeyUp);
             window.removeEventListener("blur", handleBlur);
         };
-    }, []);
+    }, [finishPan]);
 
     const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
@@ -126,9 +140,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
                 initialY: viewport.y,
                 hasMoved: false,
                 startedOnBackground: isBackgroundClick,
+                pointerId: event.pointerId,
             };
             setIsPanning(true);
-            document.body.style.cursor = "grabbing";
             return;
         }
 
@@ -148,6 +162,10 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
     useEffect(() => {
         const handlePointerMove = (event: PointerEvent) => {
             if (!panState.current.isPanning) return;
+            if (event.buttons === 0) {
+                finishPan(true);
+                return;
+            }
 
             const dx = event.clientX - panState.current.startX;
             const dy = event.clientY - panState.current.startY;
@@ -167,27 +185,24 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             });
         };
 
-        const handlePointerUp = () => {
-            if (!panState.current.isPanning) return;
-
-            if (!panState.current.hasMoved && panState.current.startedOnBackground) {
-                onCanvasDeselect?.();
-            }
-            panState.current.isPanning = false;
-            setIsPanning(false);
-            document.body.style.cursor = "";
+        const handlePointerUp = () => finishPan(true);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === "hidden") finishPan();
         };
 
         window.addEventListener("pointermove", handlePointerMove);
         window.addEventListener("pointerup", handlePointerUp);
         window.addEventListener("pointercancel", handlePointerUp);
+        window.addEventListener("mouseup", handlePointerUp);
+        document.addEventListener("visibilitychange", handleVisibilityChange);
         return () => {
             window.removeEventListener("pointermove", handlePointerMove);
             window.removeEventListener("pointerup", handlePointerUp);
             window.removeEventListener("pointercancel", handlePointerUp);
-            document.body.style.cursor = "";
+            window.removeEventListener("mouseup", handlePointerUp);
+            document.removeEventListener("visibilitychange", handleVisibilityChange);
         };
-    }, [onCanvasDeselect, onViewportChange]);
+    }, [finishPan, onViewportChange]);
 
     useEffect(() => {
         const container = containerRef.current;
@@ -213,6 +228,9 @@ export function InfiniteCanvas({ containerRef, viewport, tool, backgroundMode = 
             className="relative h-full w-full select-none overflow-hidden"
             style={{ background: theme.canvas.background, cursor }}
             onPointerDown={handlePointerDown}
+            onPointerUp={() => finishPan(true)}
+            onPointerCancel={() => finishPan()}
+            onLostPointerCapture={() => finishPan()}
             onDoubleClick={handleDoubleClick}
             onWheel={handleWheel}
             onContextMenu={onContextMenu}

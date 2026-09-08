@@ -42,6 +42,7 @@ type CanvasNodeProps = {
     batchRecovering?: boolean;
     batchMotion?: { x: number; y: number; index: number };
     onMouseDown: (event: React.MouseEvent, nodeId: string) => void;
+    onDoubleClickNode?: (nodeId: string) => void;
     onSelectCapture?: (event: React.MouseEvent, nodeId: string) => void;
     onHoverStart: (nodeId: string) => void;
     onHoverEnd: (nodeId: string) => void;
@@ -55,7 +56,6 @@ type CanvasNodeProps = {
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
-    onViewImage?: (node: CanvasNodeData) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
@@ -106,6 +106,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     batchRecovering = false,
     batchMotion,
     onMouseDown,
+    onDoubleClickNode,
     onSelectCapture,
     onHoverStart,
     onHoverEnd,
@@ -119,7 +120,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onSetBatchPrimary,
     onRetry,
     onGenerateImage,
-    onViewImage,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -367,6 +367,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
+                    event.stopPropagation();
+                    if (selectionMode) return;
+                    onDoubleClickNode?.(data.id);
                     if (isBatchRoot) {
                         event.stopPropagation();
                         onToggleBatch?.(data.id);
@@ -376,11 +379,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         if (definition.onDoubleClick(pluginContext)) event.stopPropagation();
                         return;
                     }
-                    if (data.type === CanvasNodeType.Image && hasImageContent) {
-                        event.stopPropagation();
-                        onViewImage?.(data);
-                        return;
-                    }
+                    if (data.type === CanvasNodeType.Image && hasImageContent) return;
                     if (data.type !== CanvasNodeType.Text) return;
                     event.stopPropagation();
                     setIsEditingContent(true);
