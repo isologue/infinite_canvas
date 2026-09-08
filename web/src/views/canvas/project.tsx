@@ -2405,9 +2405,11 @@ function InfiniteCanvasPage() {
                     const count = getGenerationCount(generationConfig.count);
                     const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                     const isImageNode = sourceNode?.type === CanvasNodeType.Image;
-                    const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
+                    const hasConnectedReferenceImages = generationContext.referenceImages.length > 0;
+                    // 已有上游参考图的图片节点是生成结果目标，重复生成应继续覆盖该节点，不能把上一次结果当作新的唯一参考图。
+                    const writeBackToImageNode = isImageNode && (!sourceNode?.metadata?.content || hasConnectedReferenceImages);
                     const sourceReference =
-                        isImageNode && sourceNode?.metadata?.content
+                        isImageNode && sourceNode?.metadata?.content && !hasConnectedReferenceImages
                             ? [{ id: sourceNode.id, name: `${sourceNode.title || sourceNode.id}.png`, type: sourceNode.metadata.mimeType || "image/png", dataUrl: sourceNode.metadata.content, bytes: sourceNode.metadata.bytes, storageKey: sourceNode.metadata.storageKey }]
                             : [];
                     const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
@@ -2423,20 +2425,20 @@ function InfiniteCanvasPage() {
                     const parentPosition = sourceNode?.position || { x: 0, y: 0 };
                     const gap = 96;
                     const rowGap = 36;
-                    const rootId = isEmptyImageNode ? nodeId : nanoid();
+                    const rootId = writeBackToImageNode ? nodeId : nanoid();
                     const childIds = count > 1 ? Array.from({ length: count }, () => nanoid()) : [];
                     const targetIds = count > 1 ? childIds : [rootId];
-                    pendingChildIds = isEmptyImageNode ? childIds : [rootId, ...childIds];
+                    pendingChildIds = writeBackToImageNode ? childIds : [rootId, ...childIds];
                     const rootNode: CanvasNodeData = {
                         id: rootId,
                         type: CanvasNodeType.Image,
                         title: effectivePrompt.slice(0, 32) || "Generated Image",
                         position: {
-                            x: isEmptyImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + gap,
-                            y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
+                            x: writeBackToImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + gap,
+                            y: writeBackToImageNode ? parentPosition.y : parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2,
                         },
-                        width: isEmptyImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
-                        height: isEmptyImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
+                        width: writeBackToImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
+                        height: writeBackToImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
                         metadata: {
                             prompt: effectivePrompt,
                             status: NODE_STATUS_LOADING,
@@ -2459,7 +2461,7 @@ function InfiniteCanvasPage() {
                         height: imageConfig.height,
                         metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
                     }));
-                    const batchConnections = [...(isEmptyImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
+                    const batchConnections = [...(writeBackToImageNode ? [] : [{ id: nanoid(), fromNodeId: nodeId, toNodeId: rootId }]), ...childIds.map((childId) => ({ id: nanoid(), fromNodeId: rootId, toNodeId: childId }))];
 
                     setNodes((prev) => [
                         ...prev.map((node) =>
@@ -2469,7 +2471,7 @@ function InfiniteCanvasPage() {
                                           ...node,
                                           metadata: { ...node.metadata, prompt: undefined, resolvedPrompt: effectivePrompt, status: NODE_STATUS_LOADING, errorDetails: undefined },
                                       }
-                                    : isEmptyImageNode
+                                    : writeBackToImageNode
                                       ? {
                                             ...node,
                                             position: rootNode.position,
@@ -2493,7 +2495,7 @@ function InfiniteCanvasPage() {
                                           }
                                 : node,
                         ),
-                        ...(isEmptyImageNode ? [] : [rootNode]),
+                        ...(writeBackToImageNode ? [] : [rootNode]),
                         ...childNodes,
                     ]);
                     setConnections((prev) => [...prev, ...batchConnections]);
@@ -2568,7 +2570,7 @@ function InfiniteCanvasPage() {
                         prev.map((node) =>
                             node.id === nodeId && isConfigNode
                                 ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "生成失败" } }
-                                : node.id === nodeId && isEmptyImageNode
+                                : node.id === nodeId && writeBackToImageNode
                                   ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "生成失败" } }
                                   : node.id === rootId && !hasSuccess && !targetIds.includes(node.id)
                                     ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
