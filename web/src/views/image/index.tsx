@@ -364,7 +364,7 @@ export default function ImagePage() {
 
     const deleteSelectedLogs = () => {
         const imageKeys = logs.filter((log) => selectedLogIds.includes(log.id)).flatMap((log) => log.images.map((image) => image.storageKey).filter((key): key is string => Boolean(key)));
-        void Promise.all([deleteStoredImages(imageKeys), ...selectedLogIds.map((id) => logStore.removeItem(id))]).then(refreshLogs);
+        void Promise.all([deleteStoredImages(imageKeys), logStore.removeItems(selectedLogIds)]).then(refreshLogs);
         if (previewLog && selectedLogIds.includes(previewLog.id)) {
             setPreviewLog(null);
             setResults([]);

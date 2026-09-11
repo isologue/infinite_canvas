@@ -80,10 +80,14 @@
         <a href="#image-generation">文生图</a>
         <a href="#image-edit">图生图 / 编辑图</a>
         <a href="#gemini-image">Gemini 原生图像</a>
-        <strong>视频</strong>
+        <strong>OPENAI 视频</strong>
         <a href="#video-create">创建视频任务</a>
         <a href="#video-status">查询视频任务</a>
         <a href="#video-content">下载视频内容</a>
+        <strong>MiniMax 视频</strong>
+        <a href="#minimax-video-create">创建视频任务</a>
+        <a href="#minimax-video-status">查询视频任务</a>
+        <a href="#minimax-video-content">下载视频内容</a>
         <strong>通用</strong>
         <a href="#errors">错误处理</a>
       </nav>
@@ -257,8 +261,8 @@ Content-Type: application/json</pre></div>
       </section>
 
       <section id="video-create">
-        <span class="tag">VIDEO</span>
-        <h2>OpenAI 兼容视频接口</h2>
+         <span class="tag">OPENAI VIDEO</span>
+         <h2>OPENAI 视频接口</h2>
         <h3><span>05</span>创建视频任务</h3>
         <p class="muted">视频生成是异步任务：先创建任务并保存返回的 <code class="inline">id</code>，再轮询任务状态。参考图使用 multipart 文件字段上传，当前最多建议传 7 张。</p>
         <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/videos</code></div></div>
@@ -330,6 +334,104 @@ Content-Type: application/json</pre></div>
         <p class="muted">当查询接口未直接返回视频 URL，但状态已完成时，可请求视频二进制内容。调用方应按流保存为 <code class="inline">.mp4</code>，并检查响应 Content-Type 不是 JSON 错误对象。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}/content</code></div></div>
         <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -L "{{base_url}}/v1/videos/video_01JQEXAMPLE/content" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -o output.mp4</pre></div>
+      </section>
+
+      <section id="minimax-video-create">
+        <span class="tag">MINIMAX VIDEO</span>
+        <h2>MiniMax 视频接口</h2>
+        <h3><span>08</span>创建视频任务</h3>
+        <p class="muted">MiniMax 视频生成是异步任务：先创建任务并保存返回的 <code class="inline">task_id</code>，再轮询任务状态。请求使用 <code class="inline">multipart/form-data</code>；参考图、参考视频和参考音频均使用可重复的文件字段上传。</p>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/videos</code></div></div>
+        <h4>请求参数</h4>
+        <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
+          <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>MiniMax 视频模型名。</td></tr>
+          <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>视频提示词。</td></tr>
+          <tr><td><code>seconds</code></td><td class="required">是</td><td>integer</td><td>视频时长（秒），当前项目按 1–15 秒发送，最终以模型限制为准。</td></tr>
+          <tr><td><code>workflow_id</code></td><td class="required">是</td><td>string</td><td>工作流：<code>text-to-video</code>、<code>fl2v</code>、<code>multi-reference</code>、<code>cf-fl2v</code> 或 <code>cf-multi-reference</code>。</td></tr>
+          <tr><td><code>size</code></td><td class="required">是</td><td>string</td><td>普通工作流使用像素尺寸，例如 <code>1376x768</code>；CF 工作流使用 <code>2K</code> 或 <code>4K</code>。</td></tr>
+          <tr><td><code>aspect_ratio</code></td><td class="optional">CF 必填</td><td>string</td><td>CF 工作流的画幅比例，例如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code>。</td></tr>
+          <tr><td><code>images</code></td><td class="optional">否</td><td>file</td><td>参考图片文件。需要多张时重复传入该字段。</td></tr>
+          <tr><td><code>reference_videos</code></td><td class="optional">否</td><td>file</td><td>参考视频文件。需要多个时重复传入该字段。</td></tr>
+          <tr><td><code>reference_audios</code></td><td class="optional">否</td><td>file</td><td>参考音频文件。需要多个时重复传入该字段。</td></tr>
+        </tbody></table></div>
+        <h4>工作流 ID 与参考素材</h4>
+        <div class="table"><table><thead><tr><th>工作流</th><th>参考素材</th><th>尺寸</th></tr></thead><tbody>
+          <tr><td><code>text-to-video</code></td><td>不支持参考素材，仅文生视频</td><td>最高支持 1080P</td></tr>
+          <tr><td><code>multi-reference</code></td><td>可选；提供时图片最多 9 张，视频和音频最多各 3 项</td><td>最高支持 1080P</td></tr>
+          <tr><td><code>fl2v</code></td><td>1-2 张图片；两张按顺序作为首帧、尾帧</td><td>最高支持 1080P</td></tr>
+          <tr><td><code>cf-multi-reference</code></td><td>可选；提供时图片最多 9 张，视频和音频最多各 3 项</td><td><code>size</code> 必须为 <code>2K</code> 或 <code>4K</code>；画幅比例由 <code>aspect_ratio</code> 控制</td></tr>
+          <tr><td><code>cf-fl2v</code></td><td>1-2 张图片；两张按顺序作为首帧、尾帧</td><td><code>size</code> 必须为 <code>2K</code> 或 <code>4K</code>；画幅比例由 <code>aspect_ratio</code> 控制</td></tr>
+        </tbody></table></div>
+        <h4>比例与尺寸</h4>
+        <div class="table"><table><thead><tr><th>比例</th><th>480P</th><th>768P</th><th>1080P</th></tr></thead><tbody>
+          <tr><td>16:9</td><td><code>864x480</code></td><td><code>1376x768</code></td><td><code>1920x1088</code></td></tr>
+          <tr><td>9:16</td><td><code>480x864</code></td><td><code>768x1376</code></td><td><code>1088x1920</code></td></tr>
+          <tr><td>1:1</td><td><code>640x640</code></td><td><code>1024x1024</code></td><td><code>1440x1440</code></td></tr>
+          <tr><td>2:3</td><td><code>544x800</code></td><td><code>832x1248</code></td><td><code>1184x1760</code></td></tr>
+          <tr><td>3:2</td><td><code>800x544</code></td><td><code>1248x832</code></td><td><code>1760x1184</code></td></tr>
+          <tr><td>3:4</td><td><code>576x736</code></td><td><code>896x1184</code></td><td><code>1248x1664</code></td></tr>
+          <tr><td>4:3</td><td><code>736x576</code></td><td><code>1184x896</code></td><td><code>1664x1248</code></td></tr>
+          <tr><td>21:9</td><td><code>992x416</code></td><td><code>1568x672</code></td><td><code>2208x960</code></td></tr>
+        </tbody></table></div>
+        <h4>文生视频请求</h4>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -F "model=minimax-video-model" \
+  -F "prompt=镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感" \
+  -F "seconds=10" \
+  -F "workflow_id=text-to-video" \
+  -F "size=1376x768"</pre></div>
+        <h4>多参考素材请求</h4>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;" \
+  -F "model=minimax-video-model" \
+  -F "prompt=让角色按照参考素材自然运动" \
+  -F "seconds=8" \
+  -F "workflow_id=multi-reference" \
+  -F "size=768x1376" \
+  -F "images=@character.png;type=image/png" \
+  -F "images=@style.jpg;type=image/jpeg" \
+  -F "reference_videos=@motion.mp4;type=video/mp4" \
+  -F "reference_audios=@voice.mp3;type=audio/mpeg"</pre></div>
+        <h4>创建响应</h4>
+        <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_01JQMINIMAX",
+  "status": "queued",
+  "progress": "0%"
+}</pre></div>
+      </section>
+
+      <section id="minimax-video-status">
+        <h3><span>09</span>查询视频任务</h3>
+        <p class="muted">建议每 5 秒轮询一次，直到任务进入成功或失败的终态。任务 ID 使用创建响应中的 <code class="inline">task_id</code>；部分服务也会兼容返回 <code class="inline">id</code>。</p>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}</code></div></div>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/videos/task_01JQMINIMAX" \
+  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <div class="code"><div class="code-head"><span>进行中响应</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_01JQMINIMAX",
+  "status": "processing",
+  "progress": "42%"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>成功响应（返回 URL）</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_01JQMINIMAX",
+  "status": "completed",
+  "video_url": "https://example.com/videos/task_01JQMINIMAX.mp4"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>失败响应</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_01JQMINIMAX",
+  "status": "failed",
+  "fail_reason": "参考素材格式不支持"
+}</pre></div>
+        <div class="pill-row"><span class="pill"><b>成功</b> completed / succeeded</span><span class="pill"><b>处理中</b> queued / running / processing</span><span class="pill"><b>失败</b> failed / cancelled / expired</span></div>
+      </section>
+
+      <section id="minimax-video-content">
+        <h3><span>10</span>下载视频内容</h3>
+        <p class="muted">当查询接口返回成功但没有视频 URL 时，可请求视频二进制内容。调用方应按流保存为 <code class="inline">.mp4</code>，并检查响应 Content-Type 不是 JSON 错误对象。</p>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}/content</code></div></div>
+        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -L "{{base_url}}/v1/videos/task_01JQMINIMAX/content" \
   -H "Authorization: Bearer &lt;API_KEY&gt;" \
   -o output.mp4</pre></div>
       </section>

@@ -6,7 +6,7 @@ import i18n from "@/i18n";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import { boolConfig, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceDurationOptions, seedancePixelLabel, seedanceRatioOptions, seedanceResolutionOptions } from "@/lib/seedance-video";
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { type AiConfig } from "@/stores/use-config-store";
+import { resolveModelRequestConfig, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
@@ -24,6 +24,16 @@ const sizeOptions = [
 
 const secondOptions = [6, 10, 12, 16, 20];
 const seedanceRatioLabelKeys: Record<string, string> = { "16:9": "landscape", "9:16": "portrait", "1:1": "square", "4:3": "standardLandscape", "3:4": "standardPortrait", "21:9": "cinematic", adaptive: "adaptive" };
+const miniMaxResolutionOptions = ["480", "768", "1080"];
+const miniMaxRatioOptions = ["16:9", "9:16", "1:1"];
+const miniMaxWorkflowOptions = [
+    { value: "auto", label: "自动" },
+    { value: "text-to-video", label: "文生视频" },
+    { value: "fl2v", label: "首尾帧" },
+    { value: "multi-reference", label: "多参考" },
+    { value: "cf-fl2v", label: "CF 首尾帧" },
+    { value: "cf-multi-reference", label: "CF 多参考" },
+];
 
 export const videoResolutionOptions = resolutionOptions.map((item) => ({ value: item.value, label: item.label }));
 export const videoSizeOptions = sizeOptions.map((item) => ({ value: item.value, get label() { return i18n.t(`settingsPanels.video.sizes.${item.labelKey}`); } }));
@@ -31,7 +41,7 @@ export const videoSecondOptions = secondOptions.map((value) => String(value));
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoWorkflowId" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -39,6 +49,10 @@ type VideoSettingsPanelProps = {
 
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
+    const requestConfig = resolveModelRequestConfig(config, config.model || config.videoModel);
+    if (requestConfig.apiFormat === "minimax") {
+        return <MiniMaxVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+    }
     if (isSeedanceVideoConfig(config)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
@@ -102,6 +116,60 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                         ))}
                         <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
+                </SettingGroup>
+            </div>
+        </ImageSettingsTheme>
+    );
+}
+
+function MiniMaxVideoSettingsPanel({ config, onConfigChange, theme, showTitle, className }: VideoSettingsPanelProps) {
+    const { t } = useTranslation();
+    const resolution = miniMaxResolutionOptions.includes(normalizeVideoResolutionValue(config.vquality)) ? normalizeVideoResolutionValue(config.vquality) : "768";
+    const ratio = normalizeMiniMaxRatio(config.size);
+    const seconds = String(Math.max(1, Math.min(15, Math.floor(Number(config.videoSeconds) || 6))));
+    const workflowId = config.videoWorkflowId || "auto";
+
+    return (
+        <ImageSettingsTheme theme={theme}>
+            <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
+                {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
+                <SettingGroup title="MiniMax 工作流" color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        {miniMaxWorkflowOptions.map((item) => (
+                            <OptionPill key={item.value} selected={workflowId === item.value} theme={theme} onClick={() => onConfigChange("videoWorkflowId", item.value)}>
+                                {item.label}
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title={t("settingsPanels.video.resolution")} color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {miniMaxResolutionOptions.map((value) => (
+                            <OptionPill key={value} selected={resolution === value} theme={theme} onClick={() => onConfigChange("vquality", value)}>
+                                {value}p
+                            </OptionPill>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {miniMaxRatioOptions.map((value) => (
+                            <button key={value} type="button" className="flex h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: ratio === value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", value)}>
+                                <SizePreview width={ratioPreview(value).width} height={ratioPreview(value).height} color={theme.node.text} />
+                                <span>{value}</span>
+                            </button>
+                        ))}
+                    </div>
+                </SettingGroup>
+                <SettingGroup title={t("settingsPanels.video.duration")} color={theme.node.muted}>
+                    <div className="grid grid-cols-4 gap-2.5">
+                        {[6, 10, 12, 15].map((value) => (
+                            <OptionPill key={value} selected={seconds === String(value)} theme={theme} onClick={() => onConfigChange("videoSeconds", String(value))}>
+                                {value}s
+                            </OptionPill>
+                        ))}
+                    </div>
+                    <NumberInput value={seconds} min={1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                 </SettingGroup>
             </div>
         </ImageSettingsTheme>
@@ -196,6 +264,16 @@ export function normalizeVideoResolutionValue(value: string) {
     if (value === "480p" || value === "low") return "480";
     if (value === "720p" || value === "auto" || value === "high" || value === "medium") return "720";
     return value.replace(/p$/i, "") || "720";
+}
+
+function normalizeMiniMaxRatio(value: string) {
+    if (miniMaxRatioOptions.includes(value)) return value;
+    const match = value.match(/^(\d+)x(\d+)$/);
+    if (!match) return "16:9";
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (width === height) return "1:1";
+    return width > height ? "16:9" : "9:16";
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

@@ -30,6 +30,7 @@ const defaultConfig = {
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
+    videoWorkflowId: "auto",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",

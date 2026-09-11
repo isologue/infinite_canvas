@@ -9,6 +9,7 @@ import { ModelSelectModal } from "./model-select-modal";
 const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
     { label: "Gemini", value: "gemini" },
+    { label: "MiniMax H3", value: "minimax" },
     { label: "火山方舟", value: "ark" },
 ];
 
@@ -59,7 +60,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
         const suffix = incompatible.length > 3 ? ` 等 ${incompatible.length} 个模型` : "";
         Modal.confirm({
             title: "模型与调用协议可能不匹配",
-            content: `当前模型列表包含 ${preview}${suffix}，可能不兼容 ${apiFormat === "gemini" ? "Gemini" : apiFormat === "ark" ? "火山方舟" : "OpenAI"} 协议，确定仍要修改吗？`,
+            content: `当前模型列表包含 ${preview}${suffix}，可能不兼容 ${apiFormat === "gemini" ? "Gemini" : apiFormat === "ark" ? "火山方舟" : apiFormat === "minimax" ? "MiniMax H3" : "OpenAI"} 协议，确定仍要修改吗？`,
             okText: "确定修改",
             cancelText: "取消",
             onOk: apply,

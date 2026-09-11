@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 
-export type ApiCallFormat = "openai" | "gemini" | "ark";
+export type ApiCallFormat = "openai" | "gemini" | "ark" | "minimax";
 export type ApiFormatMode = "auto" | "manual";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
@@ -42,6 +42,7 @@ export type AiConfig = {
     audioSpeed: string;
     audioInstructions: string;
     videoSeconds: string;
+    videoWorkflowId: string;
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
@@ -70,6 +71,7 @@ const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const MINIMAX_BASE_URL = "https://api.minimaxi.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -102,6 +104,7 @@ export const defaultConfig: AiConfig = {
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
+    videoWorkflowId: "auto",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
@@ -144,7 +147,7 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["seedance", "video", "sora", "veo", "kling", "wan", "hailuo"];
+const VIDEO_KEYWORDS = ["seedance", "video", "sora", "veo", "kling", "wan", "hailuo", "minimax_h3", "minimax-h3"];
 const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
 const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
@@ -281,11 +284,13 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
 
 const GEMINI_MODEL_NAME_PATTERN = /(^|[/:._-])gemini(?:$|[/:._-])/i;
 const OPENAI_MODEL_NAME_PATTERN = /(^|[/:._-])(?:openai|gpt|dall[-_]?e|dalle|grok|o[1-9])(?:$|[/:._-])/i;
+const MINIMAX_MODEL_NAME_PATTERN = /(^|[/:._-])minimax(?:$|[/:._-])/i;
 
 export function inferModelApiFormat(modelName: string): ApiCallFormat | undefined {
     const value = modelName.trim();
     if (!value) return undefined;
     if (GEMINI_MODEL_NAME_PATTERN.test(value)) return "gemini";
+    if (MINIMAX_MODEL_NAME_PATTERN.test(value)) return "minimax";
     if (OPENAI_MODEL_NAME_PATTERN.test(value)) return "openai";
     return undefined;
 }
@@ -294,7 +299,7 @@ export function inferChannelApiFormat(models: Array<string | ChannelModel> | und
     const formats = new Set<ApiCallFormat>();
     for (const item of models || []) {
         const format = inferModelApiFormat(typeof item === "string" ? item : item?.name || "");
-        if (format === "openai" || format === "gemini") formats.add(format);
+        if (format === "openai" || format === "gemini" || format === "minimax") formats.add(format);
     }
     return formats.size === 1 ? formats.values().next().value : undefined;
 }
@@ -387,6 +392,7 @@ function normalizeConfig(config: AiConfig) {
     const normalized = {
         ...config,
         channels,
+        videoWorkflowId: config.videoWorkflowId || defaultConfig.videoWorkflowId,
         models: modelOptionsFromChannels(channels),
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
@@ -429,11 +435,12 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "ark") return ARK_BASE_URL;
+    if (apiFormat === "minimax") return MINIMAX_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "ark" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "ark" || apiFormat === "minimax" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

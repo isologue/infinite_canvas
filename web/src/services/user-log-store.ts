@@ -30,6 +30,12 @@ export function createUserLogStore<T extends { id: string }>(kind: LogKind) {
             const logs = await readAll();
             await writeAll(logs.filter((item) => item.id !== id));
         },
+        async removeItems(ids: string[]) {
+            const removeIds = new Set(ids);
+            if (!removeIds.size) return;
+            const logs = await readAll();
+            await writeAll(logs.filter((item) => !removeIds.has(item.id)));
+        },
         async replaceAll(logs: T[]) {
             await writeAll(logs);
         },
