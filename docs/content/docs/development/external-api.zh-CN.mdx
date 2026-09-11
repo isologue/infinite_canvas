@@ -10,3 +10,234 @@ description: 供图片与视频外部调用方使用的接口文档
 文档面向直接调用 `https://image.moai.wiki` 的外部用户，包含模型读取、OpenAI 兼容文生图/编辑图、Gemini 原生图像、OpenAI 兼容视频任务、轮询与错误处理。
 
 > 此文档描述外部 API 网关，不是需要网页登录态的 Infinite Canvas 内部接口 `/api/ai-proxy`。
+
+## OpenAI 格式视频接口
+
+视频接口采用 OpenAI 风格的异步任务流程：使用 `POST /v1/videos` 创建任务，保存响应中的 `id`，然后使用 `GET /v1/videos/{id}` 轮询状态。任务完成后，如果响应没有直接给出视频地址，再请求 `GET /v1/videos/{id}/content` 下载二进制内容。
+
+### 1. 创建视频任务
+
+```text
+POST {BASE_URL}/v1/videos
+Authorization: Bearer <API_KEY>
+Content-Type: multipart/form-data
+```
+
+请求必须使用 `multipart/form-data`。手动调用时不要把 `Content-Type` 固定写成 `application/json`，由 HTTP 客户端自动生成 multipart boundary。
+
+| 字段 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `model` | string | 是 | 视频模型名称。 |
+| `prompt` | string | 是 | 视频生成提示词。 |
+| `seconds` | integer | 是 | 视频时长，当前客户端发送 `1` 到 `20` 秒，实际以上游模型限制为准。 |
+| `aspect_ratio` | string | 是 | 宽高比，例如 `16:9`、`4:3`、`1:1`、`9:16`、`21:9`。 |
+| `resolution_name` | string | 是 | 清晰度，例如 `480p`、`720p`、`1080p`，实际以上游模型能力为准。 |
+| `size` | string | 否 | 像素尺寸，例如 `1280x720`。填写比例时通常可省略，由服务端按比例推导。 |
+| `preset` | string | 否 | 预设档位，默认使用 `normal`。 |
+| `input_reference[]` | file | 否 | 参考图片，可重复传入，当前客户端最多发送 7 张。 |
+
+#### 文生视频
+
+```bash
+curl -X POST "${BASE_URL}/v1/videos" \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -F "model=your-video-model" \
+  -F "prompt=镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感" \
+  -F "seconds=10" \
+  -F "aspect_ratio=16:9" \
+  -F "size=1280x720" \
+  -F "resolution_name=720p" \
+  -F "preset=normal"
+```
+
+#### 参考图生视频
+
+```bash
+curl -X POST "${BASE_URL}/v1/videos" \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -F "model=your-video-model" \
+  -F "prompt=让图中的角色自然转身并向镜头微笑" \
+  -F "seconds=6" \
+  -F "aspect_ratio=9:16" \
+  -F "resolution_name=720p" \
+  -F "input_reference[]=@character.jpg;type=image/jpeg"
+```
+
+创建成功通常返回任务对象：
+
+```json
+{
+  "id": "video_01JQEXAMPLE",
+  "object": "video",
+  "status": "queued",
+  "model": "your-video-model",
+  "created_at": 1781837823
+}
+```
+
+客户端应保存 `id`，不要根据提示词或时间自行生成任务 ID。
+
+### 2. 轮询任务状态
+
+```text
+GET {BASE_URL}/v1/videos/{id}
+Authorization: Bearer <API_KEY>
+```
+
+建议每 2 到 5 秒请求一次，直到任务进入终态。服务端可能直接返回任务对象，也可能包装在 `data` 字段中，调用方应兼容两种形式。
+
+```bash
+curl "${BASE_URL}/v1/videos/video_01JQEXAMPLE" \
+  -H "Authorization: Bearer ${API_KEY}"
+```
+
+处理中：
+
+```json
+{
+  "id": "video_01JQEXAMPLE",
+  "status": "processing",
+  "progress": "42%"
+}
+```
+
+成功且直接返回 URL：
+
+```json
+{
+  "id": "video_01JQEXAMPLE",
+  "status": "completed",
+  "video_url": "https://example.com/videos/video_01JQEXAMPLE.mp4"
+}
+```
+
+失败：
+
+```json
+{
+  "id": "video_01JQEXAMPLE",
+  "status": "failed",
+  "error": { "message": "上游返回了具体失败原因" }
+}
+```
+
+客户端应兼容以下视频地址字段：`video_url`、`result_url`、`url`，以及嵌套在 `content.video_url` 或 `content.url` 的地址。部分服务会把结果放在 `data` 内。
+
+状态建议按下表处理：
+
+| 状态 | 含义 | 客户端动作 |
+| --- | --- | --- |
+| `queued`、`running`、`processing` | 任务进行中 | 延迟后继续轮询。 |
+| `completed`、`succeeded` | 任务成功 | 读取视频 URL；没有 URL 时下载 `/content`。 |
+| `failed`、`cancelled`、`expired` | 任务失败或取消 | 停止轮询并读取错误信息。 |
+
+### 3. 下载视频内容
+
+当任务状态已经是 `completed`，但查询响应没有视频 URL 时：
+
+```bash
+curl -L "${BASE_URL}/v1/videos/video_01JQEXAMPLE/content" \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -o output.mp4
+```
+
+成功响应应为视频二进制流，通常 `Content-Type: video/mp4`。下载客户端应检查响应头，避免把 JSON 错误对象误保存为 `.mp4` 文件。
+
+### 4. Python 示例
+
+```python
+import time
+import requests
+
+BASE_URL = "https://image.moai.wiki"
+API_KEY = "<API_KEY>"
+MODEL = "your-video-model"
+
+headers = {"Authorization": f"Bearer {API_KEY}"}
+files = {
+    # 可选：删除这一项即可进行文生视频
+    "input_reference[]": ("character.jpg", open("character.jpg", "rb"), "image/jpeg"),
+}
+data = {
+    "model": MODEL,
+    "prompt": "让图中的角色自然转身并向镜头微笑",
+    "seconds": "6",
+    "aspect_ratio": "9:16",
+    "resolution_name": "720p",
+    "preset": "normal",
+}
+
+created = requests.post(
+    f"{BASE_URL}/v1/videos",
+    headers=headers,
+    data=data,
+    files=files,
+    timeout=60,
+)
+created.raise_for_status()
+task = created.json()
+task_id = task.get("id") or task.get("data", {}).get("id")
+if not task_id:
+    raise RuntimeError("response does not contain task id")
+
+for _ in range(120):
+    response = requests.get(f"{BASE_URL}/v1/videos/{task_id}", headers=headers, timeout=60)
+    response.raise_for_status()
+    payload = response.json()
+    current = payload.get("data") if isinstance(payload.get("data"), dict) else payload
+    status = str(current.get("status", "")).lower()
+    video_url = current.get("video_url") or current.get("result_url") or current.get("url")
+    if video_url:
+        video = requests.get(video_url, timeout=300)
+        video.raise_for_status()
+        open("output.mp4", "wb").write(video.content)
+        break
+    if status in {"completed", "succeeded"}:
+        video = requests.get(
+            f"{BASE_URL}/v1/videos/{task_id}/content",
+            headers=headers,
+            timeout=300,
+        )
+        video.raise_for_status()
+        open("output.mp4", "wb").write(video.content)
+        break
+    if status in {"failed", "cancelled", "expired"}:
+        raise RuntimeError(current.get("error") or "video generation failed")
+    time.sleep(3)
+else:
+    raise TimeoutError("video generation timed out")
+```
+
+### 5. 错误处理
+
+失败时优先读取 `error.message`，也要兼容顶层 `message`、`msg` 或 `data.error`。建议同时记录 HTTP 状态码、任务 ID、模型名和响应 JSON。
+
+```json
+{
+  "error": {
+    "message": "参考图链接无效",
+    "type": "invalid_request_error",
+    "code": "invalid_image"
+  }
+}
+```
+
+- `400`：字段缺失、枚举值不支持、文件格式错误。
+- `401` / `403`：API Key 无效或没有模型权限。
+- `404`：Base URL、模型名或任务 ID 不存在；确认 Base URL 没有重复的 `/v1`。
+- `429`：限流或额度不足；对创建请求和轮询请求分别退避重试。
+- `5xx`：上游服务暂时不可用或任务失败；保留响应体后再决定是否重试。
+
+### 参数映射
+
+Infinite Canvas 的视频面板字段与 OpenAI 格式字段对应如下：
+
+| 画布/工作台字段 | OpenAI 格式字段 |
+| --- | --- |
+| 模型 | `model` |
+| 提示词 | `prompt` |
+| 时长 | `seconds` |
+| 比例或尺寸 | `aspect_ratio`，必要时同时传 `size` |
+| 清晰度 | `resolution_name` |
+| 参考图片 | `input_reference[]` |
+| 预设 | `preset=normal` |
