@@ -341,12 +341,18 @@ function resolveMiniMaxWorkflow(value: string, imageCount: number, videoCount: n
 }
 
 function normalizeMiniMaxSize(value: string, quality: string) {
+    if (/^\d+x\d+$/i.test(value || "")) return value;
     const ratio = normalizeVideoAspectRatio(value);
     const level = Number(String(quality).replace(/p$/i, "")) || 768;
     const sizes: Record<string, Record<string, string>> = {
         "16:9": { "480": "864x480", "720": "1376x768", "768": "1376x768", "1080": "1920x1088" },
         "9:16": { "480": "480x864", "720": "768x1376", "768": "768x1376", "1080": "1088x1920" },
         "1:1": { "480": "640x640", "720": "1024x1024", "768": "1024x1024", "1080": "1440x1440" },
+        "2:3": { "480": "544x800", "720": "832x1248", "768": "832x1248", "1080": "1184x1760" },
+        "3:2": { "480": "800x544", "720": "1248x832", "768": "1248x832", "1080": "1760x1184" },
+        "3:4": { "480": "576x736", "720": "896x1184", "768": "896x1184", "1080": "1248x1664" },
+        "4:3": { "480": "736x576", "720": "1184x896", "768": "1184x896", "1080": "1664x1248" },
+        "21:9": { "480": "992x416", "720": "1568x672", "768": "1568x672", "1080": "2208x960" },
     };
     return sizes[ratio]?.[String(level)] || sizes[ratio]?.["768"] || "1376x768";
 }

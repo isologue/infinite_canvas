@@ -25,7 +25,17 @@ const sizeOptions = [
 const secondOptions = [6, 10, 12, 16, 20];
 const seedanceRatioLabelKeys: Record<string, string> = { "16:9": "landscape", "9:16": "portrait", "1:1": "square", "4:3": "standardLandscape", "3:4": "standardPortrait", "21:9": "cinematic", adaptive: "adaptive" };
 const miniMaxResolutionOptions = ["480", "768", "1080"];
-const miniMaxRatioOptions = ["16:9", "9:16", "1:1"];
+const miniMaxRatioOptions = ["16:9", "9:16", "1:1", "2:3", "3:2", "3:4", "4:3", "21:9"];
+const miniMaxSizes: Record<string, Record<string, string>> = {
+    "16:9": { "480": "864x480", "768": "1376x768", "1080": "1920x1088" },
+    "9:16": { "480": "480x864", "768": "768x1376", "1080": "1088x1920" },
+    "1:1": { "480": "640x640", "768": "1024x1024", "1080": "1440x1440" },
+    "2:3": { "480": "544x800", "768": "832x1248", "1080": "1184x1760" },
+    "3:2": { "480": "800x544", "768": "1248x832", "1080": "1760x1184" },
+    "3:4": { "480": "576x736", "768": "896x1184", "1080": "1248x1664" },
+    "4:3": { "480": "736x576", "768": "1184x896", "1080": "1664x1248" },
+    "21:9": { "480": "992x416", "768": "1568x672", "1080": "2208x960" },
+};
 const miniMaxWorkflowOptions = [
     { value: "auto", label: "自动" },
     { value: "text-to-video", label: "文生视频" },
@@ -40,6 +50,7 @@ export const videoSizeOptions = sizeOptions.map((item) => ({ value: item.value, 
 export const videoSecondOptions = secondOptions.map((value) => String(value));
 
 type VideoSettingsPanelProps = {
+    model?: string;
     config: AiConfig;
     onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoWorkflowId" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
     theme: CanvasTheme;
@@ -47,13 +58,13 @@ type VideoSettingsPanelProps = {
     className?: string;
 };
 
-export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
+export function VideoSettingsPanel({ model, config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5" }: VideoSettingsPanelProps) {
     const { t } = useTranslation();
-    const requestConfig = resolveModelRequestConfig(config, config.model || config.videoModel);
+    const requestConfig = resolveModelRequestConfig(config, model || config.model || config.videoModel);
     if (requestConfig.apiFormat === "minimax") {
         return <MiniMaxVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
-    if (isSeedanceVideoConfig(config)) {
+    if (isSeedanceVideoConfig(requestConfig)) {
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
@@ -126,8 +137,14 @@ function MiniMaxVideoSettingsPanel({ config, onConfigChange, theme, showTitle, c
     const { t } = useTranslation();
     const resolution = miniMaxResolutionOptions.includes(normalizeVideoResolutionValue(config.vquality)) ? normalizeVideoResolutionValue(config.vquality) : "768";
     const ratio = normalizeMiniMaxRatio(config.size);
+    const customSize = /^\d+x\d+$/i.test(config.size || "");
+    const dimensions = readSizeDimensions(customSize ? config.size : miniMaxSizeFor(ratio, resolution));
     const seconds = String(Math.max(1, Math.min(15, Math.floor(Number(config.videoSeconds) || 6))));
     const workflowId = config.videoWorkflowId || "auto";
+    const updateDimension = (key: "width" | "height", value: number | null) => {
+        const next = Math.max(1, Math.floor(value || dimensions[key] || 1));
+        onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
+    };
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -142,21 +159,39 @@ function MiniMaxVideoSettingsPanel({ config, onConfigChange, theme, showTitle, c
                         ))}
                     </div>
                 </SettingGroup>
-                <SettingGroup title={t("settingsPanels.video.resolution")} color={theme.node.muted}>
+                <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {miniMaxResolutionOptions.map((value) => (
                             <OptionPill key={value} selected={resolution === value} theme={theme} onClick={() => onConfigChange("vquality", value)}>
-                                {value}p
+                                {value}P
                             </OptionPill>
                         ))}
                     </div>
                 </SettingGroup>
+                <SettingGroup title={t("settingsPanels.video.size")} color={theme.node.muted}>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        <OptionPill selected={!customSize} theme={theme} onClick={() => onConfigChange("size", ratio)}>
+                            自动
+                        </OptionPill>
+                        <OptionPill selected={customSize} theme={theme} onClick={() => onConfigChange("size", miniMaxSizeFor(ratio, resolution))}>
+                            自定义
+                        </OptionPill>
+                    </div>
+                    {customSize ? (
+                        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+                            <DimensionInput prefix="W" value={dimensions.width} disabled={false} theme={theme} onChange={(value) => updateDimension("width", value)} />
+                            <span style={{ color: theme.node.muted }}>×</span>
+                            <DimensionInput prefix="H" value={dimensions.height} disabled={false} theme={theme} onChange={(value) => updateDimension("height", value)} />
+                        </div>
+                    ) : null}
+                </SettingGroup>
                 <SettingGroup title={t("settingsPanels.video.ratio")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {miniMaxRatioOptions.map((value) => (
-                            <button key={value} type="button" className="flex h-[68px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: ratio === value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", value)}>
+                            <button key={value} type="button" className="flex h-[78px] cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border bg-transparent px-1 text-sm transition hover:opacity-80" style={{ borderColor: !customSize && ratio === value ? theme.node.text : theme.node.stroke, color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()} onClick={() => onConfigChange("size", value)}>
                                 <SizePreview width={ratioPreview(value).width} height={ratioPreview(value).height} color={theme.node.text} />
                                 <span>{value}</span>
+                                <span className="text-[10px] leading-none opacity-55">{miniMaxSizeFor(value, resolution)}</span>
                             </button>
                         ))}
                     </div>
@@ -272,8 +307,17 @@ function normalizeMiniMaxRatio(value: string) {
     if (!match) return "16:9";
     const width = Number(match[1]);
     const height = Number(match[2]);
-    if (width === height) return "1:1";
-    return width > height ? "16:9" : "9:16";
+    if (!width || !height) return "16:9";
+    const currentRatio = width / height;
+    return miniMaxRatioOptions.reduce((best, item) => {
+        const [ratioWidth, ratioHeight] = item.split(":").map(Number);
+        const [bestWidth, bestHeight] = best.split(":").map(Number);
+        return Math.abs(ratioWidth / ratioHeight - currentRatio) < Math.abs(bestWidth / bestHeight - currentRatio) ? item : best;
+    }, miniMaxRatioOptions[0]);
+}
+
+function miniMaxSizeFor(ratio: string, resolution: string) {
+    return miniMaxSizes[ratio]?.[resolution] || miniMaxSizes[ratio]?.["768"] || miniMaxSizes["16:9"]["768"];
 }
 
 function OptionPill({ selected, disabled = false, theme, onClick, children }: { selected: boolean; disabled?: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
@@ -332,6 +376,8 @@ function SizePreview({ width, height, color }: { width: number; height: number; 
 function ratioPreview(ratio: string) {
     if (ratio === "9:16") return { width: 9, height: 16 };
     if (ratio === "1:1") return { width: 1, height: 1 };
+    if (ratio === "2:3") return { width: 2, height: 3 };
+    if (ratio === "3:2") return { width: 3, height: 2 };
     if (ratio === "4:3") return { width: 4, height: 3 };
     if (ratio === "3:4") return { width: 3, height: 4 };
     if (ratio === "21:9") return { width: 21, height: 9 };

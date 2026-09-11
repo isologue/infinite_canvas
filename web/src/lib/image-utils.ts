@@ -102,5 +102,26 @@ export function dataUrlToFile(image: ReferenceImage) {
     for (let index = 0; index < binary.length; index += 1) {
         bytes[index] = binary.charCodeAt(index);
     }
-    return new File([bytes], image.name || "reference.png", { type: resolveImageMimeType(bytes, declaredMimeType) });
+    const mimeType = resolveImageMimeType(bytes, declaredMimeType);
+    return new File([bytes], imageFileName(image.name, mimeType), { type: mimeType });
+}
+
+const imageExtensions: Record<string, string> = {
+    "image/avif": "avif",
+    "image/bmp": "bmp",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/webp": "webp",
+};
+
+function imageFileName(name: string, mimeType: string) {
+    const value = name.trim() || "reference";
+    const extension = imageExtensions[mimeType];
+    if (!extension) return value;
+
+    const matched = value.match(/\.(avif|bmp|gif|jpe?g|png|webp)$/i);
+    if (!matched) return `${value}.${extension}`;
+    const currentExtension = matched[1].toLowerCase().replace("jpeg", "jpg");
+    return currentExtension === extension ? value : value.slice(0, -matched[0].length) + `.${extension}`;
 }
