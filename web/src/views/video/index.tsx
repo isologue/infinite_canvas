@@ -19,7 +19,7 @@ import { buildAiErrorResponseResult } from "@/services/ai-call-log";
 import { createUserLogStore } from "@/services/user-log-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { modelOptionLabel, resolveModelRequestConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
@@ -975,17 +975,24 @@ function buildLog({ prompt, model, config, references, videoReferences, audioRef
 }
 
 function buildVideoConfig(config: AiConfig, model: string): AiConfig {
+    const requestConfig = resolveModelRequestConfig({ ...config, model }, model);
+    const minimax = requestConfig.apiFormat === "minimax";
     const seedance = isSeedanceVideoConfig({ ...config, model });
     return {
         ...config,
         model,
         videoModel: model,
-        size: seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
+        size: minimax ? normalizeMiniMaxVideoSize(config.size) : seedance ? normalizeSeedanceRatio(config.size) : normalizeVideoSize(config.size),
         videoSeconds: normalizeVideoSeconds(config.videoSeconds),
         vquality: normalizeResolution(config.vquality),
         videoGenerateAudio: String(boolConfig(config.videoGenerateAudio, true)),
         videoWatermark: String(boolConfig(config.videoWatermark, false)),
     };
+}
+
+function normalizeMiniMaxVideoSize(value: string) {
+    if (/^\d+:\d+$/.test(value || "") || /^\d+x\d+$/i.test(value || "")) return value;
+    return normalizeVideoSize(value);
 }
 
 function normalizeVideoSeconds(value: string) {
