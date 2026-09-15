@@ -1,7 +1,7 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Download, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Download, Eraser, Grid2x2, Group, Hand, Image as ImageIcon, Images, Info, Moon, MousePointer2, Music2, Palette, Puzzle, Redo2, Settings2, Square, Sun, Trash2, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
@@ -14,6 +14,7 @@ export function CanvasToolbar({
     canvasTool,
     groupingActive,
     batchDownloadMode,
+    batchReplaceMode,
     canUndo,
     canRedo,
     backgroundMode,
@@ -25,6 +26,7 @@ export function CanvasToolbar({
     onAddConfig,
     onAddGroup,
     onBatchDownload,
+    onBatchReplace,
     onAddExtensionNode,
     onUndo,
     onRedo,
@@ -39,6 +41,7 @@ export function CanvasToolbar({
     canvasTool: "select" | "pan";
     groupingActive: boolean;
     batchDownloadMode: boolean;
+    batchReplaceMode: boolean;
     canUndo: boolean;
     canRedo: boolean;
     backgroundMode: CanvasBackgroundMode;
@@ -50,6 +53,7 @@ export function CanvasToolbar({
     onAddConfig: () => void;
     onAddGroup: () => void;
     onBatchDownload: () => void;
+    onBatchReplace: () => void;
     onAddExtensionNode: (type: string) => void;
     onUndo: () => void;
     onRedo: () => void;
@@ -102,6 +106,9 @@ export function CanvasToolbar({
                 </ToolbarButton>
                 <ToolbarButton id="tool-batch-download" label={batchDownloadMode ? (selectedCount ? `下载已选（${selectedCount}）` : "退出批量下载") : "批量下载"} active={batchDownloadMode} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onBatchDownload}>
                     <Download className="size-4.5" />
+                </ToolbarButton>
+                <ToolbarButton id="tool-batch-replace" label={batchReplaceMode ? (selectedCount ? `选择参考图（${selectedCount}）` : "退出批量替换") : "批量替换参考图"} active={batchReplaceMode} hovered={hovered} activeStyle={activeStyle} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onBatchReplace}>
+                    <Images className="size-4.5" />
                 </ToolbarButton>
                 <ToolbarButton id="tool-undo" label={t("canvas.undo")} disabled={!canUndo} hovered={hovered} hoverStyle={hoverStyle} wrapRef={wrapRef} onTipX={setTipX} onHover={setHovered} onClick={onUndo}>
                     <Undo2 className="size-4.5" />

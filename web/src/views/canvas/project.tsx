@@ -115,7 +115,7 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     showImageInfo: boolean;
 };
 
-type CanvasSelectionMode = "group" | "batch-download" | null;
+type CanvasSelectionMode = "group" | "batch-download" | "batch-replace" | null;
 
 type CanvasGenerationRequest = {
     targetNodeId: string;
@@ -302,10 +302,12 @@ function InfiniteCanvasPage() {
     const [dropTargetGroupId, setDropTargetGroupId] = useState<string | null>(null);
     const [isGrouping, setIsGrouping] = useState(false);
     const [batchDownloadMode, setBatchDownloadMode] = useState(false);
+    const [batchReplaceMode, setBatchReplaceMode] = useState(false);
     const [batchDownloadOpen, setBatchDownloadOpen] = useState(false);
     const [batchDownloadName, setBatchDownloadName] = useState("");
     const [batchDownloading, setBatchDownloading] = useState(false);
-    const selectionMode: CanvasSelectionMode = isGrouping ? "group" : batchDownloadMode ? "batch-download" : null;
+    const selectionMode: CanvasSelectionMode = isGrouping ? "group" : batchDownloadMode ? "batch-download" : batchReplaceMode ? "batch-replace" : null;
+    const replaceableSelectedCount = useMemo(() => Array.from(selectedNodeIds).filter((id) => nodes.find((node) => node.id === id)?.type === CanvasNodeType.Image).length, [nodes, selectedNodeIds]);
 
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
@@ -839,6 +841,7 @@ function InfiniteCanvasPage() {
         isGroupingRef.current = false;
         setIsGrouping(false);
         setBatchDownloadMode(false);
+        setBatchReplaceMode(false);
         setSelectedNodeIds(new Set());
         setSelectionBox(null);
         setToolbarNodeId(null);
@@ -1217,10 +1220,36 @@ function InfiniteCanvasPage() {
         message.info("请单击或框选要下载的节点，然后点击确定");
     }, [batchDownloadMode, exitSelectionMode, message]);
 
+    const handleBatchReplace = useCallback(() => {
+        if (batchReplaceMode) {
+            exitSelectionMode();
+            return;
+        }
+        setIsGrouping(false);
+        isGroupingRef.current = false;
+        setBatchDownloadMode(false);
+        setBatchReplaceMode(true);
+        setCanvasTool("select");
+        setSelectedNodeIds(new Set());
+        setSelectedConnectionId(null);
+        setToolbarNodeId(null);
+        setDialogNodeId(null);
+        message.info("请选择需要替换参考图的图片节点");
+    }, [batchReplaceMode, exitSelectionMode, message]);
+
     const confirmSelectionMode = useCallback(() => {
         const ids = Array.from(selectedNodeIdsRef.current);
         if (selectionMode === "group") {
             confirmCreateGroupFromNodeIds(ids);
+            return;
+        }
+        if (selectionMode === "batch-replace") {
+            const count = nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id) && node.type === CanvasNodeType.Image).length;
+            if (!count) {
+                message.warning("请至少选择一个图片节点");
+                return;
+            }
+            setAssetPickerOpen(true);
             return;
         }
         if (selectionMode !== "batch-download") return;
@@ -3023,6 +3052,46 @@ function InfiniteCanvasPage() {
         [screenToCanvas, size.height, size.width],
     );
 
+    const handleBatchReplaceAssets = useCallback(
+        async (payloads: InsertAssetPayload[]) => {
+            const targets = Array.from(selectedNodeIdsRef.current).map((id) => nodesRef.current.find((node) => node.id === id)).filter((node): node is CanvasNodeData => node?.type === CanvasNodeType.Image);
+            const images = payloads.filter((payload): payload is Extract<InsertAssetPayload, { kind: "image" }> => payload.kind === "image").slice(0, targets.length);
+            if (images.length !== targets.length) {
+                message.warning(`请选择 ${targets.length} 张图片`);
+                return;
+            }
+            const replacements = await Promise.all(
+                targets.map(async (node, index) => {
+                    const image = images[index];
+                    const url = await resolveImageUrl(image.storageKey, image.dataUrl);
+                    const width = image.width || node.width;
+                    const height = image.height || node.height;
+                    const size = fitNodeSize(width, height, Math.max(node.width, node.height), Math.max(node.width, node.height));
+                    return { node, image, url, size };
+                }),
+            );
+            setNodes((prev) =>
+                prev.map((node) => {
+                    const replacement = replacements.find((item) => item.node.id === node.id);
+                    if (!replacement) return node;
+                    const { image, url, size } = replacement;
+                    return {
+                        ...node,
+                        title: image.title,
+                        position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 },
+                        width: size.width,
+                        height: size.height,
+                        metadata: { ...node.metadata, content: url, storageKey: image.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType, errorDetails: undefined },
+                    };
+                }),
+            );
+            setAssetPickerOpen(false);
+            exitSelectionMode();
+            message.success(`已替换 ${replacements.length} 张参考图`);
+        },
+        [exitSelectionMode, fitNodeSize, message],
+    );
+
     const handleAssetInsert = useCallback(
         (payload: InsertAssetPayload) => {
             if (payload.kind === "group") {
@@ -3323,7 +3392,7 @@ function InfiniteCanvasPage() {
                 />
 
                 {selectionMode ? (
-                    <CanvasSelectionToolbar mode={selectionMode} selectedCount={selectedNodeIds.size} onExit={exitSelectionMode} onConfirm={confirmSelectionMode} />
+                    <CanvasSelectionToolbar mode={selectionMode} selectedCount={selectionMode === "batch-replace" ? replaceableSelectedCount : selectedNodeIds.size} onExit={exitSelectionMode} onConfirm={confirmSelectionMode} />
                 ) : null}
 
                 {!selectionMode ? <CanvasToolbar
@@ -3331,6 +3400,7 @@ function InfiniteCanvasPage() {
                     canvasTool={canvasTool}
                     groupingActive={isGrouping}
                     batchDownloadMode={batchDownloadMode}
+                    batchReplaceMode={batchReplaceMode}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
                     backgroundMode={backgroundMode}
@@ -3342,6 +3412,7 @@ function InfiniteCanvasPage() {
                     onAddConfig={() => createNode(CanvasNodeType.Config)}
                     onAddGroup={toggleGrouping}
                     onBatchDownload={handleBatchDownload}
+                    onBatchReplace={handleBatchReplace}
                     onAddExtensionNode={(type) => createNode(type)}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
@@ -3445,7 +3516,7 @@ function InfiniteCanvasPage() {
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
                 </Modal>
 
-                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
+                <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onInsertMany={handleBatchReplaceAssets} multiSelectMax={selectionMode === "batch-replace" ? replaceableSelectedCount : undefined} onClose={() => setAssetPickerOpen(false)} />
             </section>
         </main>
     );
@@ -3454,6 +3525,18 @@ function InfiniteCanvasPage() {
 function CanvasSelectionToolbar({ mode, selectedCount, onExit, onConfirm }: { mode: Exclude<CanvasSelectionMode, null>; selectedCount: number; onExit: () => void; onConfirm: () => void }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
+    if (mode === "batch-replace") {
+        return (
+            <div className="pointer-events-none absolute bottom-5 left-[300px] right-4 z-50 flex justify-center">
+                <div className="pointer-events-auto flex h-14 max-w-full items-center gap-3 overflow-x-auto rounded-xl border px-3 shadow-lg backdrop-blur" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.toolbar.item }}>
+                    <span className="whitespace-nowrap px-1 text-sm font-medium">已选择 {selectedCount} 张可替换图片</span>
+                    <div className="h-6 w-px" style={{ background: theme.toolbar.border }} />
+                    <Button type="text" icon={<X className="size-4" />} onClick={onExit} style={{ color: theme.toolbar.item }}>退出选择</Button>
+                    <Button type="primary" icon={<Check className="size-4" />} disabled={!selectedCount} onClick={onConfirm}>上传替换 {selectedCount} 张参考图</Button>
+                </div>
+            </div>
+        );
+    }
     const label = mode === "group" ? "成组" : "批量下载";
 
     return (
@@ -3462,7 +3545,7 @@ function CanvasSelectionToolbar({ mode, selectedCount, onExit, onConfirm }: { mo
                 <span className="whitespace-nowrap px-1 text-sm font-medium">已选择 {selectedCount} 个节点</span>
                 <div className="h-6 w-px" style={{ background: theme.toolbar.border }} />
                 <Button type="text" icon={<X className="size-4" />} onClick={onExit} style={{ color: theme.toolbar.item }}>退出选择</Button>
-                <Button type="primary" icon={<Check className="size-4" />} disabled={!selectedCount} onClick={onConfirm}>确定{label}</Button>
+                <Button type="primary" icon={<Check className="size-4" />} disabled={!selectedCount} onClick={onConfirm}>{`确定${label}`}</Button>
             </div>
         </div>
     );
