@@ -485,7 +485,7 @@ function pickDefaultModel(config: AiConfig, capability: ModelCapability, current
 }
 
 function normalizeImageCount(value: string) {
-    return String(Math.max(1, Math.min(15, Math.floor(Math.abs(Number(value)) || 3))));
+    return String(Math.max(1, Math.min(500, Math.floor(Math.abs(Number(value)) || 3))));
 }
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {

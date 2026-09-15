@@ -1097,7 +1097,7 @@ async function requestOpenAiEdit(config: AiConfig, prompt: string, references: R
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const n = Math.max(1, Math.min(500, Math.floor(Math.abs(Number(config.count)) || 1)));
     return withGenerationLog({ ...config, model: config.model || config.imageModel, count: String(n) }, "image generation", async () => {
         const script = resolveModelScript(config, config.model || config.imageModel);
         if (script) {
@@ -1132,7 +1132,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+    const n = Math.max(1, Math.min(500, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     return withGenerationLog({ ...config, model: config.model || config.imageModel, count: String(n) }, "image edit", async () => {
         const script = resolveModelScript(config, config.model || config.imageModel);

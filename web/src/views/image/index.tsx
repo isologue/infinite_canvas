@@ -104,7 +104,7 @@ export default function ImagePage() {
 
     const model = effectiveConfig.imageModel || effectiveConfig.model;
     const canGenerate = Boolean(prompt.trim());
-    const generationCount = Math.max(1, Math.min(10, Number(config.count) || 1));
+    const generationCount = Math.max(1, Math.min(500, Number(config.count) || 1));
 
     useEffect(() => {
         if (!running || !startedAt) return;
@@ -655,7 +655,7 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
                 <ModelPicker config={config} value={model} onChange={(value) => updateConfig("imageModel", value)} capability="image" fullWidth onMissingConfig={() => openConfigDialog(false)} />
             </label>
             <div className="col-span-2">
-                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={10} />
+                <ImageSettingsPanel config={config} onConfigChange={(key, value) => updateConfig(key, value)} theme={theme} showTitle={false} className="space-y-4" maxCount={500} />
             </div>
         </>
     );

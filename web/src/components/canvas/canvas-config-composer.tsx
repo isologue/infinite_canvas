@@ -123,6 +123,7 @@ export function CanvasConfigComposer({ value, inputs, onChange, onClose }: Canva
 
     return (
         <div
+            data-canvas-node-panel
             data-canvas-no-zoom
             className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
             style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}

@@ -187,6 +187,7 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
+                data-canvas-node-toolbar
                 className="absolute z-[70] flex h-12 items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 style={{ left, top, transform: `translate(-50%, -100%) scale(${viewport.k})`, transformOrigin: "bottom center" }}
                 onMouseEnter={() => onKeep(node.id)}

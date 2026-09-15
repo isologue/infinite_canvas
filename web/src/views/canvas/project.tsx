@@ -475,6 +475,20 @@ function InfiniteCanvasPage() {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
+    useEffect(() => {
+        const handleOutsidePointerDown = (event: PointerEvent) => {
+            if (!toolbarNodeId && !dialogNodeId) return;
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("[data-canvas-node-panel],[data-canvas-node-toolbar]")) return;
+            if (target?.closest(".ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
+            setToolbarNodeId(null);
+            setDialogNodeId(null);
+        };
+
+        window.addEventListener("pointerdown", handleOutsidePointerDown, true);
+        return () => window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+    }, [dialogNodeId, toolbarNodeId]);
+
     useLayoutEffect(() => {
         nodesRef.current = nodes;
         connectionsRef.current = connections;
@@ -1251,6 +1265,8 @@ function InfiniteCanvasPage() {
         (event: ReactPointerEvent<HTMLDivElement>) => {
             setContextMenu(null);
             setNodeCreatePosition(null);
+            setToolbarNodeId(null);
+            setDialogNodeId(null);
             if (pendingConnectionCreateRef.current) cancelPendingConnectionCreate();
             if (event.button !== 0) return;
 
@@ -2766,21 +2782,20 @@ function InfiniteCanvasPage() {
     const runGroup = useCallback(
         async (group: CanvasNodeData) => {
             const children = nodesRef.current.filter((node) => node.metadata?.groupId === group.id && node.type !== CanvasNodeType.Group && !isHiddenBatchChild(node, nodesRef.current));
-            let count = 0;
-            for (const node of children) {
-                if (node.metadata?.status === NODE_STATUS_LOADING || getNodeDefinition(node.type)?.Panel) continue;
+            const tasks = children.flatMap((node) => {
+                if (node.metadata?.status === NODE_STATUS_LOADING || getNodeDefinition(node.type)?.Panel) return [];
                 const mode =
                     getNodeDefinition(node.type)?.useBuiltinPanel?.mode ??
                     (node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Audio ? "audio" : "image");
                 const prompt = (node.metadata?.composerContent || node.metadata?.prompt || node.metadata?.resolvedPrompt || buildNodeGenerationContext(node.id, nodesRef.current, connectionsRef.current, "").prompt).trim();
-                if (!prompt) continue;
-                count += 1;
-                await handleGenerateNode(node.id, mode, prompt);
-            }
+                return prompt ? [handleGenerateNode(node.id, mode, prompt)] : [];
+            });
+            const count = tasks.length;
             if (!count) {
                 message.warning("组内没有可运行的节点");
                 return;
             }
+            await Promise.all(tasks);
             message.success(`已批量运行 ${count} 个节点`);
         },
         [handleGenerateNode, message],
