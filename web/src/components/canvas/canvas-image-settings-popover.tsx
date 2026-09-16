@@ -112,6 +112,7 @@ function ImageSettingsPortal({
     return createPortal(
         <div
             ref={panelRef}
+            data-canvas-node-panel
             className="canvas-image-settings-popover"
             style={style}
             onPointerDown={(event) => event.stopPropagation()}
