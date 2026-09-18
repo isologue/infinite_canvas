@@ -18,6 +18,7 @@ export type UploadedImage = {
 const objectUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
+    if (typeof input === "string" && /^https?:\/\//i.test(input)) return importImageFromServer(input, options);
     const raw = await normalizeImageBlobMimeType(typeof input === "string" ? await (await fetch(input)).blob() : input);
     // 仅对用户上传的大图压缩（超过 10MB 等比缩放重编码）；生成结果不传 compress，保持原图。
     const blob = options?.compress ? await compressImageIfLarge(raw) : raw;
@@ -30,6 +31,28 @@ export async function uploadImage(input: string | Blob, options?: { compress?: b
     });
     objectUrls.set(storageKey, url);
     return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+}
+
+async function importImageFromServer(url: string, options?: { title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
+    const response = await fetch("/api/storage/images/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url, title: options?.title, source: options?.source, metadata: options?.metadata }),
+    });
+    const payload = (await response.json().catch(() => null)) as {
+        code?: number;
+        msg?: string;
+        data?: { storageKey?: string; bytes?: number; mimeType?: string; width?: number; height?: number };
+    } | null;
+    if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `图片服务端转存失败（HTTP ${response.status}）`);
+    return {
+        storageKey: payload.data.storageKey,
+        bytes: Number(payload.data.bytes || 0),
+        mimeType: payload.data.mimeType || "image/png",
+        width: Number(payload.data.width || 1024),
+        height: Number(payload.data.height || 1024),
+        url: storageFileUrl(payload.data.storageKey),
+    };
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {

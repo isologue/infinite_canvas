@@ -8,6 +8,8 @@ export type UploadedFile = { url: string; storageKey: string; bytes: number; mim
 const objectUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: { title?: string; source?: string }): Promise<UploadedFile> {
+    const mediaKind = prefix.startsWith("video") ? "video" : prefix.startsWith("audio") ? "audio" : "";
+    if (typeof input === "string" && /^https?:\/\//i.test(input) && mediaKind) return importMediaFromServer(input, mediaKind, options);
     const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
     const storageKey = `${prefix}:${nanoid()}`;
     await uploadFile(storageKey, blob, options);
@@ -15,6 +17,22 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file", opt
     objectUrls.set(storageKey, url);
     const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
     return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+}
+
+async function importMediaFromServer(url: string, kind: "video" | "audio", options?: { title?: string; source?: string }): Promise<UploadedFile> {
+    const response = await fetch(`/api/storage/${kind}s/import`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url, title: options?.title, source: options?.source }),
+    });
+    const payload = (await response.json().catch(() => null)) as { code?: number; msg?: string; data?: { storageKey?: string; bytes?: number; mimeType?: string } } | null;
+    if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `${kind === "video" ? "视频" : "音频"}服务端转存失败（HTTP ${response.status}）`);
+    return {
+        storageKey: payload.data.storageKey,
+        bytes: Number(payload.data.bytes || 0),
+        mimeType: payload.data.mimeType || (kind === "video" ? "video/mp4" : "audio/mpeg"),
+        url: storageFileUrl(payload.data.storageKey),
+    };
 }
 
 export async function resolveMediaUrl(storageKey?: string, fallback = "") {

@@ -6,20 +6,20 @@ import { readSessionUser } from "@/lib/server/auth";
 import { downloadRemoteMedia, parseRemoteMediaUrl, RemoteMediaDownloadError } from "@/lib/server/remote-media-download";
 import { saveUserFileResource } from "@/lib/server/resource-db";
 
-type VideoImportPayload = { url?: unknown; title?: unknown; source?: unknown };
+type AudioImportPayload = { url?: unknown; title?: unknown; source?: unknown };
 
 export async function POST(request: NextRequest) {
     const user = await readSessionUser();
     if (!user) return Response.json({ code: 401, msg: "请先登录" }, { status: 401 });
 
     try {
-        const body = (await request.json()) as VideoImportPayload;
+        const body = (await request.json()) as AudioImportPayload;
         const url = parseRemoteMediaUrl(body.url);
-        if (!url) return Response.json({ code: 400, msg: "视频 URL 格式错误" }, { status: 400 });
-        const { content, contentType, finalUrl } = await downloadRemoteMedia(url, "video");
-        const mimeType = resolveVideoMimeType(contentType, finalUrl);
-        if (!mimeType) throw new MediaTypeError("上游响应不是支持的视频文件", 422);
-        const storageKey = `video:${randomUUID()}`;
+        if (!url) return Response.json({ code: 400, msg: "音频 URL 格式错误" }, { status: 400 });
+        const { content, contentType, finalUrl } = await downloadRemoteMedia(url, "audio");
+        const mimeType = resolveAudioMimeType(contentType, finalUrl);
+        if (!mimeType) throw new MediaTypeError("上游响应不是支持的音频文件", 422);
+        const storageKey = `audio:${randomUUID()}`;
         const title = typeof body.title === "string" ? body.title.trim().slice(0, 200) : "";
         const source = typeof body.source === "string" ? body.source.trim().slice(0, 64) || "generated" : "generated";
         await saveUserFileResource(user.id, {
@@ -34,18 +34,19 @@ export async function POST(request: NextRequest) {
         return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType } });
     } catch (error) {
         const status = error instanceof RemoteMediaDownloadError ? error.status : error instanceof MediaTypeError ? error.status : 502;
-        return Response.json({ code: status, msg: error instanceof Error ? error.message : "视频服务端转存失败" }, { status });
+        return Response.json({ code: status, msg: error instanceof Error ? error.message : "音频服务端转存失败" }, { status });
     }
 }
 
-function resolveVideoMimeType(contentType: string, url: URL) {
-    if (contentType.startsWith("video/")) return contentType;
+function resolveAudioMimeType(contentType: string, url: URL) {
+    if (contentType.startsWith("audio/")) return contentType;
     const extension = url.pathname.split(".").pop()?.toLowerCase();
-    if (extension === "mp4" || extension === "m4v") return "video/mp4";
-    if (extension === "webm") return "video/webm";
-    if (extension === "mov") return "video/quicktime";
-    if (extension === "avi") return "video/x-msvideo";
-    if (extension === "mpeg" || extension === "mpg") return "video/mpeg";
+    if (extension === "mp3") return "audio/mpeg";
+    if (extension === "wav") return "audio/wav";
+    if (extension === "ogg" || extension === "opus") return "audio/ogg";
+    if (extension === "m4a") return "audio/mp4";
+    if (extension === "aac") return "audio/aac";
+    if (extension === "flac") return "audio/flac";
     return "";
 }
 

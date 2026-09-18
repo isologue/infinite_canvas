@@ -19,7 +19,7 @@ function aiHeaders(config: AiConfig) {
     };
 }
 
-export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
+export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob | string> {
     const startedAt = Date.now();
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
@@ -38,7 +38,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
                 params: { voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: normalizeAudioSpeedValue(config.audioSpeed), instructions: config.audioInstructions.trim() },
                 signal: options?.signal,
             });
-            return await audioPluginBlob(result, format);
+            return await audioPluginResult(result, format);
         } catch (error) {
             throw new Error(readAxiosError(error, "音频生成失败"));
         }
@@ -59,7 +59,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             },
             { headers: aiHeaders(requestConfig), responseType: "blob", signal: options?.signal },
         );
-        await assertAudioBlob(response.data);
+        const result = await audioResponseResult(response.data, format);
         void reportAiCall({
             kind: "audio",
             model: modelOptionName(selectedModel),
@@ -67,9 +67,9 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
             durationSeconds: generationDurationSeconds(startedAt),
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: Number(normalizeAudioSpeedValue(config.audioSpeed)), promptLength: prompt.length },
-            responseResult: { bytes: response.data.size, mimeType: response.data.type },
+            responseResult: typeof result === "string" ? (/^https?:\/\//i.test(result) ? { url: result } : { data: "base64" }) : { bytes: result.size, mimeType: result.type },
         });
-        return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
+        return result;
     } catch (error) {
         const messageText = readAxiosError(error, "audio generation failed");
         void reportAiCall({
@@ -85,21 +85,19 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     }
 }
 
-async function audioPluginBlob(result: unknown, format: string): Promise<Blob> {
-    if (result instanceof Blob) return result.type.startsWith("audio/") ? result : new Blob([result], { type: audioMimeType(format) });
-    let source = "";
-    if (typeof result === "string") source = result;
-    else if (result && typeof result === "object") {
-        const record = result as Record<string, unknown>;
-        source = typeof record.b64_json === "string" ? record.b64_json : typeof record.data === "string" ? record.data : typeof record.url === "string" ? record.url : "";
-    }
+async function audioPluginResult(result: unknown, format: string): Promise<Blob | string> {
+    if (result instanceof Blob) return audioResponseResult(result, format);
+    const source = audioResultSource(result);
     if (!source) throw new Error("模型调用脚本没有返回音频");
-    const url = source.startsWith("data:") || /^https?:/i.test(source) ? source : `data:${audioMimeType(format)};base64,${source}`;
+    if (/^https?:\/\//i.test(source)) return source;
+    const url = source.startsWith("data:") ? source : `data:${audioMimeType(format)};base64,${source}`;
     const blob = await (await fetch(url)).blob();
     return blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
 }
 
-export async function storeGeneratedAudio(blob: Blob, format = "mp3", title = ""): Promise<UploadedFile> {
+export async function storeGeneratedAudio(input: Blob | string, format = "mp3", title = ""): Promise<UploadedFile> {
+    if (typeof input === "string") return uploadMediaFile(input, "audio", { title, source: "generated" });
+    const blob = input;
     const audio = blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
     return uploadMediaFile(audio, "audio", { title, source: "generated" });
 }
@@ -111,16 +109,35 @@ function assertAudioConfig(config: AiConfig, model: string) {
     if (config.apiFormat === "gemini") throw new Error("Gemini 调用格式暂不支持音频生成，请使用 OpenAI 格式渠道");
 }
 
-async function assertAudioBlob(blob: Blob) {
-    if (!blob.type.includes("json")) return;
+async function audioResponseResult(blob: Blob, format: string): Promise<Blob | string> {
+    if (!blob.type.includes("json")) return blob.type.startsWith("audio/") ? blob : new Blob([blob], { type: audioMimeType(format) });
     let payload: { code?: number; msg?: string; error?: { message?: string } };
     try {
         payload = JSON.parse(await blob.text()) as { code?: number; msg?: string; error?: { message?: string } };
     } catch {
-        return;
+        throw new Error("音频接口返回了无效 JSON");
     }
     if (typeof payload.code === "number" && payload.code !== 0) throw new Error(payload.msg || "音频生成失败");
     if (payload.error?.message) throw new Error(payload.error.message);
+    return audioPluginResult(payload, format);
+}
+
+function audioResultSource(value: unknown): string {
+    if (typeof value === "string") return value;
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            const source = audioResultSource(item);
+            if (source) return source;
+        }
+        return "";
+    }
+    if (!value || typeof value !== "object") return "";
+    const record = value as Record<string, unknown>;
+    for (const key of ["url", "audio_url", "result_url", "b64_json", "audio", "result", "data"]) {
+        const source = audioResultSource(record[key]);
+        if (source) return source;
+    }
+    return "";
 }
 
 function readApiErrorMessage(value: unknown): string {

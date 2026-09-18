@@ -3,7 +3,6 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { storageFileUrl } from "@/services/storage-url";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
@@ -199,73 +198,8 @@ function videoPluginResult(result: unknown): VideoGenerationResult {
 
 export async function storeGeneratedVideo(result: VideoGenerationResult, title = ""): Promise<UploadedFile> {
     if (result.blob) return uploadMediaFile(result.blob, "video", { title, source: "generated" });
-    if (result.url) {
-        const imported = await importVideoFromServer(result.url, title);
-        if (imported) return imported;
-        let response: Response;
-        try {
-            response = await fetch(result.url);
-        } catch (error) {
-            const message = error instanceof Error ? error.message : "视频下载失败";
-            throw videoResponseError(message, { stage: "video_download", url: result.url, message });
-        }
-        if (!response.ok) {
-            const responseResult = await videoDownloadErrorResponseResult(result.url, response);
-            throw videoResponseError(readApiErrorMessage(responseResult.data) || `视频下载失败（${response.status}）`, responseResult);
-        }
-        const blob = await response.blob();
-        await assertVideoBlob(blob, result.url);
-        return uploadMediaFile(blob, "video", { title, source: "generated" });
-    }
+    if (result.url) return uploadMediaFile(result.url, "video", { title, source: "generated" });
     throw new Error("视频接口没有返回可播放的视频");
-}
-
-async function importVideoFromServer(url: string, title: string): Promise<UploadedFile | null> {
-    let response: Response;
-    try {
-        response = await fetch("/api/storage/videos/import", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ url, title }),
-        });
-    } catch {
-        return null;
-    }
-    const payload = await response.json().catch(() => ({})) as {
-        code?: number;
-        msg?: string;
-        data?: { reason?: string; storageKey?: string; bytes?: number; mimeType?: string };
-    };
-    if (response.ok && payload.code === 0 && payload.data?.storageKey) {
-        return {
-            storageKey: payload.data.storageKey,
-            bytes: Number(payload.data.bytes || 0),
-            mimeType: payload.data.mimeType || "video/mp4",
-            url: storageFileUrl(payload.data.storageKey),
-        };
-    }
-    if (response.status === 409 && (payload.data?.reason === "disabled" || payload.data?.reason === "host_not_allowed")) return null;
-    throw videoResponseError(payload.msg || `Server video transfer failed (${response.status})`, {
-        stage: "video_server_transfer",
-        url,
-        status: response.status,
-        ...(payload.data === undefined ? {} : { data: payload.data }),
-    });
-}
-
-async function videoDownloadErrorResponseResult(url: string, response: Response) {
-    const result: { stage: "video_download"; url: string; status: number; statusText?: string; data?: unknown } = {
-        stage: "video_download",
-        url,
-        status: response.status,
-        ...(response.statusText ? { statusText: response.statusText } : {}),
-    };
-    if (!response.headers.get("content-type")?.includes("json")) return result;
-    try {
-        return { ...result, data: await response.json() };
-    } catch {
-        return result;
-    }
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
