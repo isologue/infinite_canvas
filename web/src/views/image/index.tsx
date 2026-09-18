@@ -13,7 +13,7 @@ import { modelOptionLabel, modelOptionName, useConfigStore, useEffectiveConfig, 
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useUserStore } from "@/stores/use-user-store";
-import { buildAiErrorRequestParams, buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorRequestParams, buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { referenceImageBytes, referenceImageFileError, referenceImagesError } from "@/lib/reference-image-limits";
@@ -284,6 +284,7 @@ export default function ImagePage() {
                 model: modelOptionName(log.model),
                 status: "success",
                 reason: `image generation: ${modelOptionName(log.model)}`,
+                durationSeconds: generationDurationSeconds(taskCreatedAt, renderCompletedAt),
                 requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), size: log.config.size, aspectRatio: log.config.size, quality: log.config.quality, resolution: log.config.resolution, count: 1, ...buildReferenceAssetLogParams({ images: log.references.length }) },
                 responseResult: {
                     upstreamResponse: trace?.responseResult ?? item.responseResult ?? null,
@@ -293,7 +294,7 @@ export default function ImagePage() {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "图片保存失败";
             updateLogItem(logId, itemId, { status: "failed", error: `图片已生成，但本地处理失败：${errorMessage}`, resultReceivedAt, waitingDurationMs: Math.max(0, resultReceivedAt - taskCreatedAt), renderDurationMs: Math.max(0, Date.now() - resultReceivedAt) });
-            void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), ...buildReferenceAssetLogParams({ images: log.references.length }) }, responseResult: { upstreamResponse: trace?.responseResult ?? item.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, errorMessage });
+            void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), ...buildReferenceAssetLogParams({ images: log.references.length }) }, responseResult: { upstreamResponse: trace?.responseResult ?? item.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, errorMessage });
         }
     }, [updateLogItem]);
 
@@ -316,7 +317,7 @@ export default function ImagePage() {
                 message.success("图片已生成");
             } else if (state.status === "failed") {
                 updateLogItem(logId, itemId, { status: "failed", error: state.error, progress: 100, waitingDurationMs: Date.now() - (item.taskCreatedAt || log.createdAt) });
-                void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, requestParams: item.task.requestParams, responseResult: item.task.createResponse === undefined ? state.responseResult : { createResponse: item.task.createResponse, finalResponse: state.responseResult }, errorMessage: state.error });
+                void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(item.taskCreatedAt || log.createdAt), requestParams: item.task.requestParams, responseResult: item.task.createResponse === undefined ? state.responseResult : { createResponse: item.task.createResponse, finalResponse: state.responseResult }, errorMessage: state.error });
                 message.error(state.error);
             } else {
                 updateLogItem(logId, itemId, { status: "waiting", progress: state.progress, waitingDurationMs: Date.now() - (item.taskCreatedAt || log.createdAt) });
@@ -348,7 +349,7 @@ export default function ImagePage() {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             updateLogItem(logId, itemId, { status: "failed", error: errorMessage, waitingDurationMs: Date.now() - taskCreatedAt });
-            void reportAiCall({ kind: "image", model: modelOptionName(snapshot.config.model), status: "failed", reason: `image generation: ${modelOptionName(snapshot.config.model)}`, requestParams: buildAiErrorRequestParams(error) ?? { prompt: snapshot.text, model: modelOptionName(snapshot.config.model), ...buildReferenceAssetLogParams({ images: snapshot.references.length }) }, responseResult: buildAiErrorResponseResult(error), errorMessage });
+            void reportAiCall({ kind: "image", model: modelOptionName(snapshot.config.model), status: "failed", reason: `image generation: ${modelOptionName(snapshot.config.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), requestParams: buildAiErrorRequestParams(error) ?? { prompt: snapshot.text, model: modelOptionName(snapshot.config.model), ...buildReferenceAssetLogParams({ images: snapshot.references.length }) }, responseResult: buildAiErrorResponseResult(error), errorMessage });
         }
     }, [completeImageItem, pollGenerationItem, updateLogItem]);
 

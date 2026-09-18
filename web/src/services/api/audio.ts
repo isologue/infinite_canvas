@@ -2,7 +2,7 @@ import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { reportAiCall } from "@/services/ai-call-log";
+import { generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 
@@ -20,6 +20,7 @@ function aiHeaders(config: AiConfig) {
 }
 
 export async function requestAudioGeneration(config: AiConfig, prompt: string, options?: RequestOptions): Promise<Blob> {
+    const startedAt = Date.now();
     const requestConfig = resolveModelRequestConfig(config, config.model || config.audioModel);
     const model = requestConfig.model.trim();
     const format = normalizeAudioFormatValue(config.audioFormat);
@@ -64,6 +65,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             model: modelOptionName(selectedModel),
             status: "success",
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
+            durationSeconds: generationDurationSeconds(startedAt),
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: Number(normalizeAudioSpeedValue(config.audioSpeed)), promptLength: prompt.length },
             responseResult: { bytes: response.data.size, mimeType: response.data.type },
         });
@@ -75,6 +77,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             model: modelOptionName(selectedModel),
             status: "failed",
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
+            durationSeconds: generationDurationSeconds(startedAt),
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, promptLength: prompt.length },
             errorMessage: messageText,
         });

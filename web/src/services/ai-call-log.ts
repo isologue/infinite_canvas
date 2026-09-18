@@ -24,6 +24,7 @@ export type ReportAiCallInput = {
     model: string;
     status: AiCallLogStatus;
     reason?: string;
+    durationSeconds?: number;
     requestParams?: unknown;
     responseResult?: unknown;
     errorMessage?: string;
@@ -93,6 +94,10 @@ export function buildAiErrorRequestParams(error: unknown): unknown {
         current = record.cause;
     }
     return undefined;
+}
+
+export function generationDurationSeconds(startedAt: number, endedAt = Date.now()) {
+    return Math.round((Math.max(0, endedAt - startedAt) / 1000) * 1000) / 1000;
 }
 
 // 生成结束后上报一条 AI 调用日志。无论收费与否都调用；失败静默，绝不影响生成主流程。

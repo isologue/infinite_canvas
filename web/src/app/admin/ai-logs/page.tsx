@@ -21,6 +21,7 @@ type AiCallLog = {
     requestParams: unknown | null;
     responseResult: unknown | null;
     errorMessage: string | null;
+    durationSeconds: number | null;
     createdAt: string;
     updatedAt: string;
 };
@@ -94,6 +95,13 @@ export default function AdminAiLogsPage() {
             key: "status",
             width: 100,
             render: (value: AiCallStatus) => <Tag color={STATUS_META[value].color}>{STATUS_META[value].label}</Tag>,
+        },
+        {
+            title: "总耗时",
+            dataIndex: "durationSeconds",
+            key: "durationSeconds",
+            width: 110,
+            render: (value: number | null) => displayDurationSeconds(value),
         },
         {
             title: "操作",
@@ -185,6 +193,7 @@ export default function AdminAiLogsPage() {
                             <DetailRow label="类型" value={KIND_META[detail.kind].label} />
                             <DetailRow label="模型" value={detail.model || "—"} />
                             <DetailRow label="状态" value={STATUS_META[detail.status].label} />
+                            <DetailRow label="生成总耗时" value={displayDurationSeconds(detail.durationSeconds)} />
                             <DetailRow label="原因" value={detail.reason || "—"} />
                             {detail.errorMessage ? <DetailRow label="错误信息" value={detail.errorMessage} /> : null}
                             <MediaPreview userId={detail.userId} kind={detail.kind} result={detail.responseResult} />
@@ -215,6 +224,10 @@ function ImageRequestSettings({ requestParams }: { requestParams: unknown }) {
             <DetailRow label="质量" value={displayRequestParam(params.quality)} />
         </div>
     );
+}
+
+function displayDurationSeconds(value: number | null | undefined) {
+    return typeof value === "number" && Number.isFinite(value) ? `${value.toLocaleString("zh-CN", { maximumFractionDigits: 3 })} s` : "—";
 }
 
 function displayRequestParam(value: unknown) {

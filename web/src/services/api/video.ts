@@ -6,7 +6,7 @@ import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/fil
 import { storageFileUrl } from "@/services/storage-url";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
@@ -29,8 +29,9 @@ type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: strin
 type RequestOptions = { signal?: AbortSignal };
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "minimax" | "plugin"; model: string; logModel?: string; logParams?: unknown; logReported?: boolean };
+export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "minimax" | "plugin"; model: string; createdAt: number; logModel?: string; logParams?: unknown; logReported?: boolean };
 export type VideoGenerationTaskState = { status: "pending"; progress?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; responseResult?: unknown };
+type VideoGenerationTaskHandle = Pick<VideoGenerationTask, "id" | "provider" | "model">;
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -55,6 +56,7 @@ export async function settleVideoTaskCredits(task: VideoGenerationTask, status: 
             model: task.logModel || task.model,
             status,
             reason: `video generation: ${task.logModel || task.model}`,
+            durationSeconds: generationDurationSeconds(task.createdAt),
             requestParams: task.logParams,
             responseResult: extra?.result,
             errorMessage: status === "failed" ? extra?.errorMessage : undefined,
@@ -96,9 +98,11 @@ export async function requestVideoGeneration(
 }
 
 export async function createVideoGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], videoReferences: ReferenceVideo[] = [], audioReferences: ReferenceAudio[] = [], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const createdAt = Date.now();
     const selectedModel = (config.model || config.videoModel).trim();
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     const logExtras = {
+        createdAt,
         logModel: modelOptionName(selectedModel),
         logParams: {
             model: modelOptionName(selectedModel),
@@ -134,6 +138,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             model: logExtras.logModel,
             status: "failed",
             reason: `video generation: ${logExtras.logModel}`,
+            durationSeconds: generationDurationSeconds(createdAt),
             requestParams: logExtras.logParams,
             responseResult: buildAiErrorResponseResult(error),
             errorMessage: error instanceof Error ? error.message : String(error),
@@ -153,7 +158,7 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     return task.provider === "minimax" ? pollMiniMaxTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
 }
 
-async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
     if (!config.baseUrl.trim()) throw new Error("请先配置 Base URL");
     if (!config.apiKey.trim()) throw new Error("请先配置 API Key");
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
@@ -263,7 +268,7 @@ async function videoDownloadErrorResponseResult(url: string, response: Response)
     }
 }
 
-async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
     const body = new FormData();
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
@@ -283,7 +288,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
-async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
     const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length);
     const body = new FormData();
     body.append("model", modelOptionName(model));
@@ -379,7 +384,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     }
 }
 
-async function createSeedanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTask> {
+async function createSeedanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
     if (audioReferences.length && !references.length && !videoReferences.length) {
         throw new Error("Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");
     }

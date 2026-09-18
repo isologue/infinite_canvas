@@ -29,6 +29,7 @@ export async function POST(request: NextRequest) {
         model?: string;
         status?: string;
         reason?: string;
+        durationSeconds?: number;
         requestParams?: unknown;
         responseResult?: unknown;
         errorMessage?: string;
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
 
     const kind = KINDS.includes(body.kind as AiCallKind) ? (body.kind as AiCallKind) : "other";
     const status = STATUSES.includes(body.status as AiCallStatus) ? (body.status as AiCallStatus) : "success";
+    const durationSeconds = typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds >= 0 ? Math.round(body.durationSeconds * 1000) / 1000 : undefined;
 
     try {
         await recordAiCall({
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
             model: (body.model || "").toString().slice(0, 200),
             status,
             reason: (body.reason || "").toString().slice(0, 500),
+            durationSeconds,
             requestParams: clampJson(body.requestParams),
             responseResult: clampJson(body.responseResult),
             errorMessage: body.errorMessage ? body.errorMessage.toString().slice(0, 1000) : null,

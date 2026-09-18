@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
-import { buildAiErrorResponseResult, buildReferenceAssetLogParams, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -725,15 +725,16 @@ async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => P
     const model = modelOptionName(config.model);
     const logKind = aiLogKindFromReason(kind);
     const requestParams = buildImageRequestParams(config, extra);
+    const startedAt = Date.now();
     try {
         const result = await run();
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "success", reason: kind, requestParams });
+            void reportAiCall({ kind: logKind, model, status: "success", reason: kind, durationSeconds: generationDurationSeconds(startedAt), requestParams });
         }
         return result;
     } catch (error) {
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, requestParams, responseResult: buildAiErrorResponseResult(error), errorMessage: error instanceof Error ? error.message : String(error) });
+            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, durationSeconds: generationDurationSeconds(startedAt), requestParams, responseResult: buildAiErrorResponseResult(error), errorMessage: error instanceof Error ? error.message : String(error) });
         }
         throw error;
     }

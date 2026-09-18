@@ -38,6 +38,9 @@ description: 当前项目的 Postgres 持久化结构
 - `user_generation_logs`
   - 每个用户的生成记录
   - 当前 `kind` 支持：`image`、`video`
+- `ai_call_logs`
+  - 管理后台调用日志，保存实际请求参数、返回结果和成功/失败状态
+  - `duration_seconds` 记录从生成请求开始到最终成功或失败的总耗时，单位为秒
 - `user_files`
   - 每个用户关联的图片、视频、音频等二进制文件
   - 画布图片预览以 `preview:image:...` 派生键缓存，删除原图时同步删除
@@ -146,6 +149,27 @@ CREATE TABLE IF NOT EXISTS user_generation_logs (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, kind)
 );
+
+CREATE TABLE IF NOT EXISTS ai_call_logs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('image', 'video', 'audio', 'text', 'other')),
+  model TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('pending', 'success', 'failed')),
+  reason TEXT NOT NULL DEFAULT '',
+  request_params JSONB,
+  response_result JSONB,
+  error_message TEXT,
+  duration_seconds DOUBLE PRECISION,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS ai_call_logs_created_idx
+  ON ai_call_logs (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS ai_call_logs_user_idx
+  ON ai_call_logs (user_id);
 
 CREATE TABLE IF NOT EXISTS user_files (
   user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
