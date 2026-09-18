@@ -141,6 +141,10 @@ function normalizeBackground(background: string | undefined) {
     return background?.trim().toLowerCase() === "transparent" ? "transparent" : undefined;
 }
 
+function normalizeImageResponseFormat(value: AiConfig["imageResponseFormat"]) {
+    return value === "url" || value === "b64_json" ? value : undefined;
+}
+
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
 function resolveSize(quality: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
@@ -1106,6 +1110,7 @@ async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
+    const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const body = {
         model: config.model,
         prompt: withSystemPrompt(config, prompt),
@@ -1113,7 +1118,7 @@ async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number
         ...(quality ? { quality } : {}),
         ...(requestSize ? { size: requestSize } : {}),
         ...(background ? { background } : {}),
-        response_format: "b64_json",
+        ...(responseFormat ? { response_format: responseFormat } : {}),
         output_format: IMAGE_OUTPUT_FORMAT,
     };
     return startImagesWithAsyncFallback({
@@ -1137,6 +1142,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
+    const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const requestPrompt = withSystemPrompt(config, prompt);
 
     if (isGrokImageModel(config.model)) {
@@ -1151,7 +1157,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
                 form.set("model", config.model);
                 form.set("prompt", requestPrompt);
                 form.set("n", String(n));
-                form.set("response_format", "url");
+                if (responseFormat) form.set("response_format", responseFormat);
                 if (requestSize) form.set("size", requestSize);
                 if (asyncMode) form.set("async", "true");
                 files.forEach((file) => form.append("image[]", file, file.name));
@@ -1174,7 +1180,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
                 model: config.model,
                 prompt: requestPrompt,
                 n,
-                response_format: "url",
+                ...(responseFormat ? { response_format: responseFormat } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(asyncMode ? { async: true } : {}),
                 "image[]": files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })),
@@ -1189,7 +1195,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         model: config.model,
         prompt: requestPrompt,
         n,
-        response_format: "b64_json",
+        ...(responseFormat ? { response_format: responseFormat } : {}),
         output_format: IMAGE_OUTPUT_FORMAT,
         images: refs.map((image_url) => ({ image_url })),
         ...(maskDataUrl ? { mask: { image_url: maskDataUrl } } : {}),
@@ -1264,6 +1270,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                 const quality = normalizeQuality(activeConfig.quality);
                 const requestSize = resolveRequestSize(quality, activeConfig.size, activeConfig.resolution);
                 const background = normalizeBackground(activeConfig.background);
+                const responseFormat = normalizeImageResponseFormat(activeConfig.imageResponseFormat);
                 return startImagesWithAsyncFallback({
                     key: imageTaskKey(activeConfig, "/images/generations:ark-edit"),
                     config: activeConfig,
@@ -1271,7 +1278,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                         model: activeConfig.model,
                         prompt: withSystemPrompt(activeConfig, requestPrompt),
                         n: 1,
-                        response_format: "b64_json",
+                        ...(responseFormat ? { response_format: responseFormat } : {}),
                         output_format: IMAGE_OUTPUT_FORMAT,
                         image: refs,
                         ...(quality ? { quality } : {}),
@@ -1283,7 +1290,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                         model: activeConfig.model,
                         prompt: withSystemPrompt(activeConfig, requestPrompt),
                         n: 1,
-                        response_format: "b64_json",
+                        ...(responseFormat ? { response_format: responseFormat } : {}),
                         output_format: IMAGE_OUTPUT_FORMAT,
                         image: refs,
                         ...(quality ? { quality } : {}),
@@ -1373,12 +1380,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                     const quality = normalizeQuality(config.quality);
                     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
                     const background = normalizeBackground(config.background);
+                    const responseFormat = normalizeImageResponseFormat(activeConfig.imageResponseFormat);
                     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
                     const response = await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
                         model: activeConfig.model,
                         prompt: withSystemPrompt(activeConfig, requestPrompt),
                         n,
-                        response_format: "b64_json",
+                        ...(responseFormat ? { response_format: responseFormat } : {}),
                         output_format: IMAGE_OUTPUT_FORMAT,
                         image: refs,
                         ...(quality ? { quality } : {}),

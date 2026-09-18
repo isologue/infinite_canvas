@@ -2,7 +2,7 @@ import { Button, Drawer, Input, Modal, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { defaultBaseUrlForApiFormat, guessCapability, incompatibleModelNames, inferChannelApiFormat, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, incompatibleModelNames, inferChannelApiFormat, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageResponseFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -18,6 +18,12 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
     { label: "视频", value: "video" },
     { label: "文本", value: "text" },
     { label: "音频", value: "audio" },
+];
+
+const imageResponseFormatOptions: Array<{ label: string; value: ImageResponseFormat }> = [
+    { label: "不指定（不传）", value: "" },
+    { label: "URL", value: "url" },
+    { label: "Base64", value: "b64_json" },
 ];
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -113,6 +119,11 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">API Key</span>
                     <Input.Password value={draft.apiKey} onChange={(event) => patch({ apiKey: event.target.value })} placeholder="sk-..." />
+                </label>
+                <label className="block md:col-span-2">
+                    <span className="mb-1 block text-sm font-medium">图片返回格式</span>
+                    <Select className="w-full" value={draft.imageResponseFormat || ""} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
+                    <span className="mt-1 block text-xs text-stone-500">仅影响图片接口的 response_format；不指定时不发送该字段。</span>
                 </label>
             </div>
 

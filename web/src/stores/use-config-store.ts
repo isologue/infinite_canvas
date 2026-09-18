@@ -7,6 +7,7 @@ import i18n from "@/i18n";
 
 export type ApiCallFormat = "openai" | "gemini" | "ark" | "minimax";
 export type ApiFormatMode = "auto" | "manual";
+export type ImageResponseFormat = "" | "url" | "b64_json";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -23,6 +24,7 @@ export type ModelChannel = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     apiFormatMode: ApiFormatMode;
+    imageResponseFormat: ImageResponseFormat;
     models: ChannelModel[];
 };
 
@@ -31,6 +33,7 @@ export type AiConfig = {
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
+    imageResponseFormat: ImageResponseFormat;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -78,6 +81,7 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
+    imageResponseFormat: "",
     channels: [
         {
             id: "default",
@@ -86,6 +90,7 @@ export const defaultConfig: AiConfig = {
             apiKey: "",
             apiFormat: "openai",
             apiFormatMode: "auto",
+            imageResponseFormat: "",
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
@@ -311,6 +316,10 @@ export function incompatibleModelNames(models: ChannelModel[], apiFormat: ApiCal
     }).map((model) => model.name);
 }
 
+function normalizeImageResponseFormat(value: unknown): ImageResponseFormat {
+    return value === "url" || value === "b64_json" ? value : "";
+}
+
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
     const models = normalizeChannelModels(channel?.models);
     const hasMode = Boolean(channel && Object.prototype.hasOwnProperty.call(channel, "apiFormatMode"));
@@ -324,6 +333,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiKey: channel?.apiKey || "",
         apiFormat,
         apiFormatMode,
+        imageResponseFormat: normalizeImageResponseFormat(channel?.imageResponseFormat),
         models,
     };
 }
@@ -384,12 +394,13 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         baseUrl: channel.baseUrl,
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
+        imageResponseFormat: channel.imageResponseFormat,
     };
 }
 
 function normalizeConfig(config: AiConfig) {
     const channels = normalizeChannels(config);
-    const normalized = {
+    const normalized: AiConfig = {
         ...config,
         channels,
         videoWorkflowId: config.videoWorkflowId || defaultConfig.videoWorkflowId,
@@ -397,6 +408,7 @@ function normalizeConfig(config: AiConfig) {
         baseUrl: channels[0]?.baseUrl || config.baseUrl,
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
+        imageResponseFormat: normalizeImageResponseFormat(channels[0]?.imageResponseFormat),
     };
     return {
         ...normalized,
