@@ -2,6 +2,10 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: infinite-canvas-postgres
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_DB: infinite_canvas
       POSTGRES_USER: infinite_canvas
@@ -16,13 +20,15 @@ services:
     restart: unless-stopped
 
   app:
-    image: ghcr.io/basketikun/infinite-canvas:latest
-    container_name: infinite-canvas
+    image: milodk/infinite-canvas:latest
+    # build:
+    #   context: . 
+    #   dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      - "3003:3000"
     environment:
       DATABASE_URL: postgres://infinite_canvas:infinite_canvas@postgres:5432/infinite_canvas?sslmode=disable
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
