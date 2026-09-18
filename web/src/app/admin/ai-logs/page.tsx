@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { App, Button, Input, Modal, Select, Space, Table, Tag } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 
 import { AdminRequired } from "@/components/layout/admin-required";
 
@@ -177,7 +177,7 @@ export default function AdminAiLogsPage() {
                     />
                 </div>
 
-                <Modal title="调用详情" open={Boolean(detail)} footer={null} onCancel={() => setDetail(null)} width={720} destroyOnHidden>
+                <Modal title="调用详情" open={Boolean(detail)} footer={null} onCancel={() => setDetail(null)} width={900} destroyOnHidden>
                     {detail ? (
                         <div className="flex flex-col gap-3 text-sm">
                             <DetailRow label="时间" value={new Date(detail.createdAt).toLocaleString("zh-CN")} />
@@ -233,29 +233,32 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 }
 
 function DetailBlock({ label, value }: { label: string; value: unknown }) {
+    const [expanded, setExpanded] = useState(false);
     if (value === null || value === undefined) return null;
+    const text = JSON.stringify(value, null, 2) ?? String(value);
+    const canExpand = text.length > 4000;
+    const displayed = canExpand && !expanded ? `${text.slice(0, 4000)}\n...` : text;
     return (
         <div className="flex flex-col gap-1">
-            <div className="text-stone-500">{label}</div>
-            <pre className="max-h-64 overflow-auto rounded-lg bg-stone-100 p-3 text-xs dark:bg-stone-800">{JSON.stringify(value, null, 2)}</pre>
+            <div className="flex items-center justify-between gap-3">
+                <div className="text-stone-500">{label}</div>
+                {canExpand ? (
+                    <Button type="text" size="small" icon={expanded ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />} onClick={() => setExpanded((current) => !current)}>
+                        {expanded ? "收起" : "展开全部"}
+                    </Button>
+                ) : null}
+            </div>
+            <pre className={`${expanded ? "max-h-[65vh]" : "max-h-64"} overflow-auto whitespace-pre-wrap break-all rounded-lg bg-stone-100 p-3 text-xs dark:bg-stone-800`}>{displayed}</pre>
         </div>
     );
 }
 
-// 从日志的 responseResult 里抽出媒体的 storageKey。图片是 { items: [{ storageKey }] }，视频是 { storageKey }。
-function extractStorageKeys(result: unknown): string[] {
-    if (!result || typeof result !== "object") return [];
-    const obj = result as Record<string, unknown>;
-    const keys: string[] = [];
-    if (typeof obj.storageKey === "string") keys.push(obj.storageKey);
-    if (Array.isArray(obj.items)) {
-        for (const item of obj.items) {
-            if (item && typeof item === "object" && typeof (item as Record<string, unknown>).storageKey === "string") {
-                keys.push((item as Record<string, unknown>).storageKey as string);
-            }
-        }
-    }
-    return keys.filter(Boolean);
+// 从日志响应的嵌套结构中抽出本地媒体 storageKey，兼容 upstreamResponse/localResult 包装。
+function extractStorageKeys(result: unknown, depth = 0): string[] {
+    if (!result || typeof result !== "object" || depth > 5) return [];
+    const values = Array.isArray(result) ? result : Object.values(result as Record<string, unknown>);
+    const direct = Array.isArray(result) ? [] : typeof (result as Record<string, unknown>).storageKey === "string" ? [(result as Record<string, unknown>).storageKey as string] : [];
+    return [...new Set([...direct, ...values.flatMap((value) => extractStorageKeys(value, depth + 1))])];
 }
 
 function MediaPreview({ userId, kind, result }: { userId: string; kind: AiCallKind; result: unknown }) {

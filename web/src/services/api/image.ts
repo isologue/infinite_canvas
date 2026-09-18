@@ -6,7 +6,7 @@ import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
-import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, buildReferenceAssetLogParams, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
 export type AiTextMessage = {
@@ -68,7 +68,15 @@ type ResponseApiPayload = {
 };
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
-type GeneratedImage = { id: string; dataUrl: string };
+export type GeneratedImage = { id: string; dataUrl: string };
+export type ImageGenerationTask = { id: string; provider: "openai" | "gemini"; model: string; requestParams: unknown; createResponse?: unknown };
+export type ImageGenerationStart =
+    | { mode: "immediate"; images: GeneratedImage[]; requestParams: unknown; responseResult: unknown }
+    | { mode: "task"; task: ImageGenerationTask };
+export type ImageGenerationTaskState =
+    | { status: "pending"; progress?: number }
+    | { status: "completed"; images: GeneratedImage[]; responseResult: unknown }
+    | { status: "failed"; error: string; responseResult?: unknown };
 type GeminiPart = {
     text?: string;
     inlineData?: { mimeType?: string; data?: string };
@@ -240,43 +248,94 @@ function imageTaskKey(config: AiConfig, endpoint: string) {
     return `${config.apiFormat}:${config.baseUrl.trim().replace(/\/+$/, "")}:${endpoint}:${config.model}`;
 }
 
+function attachImageRequestParams(error: unknown, requestParams: unknown) {
+    if (error && typeof error === "object") {
+        (error as { requestParams?: unknown }).requestParams = requestParams;
+        return error;
+    }
+    return Object.assign(new Error(String(error || "图片请求失败")), { requestParams });
+}
+
+async function startImagesWithAsyncFallback(input: {
+    key: string;
+    config: AiConfig;
+    create: (asyncMode: boolean) => Promise<unknown>;
+    requestParams: (asyncMode: boolean) => unknown;
+    parseImmediate: (payload: unknown) => GeneratedImage[] | null;
+}): Promise<ImageGenerationStart> {
+    const create = async (asyncMode: boolean) => {
+        const requestParams = prepareAiLogValue(input.requestParams(asyncMode));
+        try {
+            return { payload: await input.create(asyncMode), requestParams };
+        } catch (error) {
+            throw attachImageRequestParams(error, requestParams);
+        }
+    };
+    const finishImmediate = (payload: unknown, requestParams: unknown): ImageGenerationStart => {
+        const responseResult = prepareAiLogValue(payload);
+        try {
+            return { mode: "immediate", images: parseRequiredImages(payload, input.parseImmediate), requestParams, responseResult };
+        } catch (error) {
+            throw Object.assign(error instanceof Error ? error : new Error("图片接口没有返回图片"), { requestParams, responseResult });
+        }
+    };
+    if (asyncUnsupported.has(input.key)) {
+        const result = await create(false);
+        return finishImmediate(result.payload, result.requestParams);
+    }
+    let result: { payload: unknown; requestParams: unknown };
+    try {
+        result = await create(true);
+    } catch (error) {
+        if (!shouldFallbackWithoutAsync(error)) throw error;
+        const fallback = await create(false);
+        asyncUnsupported.add(input.key);
+        return finishImmediate(fallback.payload, fallback.requestParams);
+    }
+    try {
+        const images = input.parseImmediate(result.payload);
+        if (images?.length) return { mode: "immediate", images, requestParams: result.requestParams, responseResult: prepareAiLogValue(result.payload) };
+    } catch (error) {
+        if (!shouldFallbackWithoutAsync(error)) {
+            throw Object.assign(attachImageRequestParams(error, result.requestParams), { responseResult: prepareAiLogValue(result.payload) });
+        }
+        const fallback = await create(false);
+        asyncUnsupported.add(input.key);
+        return finishImmediate(fallback.payload, fallback.requestParams);
+    }
+    const taskId = imageTaskId(result.payload);
+    if (taskId) {
+        return {
+            mode: "task",
+            task: {
+                id: taskId,
+                provider: input.config.apiFormat === "gemini" ? "gemini" : "openai",
+                model: input.config.model,
+                requestParams: result.requestParams,
+                createResponse: prepareAiLogValue(result.payload),
+            },
+        };
+    }
+    const fallback = await create(false);
+    asyncUnsupported.add(input.key);
+    return finishImmediate(fallback.payload, fallback.requestParams);
+}
+
 async function requestImagesWithAsyncFallback(input: {
     key: string;
     config: AiConfig;
     create: (asyncMode: boolean) => Promise<unknown>;
+    requestParams: (asyncMode: boolean) => unknown;
     parseImmediate: (payload: unknown) => GeneratedImage[] | null;
     options?: RequestOptions;
 }) {
-    if (asyncUnsupported.has(input.key)) return parseRequiredImages(await input.create(false), input.parseImmediate);
-    let payload: unknown;
+    const start = await startImagesWithAsyncFallback(input);
+    if (start.mode === "immediate") return start.images;
     try {
-        payload = await input.create(true);
+        return await pollImageTask({ ...input.config, apiFormat: start.task.provider }, start.task.id, input.parseImmediate, input.options);
     } catch (error) {
-        if (!shouldFallbackWithoutAsync(error)) throw error;
-        const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
-        asyncUnsupported.add(input.key);
-        return fallback;
+        throw markImageTaskExecutionError(error);
     }
-    try {
-        const images = input.parseImmediate(payload);
-        if (images?.length) return images;
-    } catch (error) {
-        if (!shouldFallbackWithoutAsync(error)) throw error;
-        const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
-        asyncUnsupported.add(input.key);
-        return fallback;
-    }
-    const taskId = imageTaskId(payload);
-    if (taskId) {
-        try {
-            return await pollImageTask(input.config, taskId, input.parseImmediate, input.options);
-        } catch (error) {
-            throw markImageTaskExecutionError(error);
-        }
-    }
-    const fallback = parseRequiredImages(await input.create(false), input.parseImmediate);
-    asyncUnsupported.add(input.key);
-    return fallback;
 }
 
 function alternateImageApiFormat(apiFormat: AiConfig["apiFormat"]): "openai" | "gemini" | undefined {
@@ -433,6 +492,41 @@ function imageTaskStatus(payload: unknown): string {
     return "";
 }
 
+function imageTaskProgress(payload: unknown): number | undefined {
+    if (!isRecord(payload)) return undefined;
+    for (const key of ["progress", "percentage", "percent"]) {
+        const raw = payload[key];
+        const value = typeof raw === "string" ? Number(raw.replace("%", "")) : raw;
+        if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.min(100, Math.round(value <= 1 ? value * 100 : value)));
+    }
+    for (const key of ["task", "data", "result", "response"]) {
+        const progress = imageTaskProgress(payload[key]);
+        if (progress !== undefined) return progress;
+    }
+    return undefined;
+}
+
+export async function pollImageGenerationTask(config: AiConfig, task: ImageGenerationTask, options?: RequestOptions): Promise<ImageGenerationTaskState> {
+    const taskConfig = { ...resolveModelRequestConfig(config, task.model), apiFormat: task.provider };
+    try {
+        const response = await axios.get<unknown>(imageTaskApiUrl(taskConfig, task.id), {
+            headers: task.provider === "gemini" ? geminiHeaders(taskConfig) : aiHeaders(taskConfig),
+            signal: options?.signal,
+        });
+        const payload = response.data;
+        const errorMessage = readPayloadError(payload);
+        if (errorMessage) return { status: "failed", error: errorMessage, responseResult: payload };
+        const images = findTaskImages(payload);
+        const status = imageTaskStatus(payload);
+        if (images?.length && (!status || IMAGE_TASK_SUCCESS.has(status))) return { status: "completed", images, responseResult: payload };
+        if (IMAGE_TASK_FAILED.has(status)) return { status: "failed", error: readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`, responseResult: payload };
+        if (IMAGE_TASK_SUCCESS.has(status)) return { status: "failed", error: "图片任务已完成，但没有返回图片", responseResult: payload };
+        return { status: "pending", progress: imageTaskProgress(payload) };
+    } catch (error) {
+        throw requestError(error, "图片任务查询失败");
+    }
+}
+
 async function pollImageTask(config: AiConfig, taskId: string, preferred: (payload: unknown) => GeneratedImage[] | null, options?: RequestOptions) {
     let consecutiveErrors = 0;
     let initialNotFound = 0;
@@ -479,13 +573,14 @@ function readPayloadError(payload: unknown) {
 }
 
 function readTaskFailure(payload: unknown): string {
-    if (!isRecord(payload)) return "";
+    if (!isRecord(payload)) return readApiErrorMessage(payload);
     const error = readPayloadError(payload);
     if (error) return error;
-    if (typeof payload.error === "string" && payload.error) return payload.error;
-    if (typeof payload.message === "string" && payload.message) return payload.message;
-    if (typeof payload.msg === "string" && payload.msg) return payload.msg;
-    for (const key of ["task", "data", "result", "response"]) {
+    for (const key of ["fail_reason", "failReason", "failure_reason", "failureReason", "error_message", "reason", "status_message", "detail", "message", "msg"]) {
+        const message = readApiErrorMessage(payload[key]);
+        if (message) return message;
+    }
+    for (const key of ["error", "task", "data", "result", "response"]) {
         const message = readTaskFailure(payload[key]);
         if (message) return message;
     }
@@ -979,7 +1074,7 @@ async function requestGeminiImages(config: AiConfig, prompt: string, references:
     return (await Promise.all(requests)).flat();
 }
 
-async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+async function startGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
     const parts: GeminiPart[] = [{ text: prompt }];
     for (const image of references) {
         parts.push(toGeminiImagePart(await imageToDataUrl(image)));
@@ -988,13 +1083,17 @@ async function requestGeminiImagesOnce(config: AiConfig, prompt: string, referen
         ...toGeminiBody(config, [{ role: "user", content: prompt }], { generationConfig: { responseModalities: ["TEXT", "IMAGE"], ...resolveGeminiImageConfig(config) } }),
         contents: [{ role: "user", parts }],
     };
-    return requestImagesWithAsyncFallback({
+    return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "gemini:generateContent"),
         config,
         create: async (asyncMode) => (await axios.post<unknown>(geminiApiUrl(config, "generateContent"), asyncMode ? { ...body, async: true } : body, { headers: geminiHeaders(config), signal: options?.signal })).data,
+        requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseGeminiImages(payload) || tryParseOpenAiImages(payload),
-        options,
     });
+}
+
+async function requestGeminiImagesOnce(config: AiConfig, prompt: string, references: ReferenceImage[], options?: RequestOptions) {
+    return finishImageGenerationStart(config, await startGeminiImagesOnce(config, prompt, references, options), options);
 }
 
 function parseGeminiImagePayload(payload: GeminiPayload) {
@@ -1003,7 +1102,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
     return images;
 }
 
-async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: number, options?: RequestOptions) {
+async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
@@ -1017,20 +1116,24 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
         response_format: "b64_json",
         output_format: IMAGE_OUTPUT_FORMAT,
     };
-    return requestImagesWithAsyncFallback({
+    return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "/images/generations"),
         config,
         create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
-        options,
     });
+}
+
+async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: number, options?: RequestOptions) {
+    return finishImageGenerationStart(config, await startOpenAiGeneration(config, prompt, n, options), options);
 }
 
 function isGrokImageModel(model: string) {
     return /(^|[/:._-])grok(?:$|[/:._-])/i.test(model);
 }
 
-async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
+async function startOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
@@ -1040,7 +1143,7 @@ async function requestOpenAiEdit(config: AiConfig, prompt: string, references: R
         if (mask) throw new Error("Grok 图像编辑接口暂不支持蒙版编辑");
         const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
         const parseImmediate = (value: unknown) => tryParseOpenAiImages(value) || tryParseGeminiImages(value);
-        return requestImagesWithAsyncFallback({
+        return startImagesWithAsyncFallback({
             key: imageTaskKey(config, "/images/edits:multipart"),
             config,
             create: async (asyncMode) => {
@@ -1067,8 +1170,16 @@ async function requestOpenAiEdit(config: AiConfig, prompt: string, references: R
                     signal: options?.signal,
                 })).data;
             },
+            requestParams: (asyncMode) => ({
+                model: config.model,
+                prompt: requestPrompt,
+                n,
+                response_format: "url",
+                ...(requestSize ? { size: requestSize } : {}),
+                ...(asyncMode ? { async: true } : {}),
+                "image[]": files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })),
+            }),
             parseImmediate,
-            options,
         });
     }
 
@@ -1086,13 +1197,108 @@ async function requestOpenAiEdit(config: AiConfig, prompt: string, references: R
         ...(requestSize ? { size: requestSize } : {}),
         ...(background ? { background } : {}),
     };
-    return requestImagesWithAsyncFallback({
+    return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "/images/edits"),
         config,
         create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
-        options,
     });
+}
+
+async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
+    return finishImageGenerationStart(config, await startOpenAiEdit(config, prompt, references, mask, n, options), options);
+}
+
+async function finishImageGenerationStart(config: AiConfig, start: ImageGenerationStart, options?: RequestOptions) {
+    if (start.mode === "immediate") return start.images;
+    try {
+        return await pollImageTask({ ...config, apiFormat: start.task.provider }, start.task.id, (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload), options);
+    } catch (error) {
+        throw markImageTaskExecutionError(error);
+    }
+}
+
+export async function createImageGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mask?: ReferenceImage, options?: RequestOptions): Promise<ImageGenerationStart> {
+    const model = config.model || config.imageModel;
+    const requestConfig = { ...resolveModelRequestConfig(config, model), count: "1" };
+    const script = resolveModelScript(config, model);
+    if (script) {
+        const quality = normalizeQuality(config.quality);
+        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+        const background = normalizeBackground(config.background);
+        const requestPrompt = references.length ? buildImageReferencePromptText(prompt, references) : prompt;
+        const images = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
+        const result = await runModelPlugin({
+            capability: "image",
+            script,
+            config: requestConfig,
+            prompt: withSystemPrompt(requestConfig, requestPrompt),
+            images,
+            params: { size: requestSize, quality, resolution: config.resolution, count: 1, ...(background ? { background } : {}) },
+            signal: options?.signal,
+        });
+        return {
+            mode: "immediate",
+            images: normalizePluginImages(result).map((dataUrl) => ({ id: nanoid(), dataUrl })),
+            requestParams: prepareAiLogValue({
+                capability: "image",
+                model: requestConfig.model,
+                prompt: withSystemPrompt(requestConfig, requestPrompt),
+                images,
+                params: { size: requestSize, quality, resolution: config.resolution, count: 1, ...(background ? { background } : {}) },
+            }),
+            responseResult: prepareAiLogValue(result),
+        };
+    }
+    const requestPrompt = references.length ? buildImageReferencePromptText(prompt, references) : prompt;
+    try {
+        return await withImageApiFormatFallback(requestConfig, async (activeConfig) => {
+            if (activeConfig.apiFormat === "gemini") {
+                if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
+                return startGeminiImagesOnce(activeConfig, requestPrompt, references, options);
+            }
+            if (activeConfig.apiFormat === "ark" && references.length) {
+                if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
+                const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
+                const quality = normalizeQuality(activeConfig.quality);
+                const requestSize = resolveRequestSize(quality, activeConfig.size, activeConfig.resolution);
+                const background = normalizeBackground(activeConfig.background);
+                return startImagesWithAsyncFallback({
+                    key: imageTaskKey(activeConfig, "/images/generations:ark-edit"),
+                    config: activeConfig,
+                    create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
+                        model: activeConfig.model,
+                        prompt: withSystemPrompt(activeConfig, requestPrompt),
+                        n: 1,
+                        response_format: "b64_json",
+                        output_format: IMAGE_OUTPUT_FORMAT,
+                        image: refs,
+                        ...(quality ? { quality } : {}),
+                        ...(requestSize ? { size: requestSize } : {}),
+                        ...(background ? { background } : {}),
+                        ...(asyncMode ? { async: true } : {}),
+                    }, { headers: aiHeaders(activeConfig, "application/json"), signal: options?.signal })).data,
+                    requestParams: (asyncMode) => ({
+                        model: activeConfig.model,
+                        prompt: withSystemPrompt(activeConfig, requestPrompt),
+                        n: 1,
+                        response_format: "b64_json",
+                        output_format: IMAGE_OUTPUT_FORMAT,
+                        image: refs,
+                        ...(quality ? { quality } : {}),
+                        ...(requestSize ? { size: requestSize } : {}),
+                        ...(background ? { background } : {}),
+                        ...(asyncMode ? { async: true } : {}),
+                    }),
+                    parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+                });
+            }
+            return references.length ? startOpenAiEdit(activeConfig, requestPrompt, references, mask, 1, options) : startOpenAiGeneration(activeConfig, prompt, 1, options);
+        }, { hasMask: Boolean(mask) });
+    } catch (error) {
+        throw requestError(error, "请求失败");
+    }
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {

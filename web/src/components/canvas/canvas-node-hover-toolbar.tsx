@@ -268,6 +268,8 @@ export function CanvasNodeInfoModal({ node, open, onClose }: { node: CanvasNodeD
                             <InfoRow label="尺寸" value={`${Math.round(node.width)} x ${Math.round(node.height)}`} />
                             <InfoRow label="位置" value={`${Math.round(node.position.x)}, ${Math.round(node.position.y)}`} />
                             <InfoRow label="状态" value={node.metadata?.status || "idle"} />
+                            {node.metadata?.waitingDurationMs !== undefined ? <InfoRow label="等待耗时" value={formatNodeDuration(node.metadata.waitingDurationMs)} /> : null}
+                            {node.metadata?.renderDurationMs !== undefined ? <InfoRow label="本地处理耗时" value={formatNodeDuration(node.metadata.renderDurationMs)} /> : null}
                             {batchCount > 1 ? <InfoRow label="图片组" value={`${batchCount} 张`} /> : null}
                             {node.type === CanvasNodeType.Config && node.metadata?.composerContent ? <InfoRow label="组装模板" value={node.metadata.composerContent} /> : null}
                             {node.type === CanvasNodeType.Config && node.metadata?.resolvedPrompt ? <InfoRow label="本次提示词" value={node.metadata.resolvedPrompt} /> : null}
@@ -302,6 +304,10 @@ function ToolbarAction({ title, label, icon, onClick, showLabel, active = false,
             </button>
         </Tooltip>
     );
+}
+
+function formatNodeDuration(durationMs: number) {
+    return `${(Math.max(0, durationMs) / 1000).toFixed(1)} 秒`;
 }
 
 function InfoRow({ label, value }: { label: string; value: ReactNode }) {

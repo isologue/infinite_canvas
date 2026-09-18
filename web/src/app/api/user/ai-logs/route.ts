@@ -6,14 +6,14 @@ import { recordAiCall, type AiCallKind, type AiCallStatus } from "@/lib/server/a
 const KINDS: AiCallKind[] = ["image", "video", "audio", "text", "other"];
 const STATUSES: AiCallStatus[] = ["pending", "success", "failed"];
 
-// 单条日志体积上限，避免前端误传超大 base64 把日志表撑爆。
-const MAX_PARAM_BYTES = 32 * 1024;
+// 普通请求和响应按原值保存；仅对异常超大的单个字段做最终保护，二进制 base64 已在前端上报前省略。
+const MAX_PARAM_BYTES = 2 * 1024 * 1024;
 
 function clampJson(value: unknown): unknown {
     if (value === undefined || value === null) return null;
     try {
         const text = JSON.stringify(value);
-        if (text.length > MAX_PARAM_BYTES) return { truncated: true, note: "内容过大已省略", bytes: text.length };
+        if (text.length > MAX_PARAM_BYTES) return { truncated: true, note: "日志内容超过 2 MB，已在服务端截断", bytes: text.length, preview: text.slice(0, MAX_PARAM_BYTES) };
         return value;
     } catch {
         return null;

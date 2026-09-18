@@ -4,11 +4,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Check, Group, Video, X } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
+import { createImageGenerationTask, pollImageGenerationTask, requestImageQuestion, type ImageGenerationTask } from "@/services/api/image";
 import { fetchCanvasProject, flushCanvasProjectSaves, queueCanvasProjectSave } from "@/services/api/canvas-projects";
-import { buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorRequestParams, buildAiErrorResponseResult, buildReferenceAssetLogParams, reportAiCall } from "@/services/ai-call-log";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { requestVideoGeneration, storeGeneratedVideo } from "@/services/api/video";
+import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
@@ -81,6 +81,7 @@ import { ConnectionCreateMenu, NodeCreateMenu, type PendingConnectionCreate } fr
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
+    type CanvasGenerationTaskMetadata,
     type CanvasAssistantSession,
     type CanvasConnection,
     type CanvasNodeData,
@@ -117,6 +118,8 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
 
 type CanvasSelectionMode = "group" | "batch-download" | "batch-replace" | null;
 
+type CanvasTaskWaiter = { resolve: (value: UploadedImage | UploadedFile) => void; reject: (error: unknown) => void };
+
 type CanvasGenerationRequest = {
     targetNodeId: string;
     originNodeId: string;
@@ -146,24 +149,36 @@ const IMAGE_PROMPT_REVERSE_PRESET = `请根据参考图片反推一段适合用�
 3. 尽量写成可直接用于生图模型的完整提示词。`;
 
 // 画布页图片生成上报 AI 调用日志（在拿到 storageKey 之后调用）。失败静默。
-function reportCanvasImageLog(config: AiConfig, prompt: string, uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number }, referenceImageCount = 0, hasMask = false) {
+function reportCanvasImageLog(
+    config: AiConfig,
+    prompt: string,
+    uploaded: { storageKey?: string; width?: number; height?: number; mimeType?: string; bytes?: number },
+    referenceImageCount = 0,
+    hasMask = false,
+    trace?: { requestParams?: unknown; responseResult?: unknown },
+) {
     const model = modelOptionName(config.model);
     void reportAiCall({
         kind: "image",
         model,
         status: "success",
         reason: `image generation: ${model}`,
-        requestParams: {
-            prompt,
-            model,
-            size: config.size,
-            aspectRatio: config.size,
-            quality: config.quality,
-            resolution: config.resolution,
-            count: config.count,
-            ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
+        requestParams:
+            trace?.requestParams ??
+            {
+                prompt,
+                model,
+                size: config.size,
+                aspectRatio: config.size,
+                quality: config.quality,
+                resolution: config.resolution,
+                count: config.count,
+                ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
+            },
+        responseResult: {
+            upstreamResponse: trace?.responseResult ?? null,
+            localResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
         },
-        responseResult: { count: 1, items: [{ storageKey: uploaded.storageKey, width: uploaded.width, height: uploaded.height, mimeType: uploaded.mimeType, bytes: uploaded.bytes }] },
     });
 }
 
@@ -174,16 +189,18 @@ function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown
         model,
         status: "failed",
         reason: `image generation: ${model}`,
-        requestParams: {
-            prompt,
-            model,
-            size: config.size,
-            aspectRatio: config.size,
-            quality: config.quality,
-            resolution: config.resolution,
-            count: config.count,
-            ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
-        },
+        requestParams:
+            buildAiErrorRequestParams(error) ??
+            {
+                prompt,
+                model,
+                size: config.size,
+                aspectRatio: config.size,
+                quality: config.quality,
+                resolution: config.resolution,
+                count: config.count,
+                ...buildReferenceAssetLogParams({ images: referenceImageCount, hasMask }),
+            },
         responseResult: buildAiErrorResponseResult(error),
         errorMessage: error instanceof Error ? error.message : String(error),
     });
@@ -321,6 +338,11 @@ function InfiniteCanvasPage() {
     const isGroupingRef = useRef(false);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const generationRequestsRef = useRef(new Map<string, CanvasGenerationRequest>());
+    const canvasTaskTimersRef = useRef(new Map<string, number>());
+    const activeCanvasTaskIdsRef = useRef(new Set<string>());
+    const canvasTaskWaitersRef = useRef(new Map<string, CanvasTaskWaiter>());
+    const resumedCanvasTaskIdsRef = useRef(new Set<string>());
+    const pollCanvasTaskRef = useRef<(nodeId: string, manual?: boolean) => Promise<void>>(async () => undefined);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -356,19 +378,329 @@ function InfiniteCanvasPage() {
         if (request?.controller === controller) generationRequestsRef.current.delete(targetNodeId);
     }, []);
 
+    const clearCanvasTaskTimer = useCallback((nodeId: string) => {
+        const timer = canvasTaskTimersRef.current.get(nodeId);
+        if (timer !== undefined) window.clearTimeout(timer);
+        canvasTaskTimersRef.current.delete(nodeId);
+    }, []);
+
+    const scheduleCanvasTaskPoll = useCallback(
+        (nodeId: string, delay = 5000) => {
+            clearCanvasTaskTimer(nodeId);
+            canvasTaskTimersRef.current.set(
+                nodeId,
+                window.setTimeout(() => {
+                    canvasTaskTimersRef.current.delete(nodeId);
+                    void pollCanvasTaskRef.current(nodeId);
+                }, delay),
+            );
+        },
+        [clearCanvasTaskTimer],
+    );
+
+    const finishCanvasTask = useCallback(
+        (nodeId: string, value?: UploadedImage | UploadedFile, error?: unknown) => {
+            clearCanvasTaskTimer(nodeId);
+            const waiter = canvasTaskWaitersRef.current.get(nodeId);
+            canvasTaskWaitersRef.current.delete(nodeId);
+            if (!waiter) return;
+            if (error) waiter.reject(error);
+            else if (value) waiter.resolve(value);
+        },
+        [clearCanvasTaskTimer],
+    );
+
+    const pollCanvasGenerationTask = useCallback(
+        async (nodeId: string, manual = false) => {
+            const node = nodesRef.current.find((item) => item.id === nodeId);
+            const task = node?.metadata?.generationTask;
+            if (!node || !task || activeCanvasTaskIdsRef.current.has(nodeId)) return;
+            activeCanvasTaskIdsRef.current.add(nodeId);
+            clearCanvasTaskTimer(nodeId);
+            const controller = generationRequestsRef.current.get(nodeId)?.controller;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, task.kind), model: task.model };
+            let resultReceivedAt: number | undefined;
+            try {
+                let state;
+                try {
+                    state =
+                        task.kind === "image"
+                            ? await pollImageGenerationTask(
+                                  generationConfig,
+                                  { id: task.id, provider: task.provider as ImageGenerationTask["provider"], model: task.model, requestParams: task.requestParams, createResponse: task.createResponse },
+                                  { signal: controller?.signal },
+                              )
+                            : await pollVideoGenerationTask(
+                                  generationConfig,
+                                  {
+                                      id: task.id,
+                                      provider: task.provider as VideoGenerationTask["provider"],
+                                      model: task.model,
+                                      logModel: task.logModel,
+                                      logParams: task.logParams,
+                                      logReported: task.logReported,
+                                  },
+                                  { signal: controller?.signal },
+                              );
+                } catch (pollError) {
+                    if (isGenerationCanceled(pollError)) return;
+                    const now = Date.now();
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === nodeId
+                                ? { ...item, metadata: { ...item.metadata, waitingDurationMs: Math.max(0, now - task.createdAt), generationTask: { ...task, lastPolledAt: now } } }
+                                : item,
+                        ),
+                    );
+                    scheduleCanvasTaskPoll(nodeId);
+                    if (manual) message.warning(pollError instanceof Error ? `查询失败，将自动重试：${pollError.message}` : "查询失败，将自动重试");
+                    return;
+                }
+                if (state.status === "pending") {
+                    const now = Date.now();
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === nodeId
+                                ? {
+                                      ...item,
+                                      metadata: {
+                                          ...item.metadata,
+                                          waitingDurationMs: Math.max(0, now - task.createdAt),
+                                          generationTask: { ...task, phase: "waiting", progress: state.progress ?? task.progress, lastPolledAt: now },
+                                      },
+                                  }
+                                : item,
+                        ),
+                    );
+                    scheduleCanvasTaskPoll(nodeId);
+                    if (manual) message.info(state.progress === undefined ? "任务仍在处理中" : `当前进度 ${state.progress}%`);
+                    return;
+                }
+                if (state.status === "failed") {
+                    if (task.kind === "video")
+                        await settleVideoTaskCredits(
+                            { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
+                            "failed",
+                            { errorMessage: state.error, result: state.responseResult },
+                        );
+                    const taskError = Object.assign(new Error(state.error), {
+                        requestParams: task.requestParams,
+                        responseResult:
+                            task.kind === "image" && task.createResponse !== undefined
+                                ? { createResponse: task.createResponse, finalResponse: state.responseResult }
+                                : state.responseResult,
+                        aiCallReported: task.kind === "image",
+                    });
+                    if (task.kind === "image") {
+                        reportCanvasImageError(generationConfig, node.metadata?.prompt || "", taskError, task.referenceImageCount ?? node.metadata?.references?.length ?? 0, task.hasMask);
+                    }
+                    throw taskError;
+                }
+
+                resultReceivedAt = Date.now();
+                const waitingDurationMs = Math.max(0, resultReceivedAt - task.createdAt);
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === nodeId
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      waitingDurationMs,
+                                      renderDurationMs: 0,
+                                      generationTask: { ...task, phase: "rendering", progress: 100, resultReceivedAt, lastPolledAt: resultReceivedAt },
+                                  },
+                              }
+                            : item,
+                    ),
+                );
+
+                if (task.kind === "image") {
+                    if (!("images" in state) || !state.images[0]) throw new Error("图片任务完成，但没有返回图片");
+                    let uploaded: UploadedImage;
+                    try {
+                        uploaded = await uploadImage(state.images[0].dataUrl, { title: (node.metadata?.prompt || node.title).slice(0, 80), source: "generated", metadata: { projectId, nodeId } });
+                    } catch (error) {
+                        throw Object.assign(error instanceof Error ? error : new Error("图片本地处理失败"), {
+                            requestParams: task.requestParams,
+                            responseResult: {
+                                upstreamResponse: task.createResponse === undefined ? state.responseResult : { createResponse: task.createResponse, finalResponse: state.responseResult },
+                                localError: buildAiErrorResponseResult(error),
+                            },
+                        });
+                    }
+                    const renderDurationMs = Math.max(0, Date.now() - resultReceivedAt);
+                    const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === nodeId
+                                ? {
+                                      ...item,
+                                      width: size.width,
+                                      height: size.height,
+                                      metadata: { ...item.metadata, ...imageMetadata(uploaded), generationTask: undefined, waitingDurationMs, renderDurationMs, errorDetails: undefined },
+                                  }
+                                : item,
+                        ),
+                    );
+                    reportCanvasImageLog(generationConfig, node.metadata?.prompt || "", uploaded, task.referenceImageCount ?? node.metadata?.references?.length ?? 0, task.hasMask, {
+                        requestParams: task.requestParams,
+                        responseResult: task.createResponse === undefined ? state.responseResult : { createResponse: task.createResponse, finalResponse: state.responseResult },
+                    });
+                    finishCanvasTask(nodeId, uploaded);
+                    return;
+                }
+
+                if (!("result" in state)) throw new Error("视频任务完成，但没有返回视频");
+                let video: UploadedFile;
+                try {
+                    video = await storeGeneratedVideo(state.result, (node.metadata?.prompt || node.title).slice(0, 80));
+                } catch (error) {
+                    const errorMessage = error instanceof Error ? error.message : "视频本地处理失败";
+                    await settleVideoTaskCredits(
+                        { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
+                        "failed",
+                        { errorMessage, result: buildAiErrorResponseResult(error) },
+                    );
+                    throw new Error(`上游已生成视频，但本地转存或处理失败：${errorMessage}`);
+                }
+                const renderDurationMs = Math.max(0, Date.now() - resultReceivedAt);
+                const size = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === nodeId
+                            ? {
+                                  ...item,
+                                  width: size.width,
+                                  height: size.height,
+                                  position: { x: item.position.x + item.width / 2 - size.width / 2, y: item.position.y + item.height / 2 - size.height / 2 },
+                                  metadata: { ...item.metadata, ...videoMetadata(video), generationTask: undefined, waitingDurationMs, renderDurationMs, errorDetails: undefined },
+                              }
+                            : item,
+                    ),
+                );
+                await settleVideoTaskCredits(
+                    { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
+                    "success",
+                    { result: { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs } },
+                );
+                finishCanvasTask(nodeId, video);
+            } catch (error) {
+                if (isGenerationCanceled(error)) return;
+                const errorDetails = error instanceof Error ? error.message : "生成失败";
+                const failedAt = Date.now();
+                setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === nodeId
+                            ? {
+                                  ...item,
+                                  metadata: {
+                                      ...item.metadata,
+                                      status: NODE_STATUS_ERROR,
+                                      generationTask: undefined,
+                                      waitingDurationMs: resultReceivedAt ? Math.max(0, resultReceivedAt - task.createdAt) : Math.max(0, failedAt - task.createdAt),
+                                      renderDurationMs: resultReceivedAt ? Math.max(0, failedAt - resultReceivedAt) : item.metadata?.renderDurationMs,
+                                      errorDetails,
+                                  },
+                              }
+                            : item,
+                    ),
+                );
+                finishCanvasTask(nodeId, undefined, error);
+                if (manual) message.error(errorDetails);
+            } finally {
+                activeCanvasTaskIdsRef.current.delete(nodeId);
+            }
+        },
+        [clearCanvasTaskTimer, effectiveConfig, finishCanvasTask, message, projectId, scheduleCanvasTaskPoll],
+    );
+
+    useLayoutEffect(() => {
+        pollCanvasTaskRef.current = pollCanvasGenerationTask;
+    }, [pollCanvasGenerationTask]);
+
+    const waitForCanvasTask = useCallback(
+        (nodeId: string) =>
+            new Promise<UploadedImage | UploadedFile>((resolve, reject) => {
+                canvasTaskWaitersRef.current.set(nodeId, { resolve, reject });
+                scheduleCanvasTaskPoll(nodeId, 100);
+            }),
+        [scheduleCanvasTaskPoll],
+    );
+
+    const runCanvasImageGeneration = useCallback(
+        async (params: { targetNodeId: string; originNodeId: string; config: AiConfig; prompt: string; references?: ReferenceImage[]; mask?: ReferenceImage; signal?: AbortSignal }) => {
+            const createdAt = Date.now();
+            try {
+                const start = await createImageGenerationTask(params.config, params.prompt, params.references || [], params.mask, { signal: params.signal });
+                if (start.mode === "immediate") {
+                    const resultReceivedAt = Date.now();
+                    const image = start.images[0];
+                    if (!image) throw new Error("图片接口没有返回图片");
+                    let uploaded: UploadedImage;
+                    try {
+                        uploaded = await uploadImage(image.dataUrl, { title: params.prompt.slice(0, 80), source: "generated", metadata: { projectId, nodeId: params.targetNodeId, originNodeId: params.originNodeId } });
+                    } catch (error) {
+                        throw Object.assign(error instanceof Error ? error : new Error("图片本地处理失败"), {
+                            requestParams: start.requestParams,
+                            responseResult: { upstreamResponse: start.responseResult, localError: buildAiErrorResponseResult(error) },
+                        });
+                    }
+                    const renderDurationMs = Math.max(0, Date.now() - resultReceivedAt);
+                    setNodes((prev) =>
+                        prev.map((item) =>
+                            item.id === params.targetNodeId
+                                ? { ...item, metadata: { ...item.metadata, waitingDurationMs: resultReceivedAt - createdAt, renderDurationMs, generationTask: undefined } }
+                                : item,
+                        ),
+                    );
+                    reportCanvasImageLog(params.config, params.prompt, uploaded, params.references?.length || 0, Boolean(params.mask), {
+                        requestParams: start.requestParams,
+                        responseResult: start.responseResult,
+                    });
+                    return uploaded;
+                }
+                const task: CanvasGenerationTaskMetadata = { ...start.task, kind: "image", createdAt, phase: "waiting", referenceImageCount: params.references?.length || 0, hasMask: Boolean(params.mask) };
+                resumedCanvasTaskIdsRef.current.add(params.targetNodeId);
+                setNodes((prev) => prev.map((item) => (item.id === params.targetNodeId ? { ...item, metadata: { ...item.metadata, generationTask: task, waitingDurationMs: 0, renderDurationMs: 0 } } : item)));
+                return (await waitForCanvasTask(params.targetNodeId)) as UploadedImage;
+            } catch (error) {
+                if (!isGenerationCanceled(error) && !(error && typeof error === "object" && (error as { aiCallReported?: boolean }).aiCallReported)) {
+                    reportCanvasImageError(params.config, params.prompt, error, params.references?.length || 0, Boolean(params.mask));
+                }
+                throw error;
+            }
+        },
+        [projectId, waitForCanvasTask],
+    );
+
+    const runCanvasVideoGeneration = useCallback(
+        async (params: { targetNodeId: string; config: AiConfig; prompt: string; references: ReferenceImage[]; videoReferences: Parameters<typeof createVideoGenerationTask>[3]; audioReferences: Parameters<typeof createVideoGenerationTask>[4]; signal?: AbortSignal }) => {
+            const createdAt = Date.now();
+            const task = await createVideoGenerationTask(params.config, params.prompt, params.references, params.videoReferences, params.audioReferences, { signal: params.signal });
+            const metadata: CanvasGenerationTaskMetadata = { ...task, kind: "video", createdAt, phase: "waiting" };
+            resumedCanvasTaskIdsRef.current.add(params.targetNodeId);
+            setNodes((prev) => prev.map((item) => (item.id === params.targetNodeId ? { ...item, metadata: { ...item.metadata, generationTask: metadata, waitingDurationMs: 0, renderDurationMs: 0 } } : item)));
+            return (await waitForCanvasTask(params.targetNodeId)) as UploadedFile;
+        },
+        [waitForCanvasTask],
+    );
+
     const stopGenerationByRunningId = useCallback((runningId: string) => {
         const affectedNodeIds = new Set<string>();
         generationRequestsRef.current.forEach((request) => {
             if (request.runningNodeId !== runningId) return;
             request.controller.abort();
             generationRequestsRef.current.delete(request.targetNodeId);
+            clearCanvasTaskTimer(request.targetNodeId);
+            finishCanvasTask(request.targetNodeId, undefined, new DOMException("Aborted", "AbortError"));
             affectedNodeIds.add(request.targetNodeId);
             affectedNodeIds.add(request.originNodeId);
         });
         setRunningNodeId((current) => (current === runningId ? null : current));
         if (!affectedNodeIds.size) return;
-        setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, errorDetails: undefined } } : node)));
-    }, []);
+        setNodes((prev) => prev.map((node) => (affectedNodeIds.has(node.id) && node.metadata?.status === NODE_STATUS_LOADING ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_IDLE, generationTask: undefined, errorDetails: undefined } } : node)));
+    }, [clearCanvasTaskTimer, finishCanvasTask]);
 
     const confirmStopGeneration = useCallback(
         (nodeId: string) => {
@@ -386,6 +718,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         setProjectLoaded(false);
+        resumedCanvasTaskIdsRef.current.clear();
         const restore = async () => {
             const project = await fetchCanvasProject(projectId);
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
@@ -419,6 +752,23 @@ function InfiniteCanvasPage() {
         };
         void restore().catch(() => router.replace("/canvas"));
     }, [projectId, router]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        nodesRef.current.forEach((node) => {
+            if (node.metadata?.status !== NODE_STATUS_LOADING || !node.metadata.generationTask || resumedCanvasTaskIdsRef.current.has(node.id)) return;
+            resumedCanvasTaskIdsRef.current.add(node.id);
+            scheduleCanvasTaskPoll(node.id, 100);
+        });
+    }, [projectLoaded, scheduleCanvasTaskPoll]);
+
+    useEffect(
+        () => () => {
+            canvasTaskTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+            canvasTaskTimersRef.current.clear();
+        },
+        [],
+    );
 
     useEffect(() => {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
@@ -2057,15 +2407,20 @@ function InfiniteCanvasPage() {
             setDialogNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const image = await requestEdit(generationConfig, prompt, [source], { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl }, { signal: controller.signal }).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl, { metadata: { projectId, nodeId: childId, originNodeId: node.id } });
-                reportCanvasImageLog(generationConfig, prompt, uploaded, 1, true);
+                const uploaded = await runCanvasImageGeneration({
+                    targetNodeId: childId,
+                    originNodeId: node.id,
+                    config: generationConfig,
+                    prompt,
+                    references: [source],
+                    mask: { id: `${node.id}-mask`, name: "mask.png", type: "image/png", dataUrl: payload.maskDataUrl },
+                    signal: controller.signal,
+                });
                 const size = fitNodeSize(uploaded.width, uploaded.height, node.width, node.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "局部修改失败";
-                reportCanvasImageError(generationConfig, prompt, error, 1, true);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
@@ -2073,7 +2428,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, runCanvasImageGeneration, runCanvasVideoGeneration, startGenerationRequest],
     );
 
     const upscaleImageNode = useCallback(async (node: CanvasNodeData, params: CanvasImageUpscaleParams) => {
@@ -2135,28 +2490,26 @@ function InfiniteCanvasPage() {
             setDialogNodeId(childId);
             const controller = startGenerationRequest(childId, node.id, childId);
             try {
-                const image = await requestEdit(
-                    generationConfig,
+                const uploaded = await runCanvasImageGeneration({
+                    targetNodeId: childId,
+                    originNodeId: node.id,
+                    config: generationConfig,
                     prompt,
-                    [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }],
-                    undefined,
-                    { signal: controller.signal },
-                ).then((items) => items[0]);
-                const uploaded = await uploadImage(image.dataUrl, { metadata: { projectId, nodeId: childId, originNodeId: node.id } });
-                reportCanvasImageLog(generationConfig, prompt, uploaded, 1);
+                    references: [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }],
+                    signal: controller.signal,
+                });
                 const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                reportCanvasImageError(generationConfig, prompt, error, 1);
                 setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
                 finishGenerationRequest(childId, controller);
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, openConfigDialog, projectId, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, openConfigDialog, projectId, runCanvasImageGeneration, startGenerationRequest],
     );
 
     const handleFontSizeChange = useCallback((nodeId: string, fontSize: number) => {
@@ -2398,10 +2751,7 @@ function InfiniteCanvasPage() {
                     );
                     const referenceError = await referenceImagesError(refs);
                     if (referenceError) throw new Error(referenceError);
-                    const image = refs.length
-                        ? await requestEdit({ ...generationConfig, count: "1" }, fullPrompt, refs, undefined, { signal: controller.signal }).then((items) => items[0])
-                        : await requestGeneration({ ...generationConfig, count: "1" }, fullPrompt, { signal: controller.signal }).then((items) => items[0]);
-                    const uploaded = await uploadImage(image.dataUrl, { metadata: { projectId, nodeId, originNodeId: nodeId } });
+                    const uploaded = await runCanvasImageGeneration({ targetNodeId: nodeId, originNodeId: nodeId, config: { ...generationConfig, count: "1" }, prompt: fullPrompt, references: refs, signal: controller.signal });
                     setNodes((prev) =>
                         prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...imageMetadata(uploaded), prompt: scene, model: generationConfig.model, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)),
                     );
@@ -2558,11 +2908,7 @@ function InfiniteCanvasPage() {
                     await Promise.all(
                         targetIds.map(async (targetId) => {
                             try {
-                                const image = referenceImages.length
-                                    ? await requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages, undefined, { signal: controller.signal }).then((items) => items[0])
-                                    : await requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt, { signal: controller.signal }).then((items) => items[0]);
-                                const uploaded = await uploadImage(image.dataUrl, { title: effectivePrompt.slice(0, 80), source: "generated", metadata: { projectId, nodeId: targetId, originNodeId: nodeId, batchRootId: count > 1 ? rootId : undefined } });
-                                reportCanvasImageLog(generationConfig, effectivePrompt, uploaded, referenceImages.length);
+                                const uploaded = await runCanvasImageGeneration({ targetNodeId: targetId, originNodeId: nodeId, config: { ...generationConfig, count: "1" }, prompt: effectivePrompt, references: referenceImages, signal: controller.signal });
                                 const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
                                 setNodes((prev) => {
                                     const root = prev.find((node) => node.id === rootId);
@@ -2596,7 +2942,6 @@ function InfiniteCanvasPage() {
                                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                                 if (!firstError) firstError = errorDetails;
                                 hasFailure = true;
-                                reportCanvasImageError(generationConfig, effectivePrompt, error, referenceImages.length);
                                 setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
                             } finally {
                                 finishGenerationRequest(targetId, controller);
@@ -2660,11 +3005,14 @@ function InfiniteCanvasPage() {
                     if (!isEmptyVideoNode) setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: nodeId, toNodeId: videoId }]);
                     const controller = startGenerationRequest(videoId, nodeId, nodeId, runController);
                     try {
-                        // 通过 onStored 在生成完成后就地存储：只存一次，同时让日志带上 storageKey 以便预览。
-                        let video!: Awaited<ReturnType<typeof storeGeneratedVideo>>;
-                        await requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages, generationContext.referenceVideos, generationContext.referenceAudios, { signal: controller.signal }, async (result) => {
-                            video = await storeGeneratedVideo(result, effectivePrompt.slice(0, 80));
-                            return { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs };
+                        const video = await runCanvasVideoGeneration({
+                            targetNodeId: videoId,
+                            config: generationConfig,
+                            prompt: effectivePrompt,
+                            references: generationContext.referenceImages,
+                            videoReferences: generationContext.referenceVideos,
+                            audioReferences: generationContext.referenceAudios,
+                            signal: controller.signal,
                         });
                         const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                         setNodes((prev) =>
@@ -2806,7 +3154,7 @@ function InfiniteCanvasPage() {
                 setRunningNodeId((current) => (current === nodeId ? null : current));
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, runCanvasImageGeneration, runCanvasVideoGeneration, startGenerationRequest],
     );
     const runGroup = useCallback(
         async (group: CanvasNodeData) => {
@@ -2892,10 +3240,14 @@ function InfiniteCanvasPage() {
                     return;
                 }
                 if (node.type === CanvasNodeType.Video) {
-                    let video!: Awaited<ReturnType<typeof storeGeneratedVideo>>;
-                    await requestVideoGeneration(generationConfig, prompt, retryImages, context?.referenceVideos || [], context?.referenceAudios || [], { signal: controller.signal }, async (result) => {
-                        video = await storeGeneratedVideo(result, prompt.slice(0, 80));
-                        return { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs };
+                    const video = await runCanvasVideoGeneration({
+                        targetNodeId: node.id,
+                        config: generationConfig,
+                        prompt,
+                        references: retryImages,
+                        videoReferences: context?.referenceVideos || [],
+                        audioReferences: context?.referenceAudios || [],
+                        signal: controller.signal,
                     });
                     const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
@@ -2930,9 +3282,7 @@ function InfiniteCanvasPage() {
                     return;
                 }
 
-                const image = useReferenceImages ? await requestEdit(generationConfig, prompt, retryImages, undefined, { signal: controller.signal }).then((items) => items[0]) : await requestGeneration(generationConfig, prompt, { signal: controller.signal }).then((items) => items[0]);
-                const uploadedImage = await uploadImage(image.dataUrl, { title: prompt.slice(0, 80), source: "generated", metadata: { projectId, nodeId: node.id, originNodeId: sourceNode.id } });
-                reportCanvasImageLog(generationConfig, prompt, uploadedImage, retryImages.length);
+                const uploadedImage = await runCanvasImageGeneration({ targetNodeId: node.id, originNodeId: sourceNode.id, config: generationConfig, prompt, references: useReferenceImages ? retryImages : [], signal: controller.signal });
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
                 const generationMetadata = savedImageMetadata?.generationType
@@ -2963,7 +3313,6 @@ function InfiniteCanvasPage() {
             } catch (error) {
                 if (isGenerationCanceled(error)) return;
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
-                reportCanvasImageError(generationConfig, prompt, error, retryImages.length);
                 message.error(errorDetails);
                 setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
             } finally {
@@ -2971,7 +3320,15 @@ function InfiniteCanvasPage() {
                 setRunningNodeId(null);
             }
         },
-        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, startGenerationRequest],
+        [effectiveConfig, finishGenerationRequest, isAiConfigReady, message, openConfigDialog, projectId, runCanvasImageGeneration, runCanvasVideoGeneration, startGenerationRequest],
+    );
+
+    const refreshCanvasGenerationTask = useCallback(
+        (node: CanvasNodeData) => {
+            if (!node.metadata?.generationTask) return;
+            void pollCanvasGenerationTask(node.id, true);
+        },
+        [pollCanvasGenerationTask],
     );
 
     const generateImageFromTextNode = useCallback(
@@ -3330,6 +3687,7 @@ function InfiniteCanvasPage() {
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
                             onRetry={handleNodeRetry}
+                            onRefreshTask={refreshCanvasGenerationTask}
                             onGenerateImage={generateImageFromTextNode}
                             onContextMenu={handleNodeContextMenu}
                         />

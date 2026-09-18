@@ -55,6 +55,7 @@ type CanvasNodeProps = {
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
+    onRefreshTask?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
@@ -75,6 +76,7 @@ type NodeContentRendererProps = {
     onStopEditing: () => void;
     mentionReferences: CanvasResourceReference[];
     onRetry?: (node: CanvasNodeData) => void;
+    onRefreshTask?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
@@ -119,6 +121,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
+    onRefreshTask,
     onGenerateImage,
     onContextMenu,
 }: CanvasNodeProps) {
@@ -418,6 +421,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onContentChange={onContentChange}
                         onStopEditing={() => setIsEditingContent(false)}
                         onRetry={onRetry}
+                        onRefreshTask={onRefreshTask}
                         onGenerateImage={onGenerateImage}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
@@ -448,7 +452,7 @@ export const CanvasNode = React.memo(function CanvasNode({
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent node={props.node} theme={props.theme} onRefreshTask={props.onRefreshTask} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type as CanvasNodeType];
@@ -484,13 +488,53 @@ function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererP
     );
 }
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function formatGenerationDuration(durationMs: number) {
+    const seconds = Math.max(0, Math.floor(durationMs / 1000));
+    const minutes = Math.floor(seconds / 60);
+    return `${minutes.toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+}
+
+function LoadingContent({ node, theme, onRefreshTask }: Pick<NodeContentRendererProps, "node" | "theme" | "onRefreshTask">) {
+    const task = node.metadata?.generationTask;
+    const now = useElapsedClock(Boolean(task));
+    const waitingMs = task?.phase === "rendering"
+        ? node.metadata?.waitingDurationMs || 0
+        : Math.max(node.metadata?.waitingDurationMs || 0, task ? now - task.createdAt : 0);
+    const renderMs = task?.phase === "rendering" ? Math.max(node.metadata?.renderDurationMs || 0, task.resultReceivedAt ? now - task.resultReceivedAt : 0) : 0;
     return (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="text-[10px] tracking-[0.16em]">{task?.phase === "rendering" ? "本地处理中" : task?.progress !== undefined ? `生成中 ${task.progress}%` : "生成中"}</span>
+            {task ? <span className="text-[10px] opacity-70">等待结果 {formatGenerationDuration(waitingMs)}{task.phase === "rendering" ? ` · 本地处理 ${formatGenerationDuration(renderMs)}` : ""}</span> : null}
+            {task && task.phase !== "rendering" ? (
+                <button
+                    type="button"
+                    className="inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[10px] font-medium transition hover:scale-[1.02]"
+                    style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onRefreshTask?.(node);
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                >
+                    <RefreshCw className="size-3" />
+                    刷新结果
+                </button>
+            ) : null}
         </div>
     );
+}
+
+function useElapsedClock(active: boolean) {
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+        if (!active) return;
+        setNow(Date.now());
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [active]);
+    return now;
 }
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
@@ -580,7 +624,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
     if (!props.node.metadata?.content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent node={props.node} theme={props.theme} onRefreshTask={props.onRefreshTask} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
             ) : (

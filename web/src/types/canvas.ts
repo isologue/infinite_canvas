@@ -25,6 +25,25 @@ export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
 export type CanvasGenerationMode = "text" | "image" | "video" | "audio";
 export type CanvasImageGenerationType = "generation" | "edit";
 
+export type CanvasGenerationTaskMetadata = {
+    id: string;
+    kind: "image" | "video";
+    provider: string;
+    model: string;
+    createdAt: number;
+    lastPolledAt?: number;
+    progress?: number;
+    phase: "waiting" | "rendering";
+    resultReceivedAt?: number;
+    logModel?: string;
+    logParams?: unknown;
+    logReported?: boolean;
+    requestParams?: unknown;
+    createResponse?: unknown;
+    referenceImageCount?: number;
+    hasMask?: boolean;
+};
+
 export type CanvasNodeImage = {
     id: string;
     status: CanvasNodeStatus;
@@ -79,6 +98,9 @@ export type CanvasNodeMetadata = {
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
+    generationTask?: CanvasGenerationTaskMetadata;
+    waitingDurationMs?: number;
+    renderDurationMs?: number;
     groupId?: string;
     interactive?: boolean; // Plugin node interaction/move state; see CanvasNodeDefinition.interactionToggle.
 };

@@ -115,6 +115,7 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     return nodes.map((node) => {
         if (node.metadata?.status !== "loading") return node;
         if (node.type === CanvasNodeType.Image && node.metadata.storageKey) return { ...node, metadata: { ...node.metadata, status: "success" as const, errorDetails: undefined } };
+        if (node.metadata.generationTask) return node;
         return { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } };
     });
 }
