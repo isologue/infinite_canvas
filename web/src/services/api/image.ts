@@ -4,7 +4,7 @@ import { buildAiProxyUrl, buildApiUrl, inferModelApiFormat, modelOptionName, res
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { dataUrlToFile } from "@/lib/image-utils";
+import { dataUrlToFile, normalizeImageSource } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
@@ -243,7 +243,7 @@ function resolveImageDataUrl(item: Record<string, unknown>) {
         return `data:image/png;base64,${item.b64_json}`;
     }
     if (typeof item.url === "string" && item.url) {
-        return item.url;
+        return normalizeImageSource(item.url);
     }
     return null;
 }
@@ -448,7 +448,7 @@ function tryParseGeminiImages(payload: unknown) {
         .map((part) => {
             const inlineData = part.inlineData || (part.inline_data ? { mimeType: part.inline_data.mimeType || part.inline_data.mime_type, data: part.inline_data.data } : undefined);
             if (inlineData?.data) return `data:${inlineData.mimeType || "image/png"};base64,${inlineData.data}`;
-            return part.fileData?.fileUri || null;
+            return part.fileData?.fileUri ? normalizeImageSource(part.fileData.fileUri) : null;
         })
         .filter((value): value is string => Boolean(value))
         .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
@@ -477,6 +477,8 @@ function imageTaskId(payload: unknown): string {
     for (const key of ["task_id", "taskId"]) {
         if (typeof payload[key] === "string" || typeof payload[key] === "number") return String(payload[key]).trim();
     }
+    // Gemini async generateContent returns an operation resource as `name`.
+    if (typeof payload.name === "string" && payload.name.trim()) return payload.name.trim();
     for (const key of ["task", "data", "result", "response"]) {
         const id: string = imageTaskId(payload[key]);
         if (id) return id;
@@ -489,6 +491,7 @@ function imageTaskStatus(payload: unknown): string {
     for (const key of ["status", "state"]) {
         if (typeof payload[key] === "string") return payload[key].trim().toLowerCase();
     }
+    if (payload.done === true) return "completed";
     for (const key of ["task", "data", "result", "response"]) {
         const status = imageTaskStatus(payload[key]);
         if (status) return status;
@@ -690,6 +693,10 @@ function aiApiUrl(config: AiConfig, path: string) {
 function imageTaskApiUrl(config: AiConfig, taskId: string) {
     if (config.apiFormat !== "gemini") return aiApiUrl(config, `/images/tasks/${encodeURIComponent(taskId)}`);
     const baseUrl = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/(?:v1beta|v1)$/i, "");
+    if (/^(?:v1beta\/)?operations\//i.test(taskId)) {
+        const operation = taskId.replace(/^v1beta\//i, "");
+        return buildAiProxyUrl(`${baseUrl}/v1beta/${operation}`);
+    }
     return buildAiProxyUrl(`${baseUrl}/v1/images/tasks/${encodeURIComponent(taskId)}`);
 }
 
@@ -1260,7 +1267,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
     }
     const requestPrompt = references.length ? buildImageReferencePromptText(prompt, references) : prompt;
     try {
-        return await withImageApiFormatFallback(requestConfig, async (activeConfig) => {
+        const start = await withImageApiFormatFallback(requestConfig, async (activeConfig) => {
             if (activeConfig.apiFormat === "gemini") {
                 if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
                 return startGeminiImagesOnce(activeConfig, requestPrompt, references, options);
@@ -1304,6 +1311,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
             }
             return references.length ? startOpenAiEdit(activeConfig, requestPrompt, references, mask, 1, options) : startOpenAiGeneration(activeConfig, prompt, 1, options);
         }, { hasMask: Boolean(mask) });
+        return start.mode === "task" ? { ...start, task: { ...start.task, model } } : start;
     } catch (error) {
         throw requestError(error, "请求失败");
     }

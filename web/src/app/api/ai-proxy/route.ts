@@ -60,6 +60,9 @@ async function proxyAiRequest(request: NextRequest) {
                 });
             }
             upstream = await fetch(currentUrl, { method, headers, body: currentBody, cache: "no-store", redirect: "manual", signal: request.signal });
+            if (!isMultipart) {
+                console.info("[ai-proxy] upstream response", { method, targetPath: currentUrl.pathname, status: upstream.status, contentType: upstream.headers.get("content-type") });
+            }
             if (isMultipart) {
                 console.info("[ai-proxy] multipart upstream response", {
                     status: upstream.status,
@@ -92,6 +95,7 @@ async function proxyAiRequest(request: NextRequest) {
         });
         return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: responseHeaders });
     } catch (error) {
+        console.error("[ai-proxy] upstream request failed", { method: request.method, targetPath: target.pathname, error: error instanceof Error ? error.message : String(error) });
         return Response.json({ code: 502, msg: error instanceof Error ? error.message : "\u4e0a\u6e38\u8bf7\u6c42\u5931\u8d25" }, { status: 502 });
     }
 }

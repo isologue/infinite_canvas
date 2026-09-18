@@ -120,8 +120,12 @@ export function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
     });
 }
 
-export function isGenerationCanceled(error: unknown) {
-    return error instanceof Error && (error.message === "请求已取消" || error.name === "AbortError");
+export function isGenerationCanceled(error: unknown): boolean {
+    if (!error || typeof error !== "object") return false;
+    const candidate = error as { name?: unknown; message?: unknown; cause?: unknown };
+    if (candidate.name === "AbortError") return true;
+    if (typeof candidate.message === "string" && /(?:abort|cancel|\u53d6\u6d88)/i.test(candidate.message)) return true;
+    return candidate.cause !== undefined && isGenerationCanceled(candidate.cause);
 }
 
 export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {

@@ -32,6 +32,12 @@ export function getDataUrlByteSize(dataUrl: string) {
     return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
+export function normalizeImageSource(value: string) {
+    const source = value.trim();
+    const markdownLink = source.match(/^!?\[[\s\S]*\]\(\s*<?((?:https?:\/\/|data:|blob:)[^\s>]+)>?\s*\)$/i);
+    return markdownLink?.[1] || source;
+}
+
 export function readFileAsDataUrl(file: File) {
     return new Promise<string>((resolve, reject) => {
         const reader = new FileReader();

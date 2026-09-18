@@ -60,6 +60,7 @@ export function ModelPicker({ config, value, onChange, capability, className, fu
                 <span className="canvas-model-picker-text min-w-0 flex-1 truncate text-left">{current ? modelOptionLabel(config, current) : pickerPlaceholder}</span>
             </SelectTrigger>
             <SelectContent
+                data-canvas-node-panel
                 data-canvas-no-zoom
                 className="z-[1200] w-80 max-w-[calc(100vw-24px)] rounded-xl border border-border/70 bg-popover p-1 shadow-xl"
                 position="popper"

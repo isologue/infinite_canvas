@@ -1,6 +1,7 @@
 import axios, { type AxiosRequestConfig } from "axios";
 
 import { buildApiUrl, type AiConfig, type ModelCapability } from "@/stores/use-config-store";
+import { normalizeImageSource } from "@/lib/image-utils";
 
 type RequestOptions = { signal?: AbortSignal };
 
@@ -379,11 +380,11 @@ export function normalizePluginImages(result: unknown): string[] {
     const items = Array.isArray(result) ? result : [result];
     const urls = items
         .map((item) => {
-            if (typeof item === "string") return item;
+            if (typeof item === "string") return normalizeImageSource(item);
             if (item && typeof item === "object") {
                 const record = item as Record<string, unknown>;
-                if (typeof record.dataUrl === "string") return record.dataUrl;
-                if (typeof record.url === "string") return record.url;
+                if (typeof record.dataUrl === "string") return normalizeImageSource(record.dataUrl);
+                if (typeof record.url === "string") return normalizeImageSource(record.url);
                 if (typeof record.b64_json === "string") return `data:image/png;base64,${record.b64_json}`;
             }
             return "";

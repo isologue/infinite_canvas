@@ -413,6 +413,23 @@ function InfiniteCanvasPage() {
         [clearCanvasTaskTimer],
     );
 
+    const markCanvasTaskCanceled = useCallback(
+        (nodeId: string, taskId: string) => {
+            const current = nodesRef.current.find((item) => item.id === nodeId);
+            if (current?.metadata?.generationTask?.id !== taskId) return;
+            const error = new Error("生成请求已取消，请重新生成");
+            setNodes((prev) =>
+                prev.map((item) =>
+                    item.id === nodeId && item.metadata?.generationTask?.id === taskId
+                        ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, generationTask: undefined, errorDetails: error.message } }
+                        : item,
+                ),
+            );
+            finishCanvasTask(nodeId, undefined, error);
+        },
+        [finishCanvasTask],
+    );
+
     const pollCanvasGenerationTask = useCallback(
         async (nodeId: string, manual = false) => {
             const node = nodesRef.current.find((item) => item.id === nodeId);
@@ -421,7 +438,8 @@ function InfiniteCanvasPage() {
             activeCanvasTaskIdsRef.current.add(nodeId);
             clearCanvasTaskTimer(nodeId);
             const controller = generationRequestsRef.current.get(nodeId)?.controller;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, task.kind), model: task.model };
+            const taskModel = node.metadata?.model || task.model;
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, task.kind), model: taskModel };
             let resultReceivedAt: number | undefined;
             try {
                 let state;
@@ -430,7 +448,7 @@ function InfiniteCanvasPage() {
                         task.kind === "image"
                             ? await pollImageGenerationTask(
                                   generationConfig,
-                                  { id: task.id, provider: task.provider as ImageGenerationTask["provider"], model: task.model, requestParams: task.requestParams, createResponse: task.createResponse },
+                                  { id: task.id, provider: task.provider as ImageGenerationTask["provider"], model: taskModel, requestParams: task.requestParams, createResponse: task.createResponse },
                                   { signal: controller?.signal },
                               )
                             : await pollVideoGenerationTask(
@@ -438,7 +456,7 @@ function InfiniteCanvasPage() {
                                   {
                                       id: task.id,
                                       provider: task.provider as VideoGenerationTask["provider"],
-                                      model: task.model,
+                                      model: taskModel,
                                       createdAt: task.createdAt,
                                       logModel: task.logModel,
                                       logParams: task.logParams,
@@ -447,7 +465,10 @@ function InfiniteCanvasPage() {
                                   { signal: controller?.signal },
                               );
                 } catch (pollError) {
-                    if (isGenerationCanceled(pollError)) return;
+                    if (isGenerationCanceled(pollError)) {
+                        markCanvasTaskCanceled(nodeId, task.id);
+                        return;
+                    }
                     const now = Date.now();
                     setNodes((prev) =>
                         prev.map((item) =>
@@ -590,7 +611,10 @@ function InfiniteCanvasPage() {
                 );
                 finishCanvasTask(nodeId, video);
             } catch (error) {
-                if (isGenerationCanceled(error)) return;
+                if (isGenerationCanceled(error)) {
+                    markCanvasTaskCanceled(nodeId, task.id);
+                    return;
+                }
                 const errorDetails = error instanceof Error ? error.message : "生成失败";
                 const failedAt = Date.now();
                 setNodes((prev) =>
@@ -616,7 +640,7 @@ function InfiniteCanvasPage() {
                 activeCanvasTaskIdsRef.current.delete(nodeId);
             }
         },
-        [clearCanvasTaskTimer, effectiveConfig, finishCanvasTask, message, projectId, scheduleCanvasTaskPoll],
+        [clearCanvasTaskTimer, effectiveConfig, finishCanvasTask, markCanvasTaskCanceled, message, projectId, scheduleCanvasTaskPoll],
     );
 
     useLayoutEffect(() => {
