@@ -52,13 +52,18 @@ description: 当前项目的 Postgres 持久化结构
   - 全站四类资源的自动保留天数和最近清理结果
   - 保留天数 `0` 表示关闭，自动清理跳过 `is_saved=true` 的资源
 
-### 4. 提示词封面缓存
+### 4. 提示词资源
 
-- `prompt_cover_cache`
-  - 提示词库封面缓存
-  - 用于减少外部图片重复请求
-  - 带过期清理与数量上限清理
-
+- `prompt_resources`
+  - 管理员同步提示词来源时，将提示词正文和封面、参考图二进制直接保存到 Postgres。
+  - `kind` 为 `prompt` 或 `image`；图片通过站内资源接口提供，普通用户预览不会再次请求 GitHub 或其他外部图片源。
+  - `status` 为 `active`、`upstream_missing` 或 `admin_deleted`。
+  - 上游完整同步成功但缺少旧条目时标记 `upstream_missing`，仍对用户可见并保留正文和图片。
+  - 管理员单独删除时标记 `admin_deleted`，清理正文和二进制图片，仅保留来源、身份、标题和删除时间等墓碑字段；后续同步不会重新下载。
+  - 删除整个来源时物理删除该来源的全部提示词资源；停用来源只隐藏并停止同步，不删除数据。
+  - 提示词资源没有 TTL、数量上限、自动清理或立即清理逻辑；用户资源的既有清理策略不受影响。
+- `shared_configs.config_key = 'prompt_sources'`
+  - 保存提示词来源配置、启停状态、同步周期和同步状态。
 ## 当前数据隔离方式
 
 当前和用户相关的数据，按 `user_id` 做隔离：
@@ -211,13 +216,28 @@ CREATE TABLE IF NOT EXISTS resource_retention_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS prompt_cover_cache (
-  source_url TEXT PRIMARY KEY,
-  mime_type TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS prompt_resources (
+  id TEXT PRIMARY KEY,
+  source_id TEXT NOT NULL,
+  source_name TEXT NOT NULL DEFAULT '',
+  prompt_id TEXT NOT NULL,
+  identity_key TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('prompt', 'image')),
+  image_role TEXT NOT NULL DEFAULT '',
+  image_index INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'upstream_missing', 'admin_deleted')),
+  title TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  data_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  mime_type TEXT NOT NULL DEFAULT '',
   bytes BIGINT NOT NULL DEFAULT 0,
-  content BYTEA NOT NULL,
-  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  content BYTEA,
+  content_hash TEXT NOT NULL DEFAULT '',
+  last_seen_at TIMESTAMPTZ,
+  deleted_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (source_id, identity_key, kind, image_role, image_index)
 );
 ```
 

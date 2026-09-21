@@ -719,7 +719,6 @@ function buildImageRequestParams(config: AiConfig, extra?: Record<string, unknow
         model: modelOptionName(config.model),
         count: config.count,
         size: (config as { size?: unknown }).size,
-        aspectRatio: (config as { size?: unknown }).size,
         quality: (config as { quality?: unknown }).quality,
         resolution: (config as { resolution?: unknown }).resolution,
         prompt: (config as { prompt?: unknown }).prompt,

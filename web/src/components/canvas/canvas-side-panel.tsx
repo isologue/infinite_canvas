@@ -11,12 +11,11 @@ import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { cn } from "@/lib/utils";
 import { PromptDetailDialog } from "@/views/prompts/components/prompt-detail-dialog";
 import { PromptCover } from "@/components/prompts/prompt-cover";
-import { fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
+import { fetchPublicPromptSources, fetchSourcePrompts, type Prompt } from "@/services/api/prompts";
 import { uploadMediaFile } from "@/services/file-storage";
 import { uploadImage } from "@/services/image-storage";
 import { referenceImageFileError } from "@/lib/reference-image-limits";
 import { useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
-import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
 import { CANVAS_SIDE_PANEL_MAX_WIDTH, CANVAS_SIDE_PANEL_MIN_WIDTH, CANVAS_SIDE_PANEL_MOTION_MS, useCanvasSidePanelStore } from "@/stores/use-canvas-side-panel-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData } from "@/types/canvas";
@@ -479,8 +478,8 @@ function AssetCover({ asset }: { asset: Asset }) {
 
 const CanvasPromptsTab = memo(function CanvasPromptsTab({ onInsert, theme }: { onInsert: (payload: InsertAssetPayload) => void; theme: CanvasTheme }) {
     const { message } = App.useApp();
-    const sources = usePromptSourceStore((state) => state.sources);
-    const enabledSources = useMemo(() => sources.filter((source) => source.enabled), [sources]);
+    const sourceQuery = useQuery({ queryKey: ["public-prompt-sources"], queryFn: fetchPublicPromptSources, staleTime: 60_000 });
+    const enabledSources = sourceQuery.data?.sources || [];
     const [keyword, setKeyword] = useState("");
     const [expanded, setExpanded] = useState<Record<string, boolean>>({});
     const [detail, setDetail] = useState<Prompt | null>(null);

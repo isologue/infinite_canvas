@@ -1,34 +1,31 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-
 import { refreshDueSources } from "@/services/api/prompts";
-import { usePromptSourceStore } from "@/stores/use-prompt-source-store";
+import { useUserStore } from "@/stores/use-user-store";
 
 const CHECK_INTERVAL_MS = 60_000;
 
-/** Periodically update only the sources whose last successful refresh is due. */
 export function usePromptSourceScheduler() {
     const queryClient = useQueryClient();
-    const intervalMinutes = usePromptSourceStore((state) => state.schedule.intervalMinutes);
+    const isAdmin = useUserStore((state) => state.user?.role === "admin");
+    const hydrated = useUserStore((state) => state.hydrated);
 
     useEffect(() => {
-        if (!intervalMinutes) return;
+        if (!hydrated || !isAdmin) return;
         let running = false;
         const tick = async () => {
             if (running) return;
-            const { updateSchedule } = usePromptSourceStore.getState();
             running = true;
             try {
-                const result = await refreshDueSources(intervalMinutes * 60_000);
+                const result = await refreshDueSources();
                 if (!result.results.length) return;
-                updateSchedule("lastFetchedAt", new Date().toISOString());
                 await Promise.all([
                     queryClient.invalidateQueries({ queryKey: ["prompts"] }),
                     queryClient.invalidateQueries({ queryKey: ["side-panel-prompts"] }),
-                    queryClient.invalidateQueries({ queryKey: ["prompt-source-statuses"] }),
+                    queryClient.invalidateQueries({ queryKey: ["prompt-source-settings"] }),
                 ]);
             } catch {
-                // Per-source errors are stored in source state and retried during the next check cycle.
+                // 服务端会保存每个来源的错误，下次检查时继续重试。
             } finally {
                 running = false;
             }
@@ -36,5 +33,5 @@ export function usePromptSourceScheduler() {
         void tick();
         const timer = window.setInterval(() => void tick(), CHECK_INTERVAL_MS);
         return () => window.clearInterval(timer);
-    }, [intervalMinutes, queryClient]);
+    }, [hydrated, isAdmin, queryClient]);
 }

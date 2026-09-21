@@ -212,7 +212,7 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                     <Button icon={<Upload className="size-4" />} onClick={() => configInputRef.current?.click()}>
                         导入配置
                     </Button>
-                    <Button icon={<Download className="size-4" />} onClick={() => exportAppConfig(canManagePromptSources)}>
+                    <Button icon={<Download className="size-4" />} onClick={() => void exportAppConfig(canManagePromptSources).catch((error) => message.error(error instanceof Error ? error.message : "配置导出失败"))}>
                         导出配置
                     </Button>
                     <input ref={configInputRef} type="file" accept="application/json,.json" className="hidden" onChange={(event) => event.target.files?.[0] && void loadConfigFile(event.target.files[0])} />

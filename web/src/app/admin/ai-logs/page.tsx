@@ -215,15 +215,36 @@ export default function AdminAiLogsPage() {
 
 function ImageRequestSettings({ requestParams }: { requestParams: unknown }) {
     const params = requestParams && typeof requestParams === "object" ? (requestParams as Record<string, unknown>) : {};
-    const aspectRatio = params.aspectRatio ?? params.size;
+    const nestedParams = params.params && typeof params.params === "object" && !Array.isArray(params.params) ? (params.params as Record<string, unknown>) : {};
+    const imageConfig = params.imageConfig && typeof params.imageConfig === "object" && !Array.isArray(params.imageConfig) ? (params.imageConfig as Record<string, unknown>) : {};
+    const size = nestedParams.size ?? params.size;
+    const resolution = nestedParams.resolution ?? params.resolution ?? imageConfig.imageSize;
+    const quality = nestedParams.quality ?? params.quality;
+    const aspectRatio = nestedParams.aspectRatio ?? params.aspectRatio ?? imageConfig.aspectRatio ?? imageRatioFromSize(size);
     return (
         <div className="flex flex-col gap-2">
             <div className="text-stone-500">生图配置</div>
-            <DetailRow label="分辨率" value={displayRequestParam(params.resolution)} />
+            <DetailRow label="分辨率" value={displayRequestParam(resolution)} />
+            <DetailRow label="尺寸" value={displayRequestParam(size)} />
             <DetailRow label="宽高比" value={displayRequestParam(aspectRatio)} />
-            <DetailRow label="质量" value={displayRequestParam(params.quality)} />
+            <DetailRow label="质量" value={displayRequestParam(quality)} />
         </div>
     );
+}
+
+function imageRatioFromSize(value: unknown) {
+    if (typeof value !== "string") return undefined;
+    const match = value.trim().match(/^(\d+)x(\d+)$/i);
+    if (!match) return value.includes(":") ? value : undefined;
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    if (!width || !height) return undefined;
+    const divisor = greatestCommonDivisor(width, height);
+    return `${width / divisor}:${height / divisor}`;
+}
+
+function greatestCommonDivisor(a: number, b: number): number {
+    return b ? greatestCommonDivisor(b, a % b) : a;
 }
 
 function displayDurationSeconds(value: number | null | undefined) {
