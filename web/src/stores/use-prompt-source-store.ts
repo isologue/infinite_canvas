@@ -35,9 +35,7 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
             addSource: () => createPromptSource(),
             saveSource: (source) =>
                 set((state) => ({
-                    sources: state.sources.some((item) => item.id === source.id)
-                        ? state.sources.map((item) => (item.id === source.id && !item.builtIn ? createPromptSource(source) : item))
-                        : [...state.sources, createPromptSource(source)],
+                    sources: state.sources.some((item) => item.id === source.id) ? state.sources.map((item) => (item.id === source.id && !item.builtIn ? createPromptSource(source) : item)) : [...state.sources, createPromptSource(source)],
                 })),
             removeSource: (id) => set((state) => ({ sources: state.sources.filter((item) => item.id !== id) })),
             toggleSource: (id, enabled) => set((state) => ({ sources: state.sources.map((item) => (item.id === id ? { ...item, enabled } : item)) })),
@@ -45,6 +43,15 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
         }),
         {
             name: PROMPT_SOURCE_STORE_KEY,
+            version: 1,
+            migrate: (persistedState, version) => {
+                const state = (persistedState || {}) as { sources?: PromptSource[]; schedule?: Partial<PromptSourceSchedule> };
+                const sources = Array.isArray(state.sources) ? state.sources : DEFAULT_PROMPT_SOURCES;
+                const schedule = { ...defaultSchedule, ...(state.schedule || {}) };
+                if (version >= 1) return { sources, schedule };
+                const source = DEFAULT_PROMPT_SOURCES.find((item) => item.id === "tigerowo-gpt-image-2-prompts");
+                return { sources: source && !sources.some((item) => item.id === source.id) ? [...sources, source] : sources, schedule };
+            },
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;
