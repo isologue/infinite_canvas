@@ -14,6 +14,7 @@ export function PromptCard({
     actionType = "text",
     extraAction,
     compact = false,
+    onTagClick,
 }: {
     item: Prompt;
     onOpen: () => void;
@@ -23,6 +24,7 @@ export function PromptCard({
     actionType?: "text" | "primary";
     extraAction?: ReactNode;
     compact?: boolean;
+    onTagClick?: (tag: string) => void;
 }) {
     return (
         <Card
@@ -44,7 +46,14 @@ export function PromptCard({
                     <p className="mt-2 line-clamp-3 text-xs leading-5 text-stone-600 dark:text-stone-400">{item.description || item.prompt}</p>
                     <div className="mt-3 flex flex-wrap gap-1.5">
                         {item.tags.map((tag) => (
-                            <Tag key={tag} className="m-0 text-[11px]">
+                            <Tag
+                                key={tag}
+                                className={onTagClick ? "m-0 cursor-pointer text-[11px]" : "m-0 text-[11px]"}
+                                role={onTagClick ? "button" : undefined}
+                                tabIndex={onTagClick ? 0 : undefined}
+                                onClick={onTagClick ? (event) => { event.stopPropagation(); onTagClick(tag); } : undefined}
+                                onKeyDown={onTagClick ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onTagClick(tag); } } : undefined}
+                            >
                                 {tag}
                             </Tag>
                         ))}

@@ -39,7 +39,7 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
                         ? state.sources.map((item) => (item.id === source.id && !item.builtIn ? createPromptSource(source) : item))
                         : [...state.sources, createPromptSource(source)],
                 })),
-            removeSource: (id) => set((state) => ({ sources: state.sources.filter((item) => item.id !== id || item.builtIn) })),
+            removeSource: (id) => set((state) => ({ sources: state.sources.filter((item) => item.id !== id) })),
             toggleSource: (id, enabled) => set((state) => ({ sources: state.sources.map((item) => (item.id === id ? { ...item, enabled } : item)) })),
             updateSchedule: (key, value) => set((state) => ({ schedule: { ...state.schedule, [key]: value } })),
         }),
@@ -48,11 +48,8 @@ export const usePromptSourceStore = create<PromptSourceStore>()(
             partialize: (state) => ({ sources: state.sources, schedule: state.schedule }),
             merge: (persisted, current) => {
                 const persistedState = (persisted || {}) as Partial<PromptSourceStore>;
-                const savedSources = Array.isArray(persistedState.sources) ? persistedState.sources : [];
-                const enabledById = new Map(savedSources.map((source) => [source.id, source.enabled]));
-                const builtIn = DEFAULT_PROMPT_SOURCES.map((source) => ({ ...source, enabled: enabledById.get(source.id) ?? source.enabled }));
-                const custom = savedSources.filter((source) => !source.builtIn).map((source) => createPromptSource(source));
-                return { ...current, sources: [...builtIn, ...custom], schedule: { ...defaultSchedule, ...(persistedState.schedule || {}) } };
+                if (!Array.isArray(persistedState.sources)) return { ...current, schedule: { ...defaultSchedule, ...(persistedState.schedule || {}) } };
+                return { ...current, sources: persistedState.sources.map((source) => createPromptSource(source)), schedule: { ...defaultSchedule, ...(persistedState.schedule || {}) } };
             },
         },
     ),

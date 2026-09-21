@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { PromptDetailDialog } from "@/views/prompts/components/prompt-detail-dialog";
+import { PromptCover } from "@/components/prompts/prompt-cover";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { fetchSourcePrompts, refreshSource, type Prompt } from "@/services/api/prompts";
@@ -75,7 +76,7 @@ export function PromptSourceContentModal({ source, onClose }: { source: PromptSo
                             title: t("config.promptSources.content.cover"),
                             dataIndex: "coverUrl",
                             width: 72,
-                            render: (coverUrl: string) => (coverUrl ? <img src={coverUrl} alt="" className="size-12 rounded object-cover" /> : <div className="size-12 rounded bg-stone-100 dark:bg-stone-800" />),
+                            render: (coverUrl: string) => (coverUrl ? <PromptCover src={coverUrl} alt="" className="size-12 rounded object-cover" /> : <div className="size-12 rounded bg-stone-100 dark:bg-stone-800" />),
                         },
                         {
                             title: t("config.promptSources.content.titleColumn"),
