@@ -218,13 +218,11 @@ function ImageRequestSettings({ requestParams }: { requestParams: unknown }) {
     const nestedParams = params.params && typeof params.params === "object" && !Array.isArray(params.params) ? (params.params as Record<string, unknown>) : {};
     const imageConfig = params.imageConfig && typeof params.imageConfig === "object" && !Array.isArray(params.imageConfig) ? (params.imageConfig as Record<string, unknown>) : {};
     const size = nestedParams.size ?? params.size;
-    const resolution = nestedParams.resolution ?? params.resolution ?? imageConfig.imageSize;
     const quality = nestedParams.quality ?? params.quality;
     const aspectRatio = nestedParams.aspectRatio ?? params.aspectRatio ?? imageConfig.aspectRatio ?? imageRatioFromSize(size);
     return (
         <div className="flex flex-col gap-2">
             <div className="text-stone-500">生图配置</div>
-            <DetailRow label="分辨率" value={displayRequestParam(resolution)} />
             <DetailRow label="尺寸" value={displayRequestParam(size)} />
             <DetailRow label="宽高比" value={displayRequestParam(aspectRatio)} />
             <DetailRow label="质量" value={displayRequestParam(quality)} />
@@ -254,7 +252,7 @@ function displayDurationSeconds(value: number | null | undefined) {
 function displayRequestParam(value: unknown) {
     if (typeof value === "string" && value.trim()) return value;
     if (typeof value === "number" || typeof value === "boolean") return String(value);
-    return "-";
+    return "未传递";
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
