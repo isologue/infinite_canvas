@@ -69,7 +69,7 @@ type ResponseApiPayload = {
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
 export type GeneratedImage = { id: string; dataUrl: string };
-export type ImageGenerationTask = { id: string; provider: "openai" | "gemini"; model: string; requestParams: unknown; createResponse?: unknown };
+export type ImageGenerationTask = { id: string; provider: "openai" | "gemini"; model: string; requestParams: unknown; createResponse?: unknown; pollPath?: "/images/edits" | "/images/generations"; pollUrl?: string };
 export type ImageGenerationStart =
     | { mode: "immediate"; images: GeneratedImage[]; requestParams: unknown; responseResult: unknown }
     | { mode: "task"; task: ImageGenerationTask };
@@ -96,6 +96,7 @@ type GeminiPayload = {
 };
 type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseToolCall[]; error?: string };
 type RequestOptions = { signal?: AbortSignal };
+type OpenAiImagePollPath = "/images/edits" | "/images/generations";
 
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
@@ -142,7 +143,7 @@ function normalizeBackground(background: string | undefined) {
 }
 
 function normalizeImageResponseFormat(value: AiConfig["imageResponseFormat"]) {
-    return value === "url" || value === "b64_json" ? value : undefined;
+    return value === "b64_json" ? "b64_json" : "url";
 }
 
 /** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
@@ -266,6 +267,7 @@ async function startImagesWithAsyncFallback(input: {
     create: (asyncMode: boolean) => Promise<unknown>;
     requestParams: (asyncMode: boolean) => unknown;
     parseImmediate: (payload: unknown) => GeneratedImage[] | null;
+    pollPath?: OpenAiImagePollPath;
 }): Promise<ImageGenerationStart> {
     const create = async (asyncMode: boolean) => {
         const requestParams = prepareAiLogValue(input.requestParams(asyncMode));
@@ -309,6 +311,7 @@ async function startImagesWithAsyncFallback(input: {
     }
     const taskId = imageTaskId(result.payload);
     if (taskId) {
+        const pollUrl = imageTaskPollUrl(result.payload);
         return {
             mode: "task",
             task: {
@@ -317,6 +320,8 @@ async function startImagesWithAsyncFallback(input: {
                 model: input.config.model,
                 requestParams: result.requestParams,
                 createResponse: prepareAiLogValue(result.payload),
+                ...(input.pollPath ? { pollPath: input.pollPath } : {}),
+                ...(pollUrl ? { pollUrl } : {}),
             },
         };
     }
@@ -336,7 +341,7 @@ async function requestImagesWithAsyncFallback(input: {
     const start = await startImagesWithAsyncFallback(input);
     if (start.mode === "immediate") return start.images;
     try {
-        return await pollImageTask({ ...input.config, apiFormat: start.task.provider }, start.task.id, input.parseImmediate, input.options);
+        return await pollImageTask({ ...input.config, apiFormat: start.task.provider }, start.task, input.parseImmediate, input.options);
     } catch (error) {
         throw markImageTaskExecutionError(error);
     }
@@ -486,6 +491,18 @@ function imageTaskId(payload: unknown): string {
     return typeof payload.id === "string" || typeof payload.id === "number" ? String(payload.id).trim() : "";
 }
 
+function imageTaskPollUrl(payload: unknown): string {
+    if (!isRecord(payload)) return "";
+    for (const key of ["poll_url", "pollUrl"]) {
+        if (typeof payload[key] === "string" && /^https?:\/\//i.test(payload[key].trim())) return payload[key].trim();
+    }
+    for (const key of ["task", "data", "result", "response"]) {
+        const url = imageTaskPollUrl(payload[key]);
+        if (url) return url;
+    }
+    return "";
+}
+
 function imageTaskStatus(payload: unknown): string {
     if (!isRecord(payload)) return "";
     for (const key of ["status", "state"]) {
@@ -516,10 +533,7 @@ function imageTaskProgress(payload: unknown): number | undefined {
 export async function pollImageGenerationTask(config: AiConfig, task: ImageGenerationTask, options?: RequestOptions): Promise<ImageGenerationTaskState> {
     const taskConfig = { ...resolveModelRequestConfig(config, task.model), apiFormat: task.provider };
     try {
-        const response = await axios.get<unknown>(imageTaskApiUrl(taskConfig, task.id), {
-            headers: task.provider === "gemini" ? geminiHeaders(taskConfig) : aiHeaders(taskConfig),
-            signal: options?.signal,
-        });
+        const response = await requestImageTaskStatus(taskConfig, task, options);
         const payload = response.data;
         const errorMessage = readPayloadError(payload);
         if (errorMessage) return { status: "failed", error: errorMessage, responseResult: payload };
@@ -534,16 +548,13 @@ export async function pollImageGenerationTask(config: AiConfig, task: ImageGener
     }
 }
 
-async function pollImageTask(config: AiConfig, taskId: string, preferred: (payload: unknown) => GeneratedImage[] | null, options?: RequestOptions) {
+async function pollImageTask(config: AiConfig, task: ImageGenerationTask, preferred: (payload: unknown) => GeneratedImage[] | null, options?: RequestOptions) {
     let consecutiveErrors = 0;
     let initialNotFound = 0;
     for (let attempt = 0; attempt < IMAGE_TASK_MAX_ATTEMPTS; attempt += 1) {
         if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
         try {
-            const response = await axios.get<unknown>(imageTaskApiUrl(config, taskId), {
-                headers: config.apiFormat === "gemini" ? geminiHeaders(config) : aiHeaders(config),
-                signal: options?.signal,
-            });
+            const response = await requestImageTaskStatus(config, task, options);
             consecutiveErrors = 0;
             const payload = response.data;
             const errorMessage = readPayloadError(payload);
@@ -688,6 +699,34 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildAiProxyUrl(buildApiUrl(config.baseUrl, path));
+}
+
+async function requestImageTaskStatus(config: AiConfig, task: ImageGenerationTask, options?: RequestOptions) {
+    if (task.pollUrl) {
+        return axios.get<unknown>(buildAiProxyUrl(task.pollUrl), {
+            headers: config.apiFormat === "gemini" ? geminiHeaders(config) : aiHeaders(config),
+            signal: options?.signal,
+        });
+    }
+    if (config.apiFormat !== "gemini" && task.pollPath) {
+        try {
+            return await axios.get<unknown>(imageTaskApiUrl(config, task.id), {
+                headers: aiHeaders(config),
+                signal: options?.signal,
+            });
+        } catch (error) {
+            const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+            if (!status || ![400, 404, 405, 415, 422].includes(status)) throw error;
+            return axios.post<unknown>(aiApiUrl(config, task.pollPath), { model: task.model, task_id: task.id }, {
+                headers: aiHeaders(config, "application/json"),
+                signal: options?.signal,
+            });
+        }
+    }
+    return axios.get<unknown>(imageTaskApiUrl(config, task.id), {
+        headers: config.apiFormat === "gemini" ? geminiHeaders(config) : aiHeaders(config),
+        signal: options?.signal,
+    });
 }
 
 function imageTaskApiUrl(config: AiConfig, taskId: string) {
@@ -1134,6 +1173,7 @@ async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number
         create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
         requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+        pollPath: "/images/generations",
     });
 }
 
@@ -1193,6 +1233,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
                 "image[]": files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })),
             }),
             parseImmediate,
+            pollPath: "/images/edits",
         });
     }
 
@@ -1216,6 +1257,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
         requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+        pollPath: "/images/edits",
     });
 }
 
@@ -1226,7 +1268,7 @@ async function requestOpenAiEdit(config: AiConfig, prompt: string, references: R
 async function finishImageGenerationStart(config: AiConfig, start: ImageGenerationStart, options?: RequestOptions) {
     if (start.mode === "immediate") return start.images;
     try {
-        return await pollImageTask({ ...config, apiFormat: start.task.provider }, start.task.id, (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload), options);
+        return await pollImageTask({ ...config, apiFormat: start.task.provider }, start.task, (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload), options);
     } catch (error) {
         throw markImageTaskExecutionError(error);
     }
@@ -1306,6 +1348,7 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                         ...(asyncMode ? { async: true } : {}),
                     }),
                     parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+                    pollPath: "/images/generations",
                 });
             }
             return references.length ? startOpenAiEdit(activeConfig, requestPrompt, references, mask, 1, options) : startOpenAiGeneration(activeConfig, prompt, 1, options);

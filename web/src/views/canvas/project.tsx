@@ -448,7 +448,7 @@ function InfiniteCanvasPage() {
                         task.kind === "image"
                             ? await pollImageGenerationTask(
                                   generationConfig,
-                                  { id: task.id, provider: task.provider as ImageGenerationTask["provider"], model: taskModel, requestParams: task.requestParams, createResponse: task.createResponse },
+                                  { id: task.id, provider: task.provider as ImageGenerationTask["provider"], model: taskModel, requestParams: task.requestParams, createResponse: task.createResponse, pollPath: task.pollPath, pollUrl: task.pollUrl },
                                   { signal: controller?.signal },
                               )
                             : await pollVideoGenerationTask(

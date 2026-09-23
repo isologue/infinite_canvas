@@ -7,7 +7,7 @@ import i18n from "@/i18n";
 
 export type ApiCallFormat = "openai" | "gemini" | "ark" | "minimax";
 export type ApiFormatMode = "auto" | "manual";
-export type ImageResponseFormat = "" | "url" | "b64_json";
+export type ImageResponseFormat = "url" | "b64_json";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -81,7 +81,7 @@ export const defaultConfig: AiConfig = {
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
-    imageResponseFormat: "",
+    imageResponseFormat: "url",
     channels: [
         {
             id: "default",
@@ -90,7 +90,7 @@ export const defaultConfig: AiConfig = {
             apiKey: "",
             apiFormat: "openai",
             apiFormatMode: "auto",
-            imageResponseFormat: "",
+            imageResponseFormat: "url",
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
@@ -317,7 +317,7 @@ export function incompatibleModelNames(models: ChannelModel[], apiFormat: ApiCal
 }
 
 function normalizeImageResponseFormat(value: unknown): ImageResponseFormat {
-    return value === "url" || value === "b64_json" ? value : "";
+    return value === "b64_json" ? "b64_json" : "url";
 }
 
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {

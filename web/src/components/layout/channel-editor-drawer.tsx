@@ -21,7 +21,6 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
 ];
 
 const imageResponseFormatOptions: Array<{ label: string; value: ImageResponseFormat }> = [
-    { label: "不指定（不传）", value: "" },
     { label: "URL", value: "url" },
     { label: "Base64", value: "b64_json" },
 ];
@@ -122,8 +121,8 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                 </label>
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">图片返回格式</span>
-                    <Select className="w-full" value={draft.imageResponseFormat || ""} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
-                    <span className="mt-1 block text-xs text-stone-500">仅影响图片接口的 response_format；不指定时不发送该字段。</span>
+                    <Select className="w-full" value={draft.imageResponseFormat} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
+                    <span className="mt-1 block text-xs text-stone-500">图片接口默认发送 response_format=url。</span>
                 </label>
             </div>
 

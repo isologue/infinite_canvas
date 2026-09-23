@@ -40,6 +40,8 @@ export type CanvasGenerationTaskMetadata = {
     logReported?: boolean;
     requestParams?: unknown;
     createResponse?: unknown;
+    pollPath?: "/images/edits" | "/images/generations";
+    pollUrl?: string;
     referenceImageCount?: number;
     hasMask?: boolean;
 };

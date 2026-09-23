@@ -10,7 +10,7 @@ const defaultConfig = {
     baseUrl: "https://api.openai.com",
     apiKey: "",
     apiFormat: "openai",
-    imageResponseFormat: "",
+    imageResponseFormat: "url",
     channels: [
         {
             id: "default",
@@ -18,7 +18,7 @@ const defaultConfig = {
             baseUrl: "https://api.openai.com",
             apiKey: "",
             apiFormat: "openai",
-            imageResponseFormat: "",
+            imageResponseFormat: "url",
             models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
         },
     ],
@@ -190,7 +190,7 @@ async function ensureUserConfigSchema() {
      const locked = lockedChannelBaseUrls()[0] || "https://moai.wiki";
      return {
         ...defaultConfig,
-        channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", imageResponseFormat: "", models: [] }],
+        channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", imageResponseFormat: "url", models: [] }],
         model: "",
         imageModel: "",
         videoModel: "",
