@@ -82,6 +82,7 @@ type GeminiPart = {
     inlineData?: { mimeType?: string; data?: string };
     inline_data?: { mime_type?: string; mimeType?: string; data?: string };
     fileData?: { mimeType?: string; fileUri?: string };
+    file_data?: { mime_type?: string; file_uri?: string };
     functionCall?: { id?: string; name?: string; args?: Record<string, unknown> };
     functionResponse?: { id?: string; name?: string; response?: Record<string, unknown> };
     thoughtSignature?: string;
@@ -453,7 +454,8 @@ function tryParseGeminiImages(payload: unknown) {
         .map((part) => {
             const inlineData = part.inlineData || (part.inline_data ? { mimeType: part.inline_data.mimeType || part.inline_data.mime_type, data: part.inline_data.data } : undefined);
             if (inlineData?.data) return `data:${inlineData.mimeType || "image/png"};base64,${inlineData.data}`;
-            return part.fileData?.fileUri ? normalizeImageSource(part.fileData.fileUri) : null;
+            const fileUri = part.fileData?.fileUri || part.file_data?.file_uri;
+            return fileUri ? normalizeImageSource(fileUri) : null;
         })
         .filter((value): value is string => Boolean(value))
         .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
@@ -469,7 +471,7 @@ function findTaskImages(payload: unknown, depth = 0): GeneratedImage[] | null {
         return images.length ? images : null;
     }
     if (!isRecord(payload)) return null;
-    for (const key of ["images", "data", "result", "output", "response"]) {
+    for (const key of ["images", "data", "result", "output", "response", "finalResponse"]) {
         const images = findTaskImages(payload[key], depth + 1);
         if (images?.length) return images;
     }
