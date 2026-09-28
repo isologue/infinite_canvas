@@ -5,7 +5,7 @@ import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
-import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
+import { buildAiErrorResponseResult, generationDurationSeconds, prepareAiLogValue, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
@@ -31,6 +31,7 @@ export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: stri
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance" | "minimax" | "plugin"; model: string; createdAt: number; logModel?: string; logParams?: unknown; logReported?: boolean };
 export type VideoGenerationTaskState = { status: "pending"; progress?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; responseResult?: unknown };
 type VideoGenerationTaskHandle = Pick<VideoGenerationTask, "id" | "provider" | "model">;
+type CaptureRequestParams = (params: unknown) => void;
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
@@ -103,34 +104,24 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
     const logExtras = {
         createdAt,
         logModel: modelOptionName(selectedModel),
-        logParams: {
-            model: modelOptionName(selectedModel),
-            promptLength: prompt.length,
-            aspectRatio: requestConfig.apiFormat === "ark" ? normalizeSeedanceRatio(requestConfig.size) : normalizeVideoAspectRatio(requestConfig.size),
-            size: requestConfig.apiFormat === "ark" ? undefined : requestConfig.apiFormat === "minimax" ? normalizeMiniMaxSize(requestConfig.size, requestConfig.vquality) : normalizeVideoSize(requestConfig.size),
-            resolution: requestConfig.apiFormat === "ark" ? normalizeSeedanceResolution(requestConfig.vquality) : normalizeVideoResolution(requestConfig.vquality),
-            duration: requestConfig.apiFormat === "ark" ? normalizeSeedanceDuration(requestConfig.videoSeconds) : normalizeVideoSeconds(requestConfig.videoSeconds),
-            videoSeconds: requestConfig.apiFormat === "ark" ? normalizeSeedanceDuration(requestConfig.videoSeconds) : normalizeVideoSeconds(requestConfig.videoSeconds),
-            workflowId: requestConfig.apiFormat === "minimax" ? resolveMiniMaxWorkflow(requestConfig.videoWorkflowId, references.length, videoReferences.length, audioReferences.length) : undefined,
-            generateAudio: boolConfig(requestConfig.videoGenerateAudio, true),
-            watermark: boolConfig(requestConfig.videoWatermark, false),
-            ...buildReferenceAssetLogParams({ images: references.length, videos: videoReferences.length, audios: audioReferences.length }),
-        },
     };
+    let requestParams: unknown;
+    const captureRequestParams: CaptureRequestParams = (params) => { requestParams = prepareAiLogValue(params); };
+    const attachLog = (task: VideoGenerationTaskHandle): VideoGenerationTask => ({ ...task, ...logExtras, logParams: requestParams });
     try {
         const script = resolveModelScript(config, selectedModel);
-        if (script) return { ...(await createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options)), ...logExtras };
+        if (script) return attachLog(await createPluginVideoTask(requestConfig, selectedModel, script, prompt, references, options));
         assertVideoConfig(requestConfig, requestConfig.model);
         if (requestConfig.apiFormat === "minimax") {
-            return { ...(await createMiniMaxVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...logExtras };
+            return attachLog(await createMiniMaxVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options, captureRequestParams));
         }
         if (isSeedanceVideoConfig(requestConfig)) {
-            return { ...(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options)), ...logExtras };
+            return attachLog(await createSeedanceTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options, captureRequestParams));
         }
         if (videoReferences.length || audioReferences.length) {
             throw new Error("当前视频接口不支持参考视频或参考音频，请切换到 Seedance 2.0 / 火山 Agent Plan 模型，或移除参考资产");
         }
-        return { ...(await createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options)), ...logExtras };
+        return attachLog(await createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, options, captureRequestParams));
     } catch (error) {
         void reportAiCall({
             kind: "video",
@@ -138,7 +129,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             status: "failed",
             reason: `video generation: ${logExtras.logModel}`,
             durationSeconds: generationDurationSeconds(createdAt),
-            requestParams: logExtras.logParams,
+            requestParams,
             responseResult: buildAiErrorResponseResult(error),
             errorMessage: error instanceof Error ? error.message : String(error),
         });
@@ -202,17 +193,20 @@ export async function storeGeneratedVideo(result: VideoGenerationResult, title =
     throw new Error("视频接口没有返回可播放的视频");
 }
 
-async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
+async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
     const body = new FormData();
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
     body.append("aspect_ratio", normalizeVideoAspectRatio(config.size));
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
+    const seconds = normalizeVideoSeconds(config.videoSeconds);
+    body.append("seconds", seconds);
+    body.append("duration", seconds);
     if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("preset", "normal");
     const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("input_reference[]", file));
+    captureRequestParams?.(formDataRequestParams(body));
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");
@@ -222,7 +216,17 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     }
 }
 
-async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
+function formDataRequestParams(formData: FormData) {
+    const params: Record<string, unknown> = {};
+    for (const [key, value] of formData.entries()) {
+        if (!(key in params)) params[key] = value;
+        else if (Array.isArray(params[key])) (params[key] as unknown[]).push(value);
+        else params[key] = [params[key], value];
+    }
+    return params;
+}
+
+async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
     const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length);
     const body = new FormData();
     body.append("model", modelOptionName(model));
@@ -237,6 +241,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
     videoFiles.forEach((file) => body.append("reference_videos", file));
     const audioFiles = await Promise.all(audioReferences.slice(0, 3).map((audio) => referenceMediaFile(audio.storageKey, audio.url, audio.name, audio.type)));
     audioFiles.forEach((file) => body.append("reference_audios", file));
+    captureRequestParams?.(formDataRequestParams(body));
     try {
         const response = await axios.post<MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal });
         const created = unwrapMiniMaxResponse(response.data);
@@ -318,7 +323,7 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
     }
 }
 
-async function createSeedanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
+async function createSeedanceTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
     if (audioReferences.length && !references.length && !videoReferences.length) {
         throw new Error("Seedance 参考音频不能单独使用，请同时添加参考图或参考视频");
     }
@@ -336,6 +341,7 @@ async function createSeedanceTask(config: AiConfig, model: string, prompt: strin
         watermark: boolConfig(config.videoWatermark, false),
     };
 
+    captureRequestParams?.(payload);
     try {
         const created = unwrapSeedanceTask((await axios.post<ApiEnvelope<SeedanceTask>>(seedanceApiUrl(config), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
         if (!created.id) throw new Error("Seedance 接口没有返回任务 ID");

@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 视频调用日志请求参数：OpenAI 视频记录应与发送的 multipart 字段一致（`model`、`prompt`、`aspect_ratio`、`seconds`、`duration`（两者秒数一致）、非自动时的 `size`、`resolution_name`、`preset` 和实际上传的 `input_reference[]`）；不再出现未传的 `videoSeconds` 等摘要字段。MiniMax 视频与 Seedance 记录也应显示各自实际请求体字段；多个文件保留同名字段及文件名、类型、大小，成功和失败均可查看。自定义调用脚本没有固定请求体时，不应把输入配置伪装成上游请求。
+
 - Gemini 异步生图：轮询成功响应中的 `response.candidates[].content.parts[].file_data.file_uri` 应能提取并保存图片；以 `finalResponse` 包裹的同类响应也应能识别，不能把 `succeeded` 误判为“没有返回图片”。
 
 - OpenAI 异步生图兼容：上游创建接口返回 `task_id` 时，没有 `poll_url` 应先按旧协议 GET `/v1/images/tasks/{task_id}`，协议不支持时再按任务类型 POST `/v1/images/generations` 或 `/v1/images/edits` 查询；若创建响应提供 `poll_url`，应优先按该 URL GET 查询，并继续解析排队、处理中和完成状态。
