@@ -5,6 +5,8 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- 画布系统剪切板粘贴：从 Windows 文件管理器复制 PNG、JPG、GIF、WebP、BMP 或 SVG 图片后，在画布空白处按 `Ctrl+V` 应直接上传并创建图片节点；多图应全部创建且错开显示，文件 MIME 为空但扩展名正确时仍可识别。截图、聊天软件复制图片、纯文本和画布内部节点/连线复制粘贴应保持正常，在输入框和可编辑区域粘贴不得被画布截获。
+
 - 视频调用日志请求参数：OpenAI 视频记录应与发送的 multipart 字段一致（`model`、`prompt`、`aspect_ratio`、`seconds`、`duration`（两者秒数一致）、非自动时的 `size`、`resolution_name`、`preset` 和实际上传的 `input_reference[]`）；不再出现未传的 `videoSeconds` 等摘要字段。MiniMax 视频与 Seedance 记录也应显示各自实际请求体字段；多个文件保留同名字段及文件名、类型、大小，成功和失败均可查看。自定义调用脚本没有固定请求体时，不应把输入配置伪装成上游请求。
 
 - Gemini 异步生图：轮询成功响应中的 `response.candidates[].content.parts[].file_data.file_uri` 应能提取并保存图片；以 `finalResponse` 包裹的同类响应也应能识别，不能把 `succeeded` 误判为“没有返回图片”。
