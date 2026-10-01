@@ -4,7 +4,7 @@ import { buildAiProxyUrl, buildApiUrl, inferModelApiFormat, modelOptionName, res
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { dataUrlToFile, normalizeImageSource } from "@/lib/image-utils";
+import { normalizeImageSource } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
@@ -1183,61 +1183,12 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
     return finishImageGenerationStart(config, await startOpenAiGeneration(config, prompt, n, options), options);
 }
 
-function isGrokImageModel(model: string) {
-    return /(^|[/:._-])grok(?:$|[/:._-])/i.test(model);
-}
-
 async function startOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
     const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const requestPrompt = withSystemPrompt(config, prompt);
-
-    if (isGrokImageModel(config.model)) {
-        if (mask) throw new Error("Grok 图像编辑接口暂不支持蒙版编辑");
-        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-        const parseImmediate = (value: unknown) => tryParseOpenAiImages(value) || tryParseGeminiImages(value);
-        return startImagesWithAsyncFallback({
-            key: imageTaskKey(config, "/images/edits:multipart"),
-            config,
-            create: async (asyncMode) => {
-                const form = new FormData();
-                form.set("model", config.model);
-                form.set("prompt", requestPrompt);
-                form.set("n", String(n));
-                if (responseFormat) form.set("response_format", responseFormat);
-                if (requestSize) form.set("size", requestSize);
-                if (asyncMode) form.set("async", "true");
-                files.forEach((file) => form.append("image[]", file, file.name));
-
-                console.info("[image-edit:grok] multipart prepared", {
-                    model: config.model,
-                    async: asyncMode,
-                    referenceCount: references.length,
-                    fileCount: files.length,
-                    files: files.map((file) => ({ name: file.name, size: file.size, type: file.type })),
-                    imageFieldCount: form.getAll("image[]").length,
-                });
-
-                return (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), form, {
-                    headers: aiHeaders(config),
-                    signal: options?.signal,
-                })).data;
-            },
-            requestParams: (asyncMode) => ({
-                model: config.model,
-                prompt: requestPrompt,
-                n,
-                ...(responseFormat ? { response_format: responseFormat } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                ...(asyncMode ? { async: true } : {}),
-                "image[]": files.map((file) => ({ name: file.name, type: file.type, bytes: file.size })),
-            }),
-            parseImmediate,
-            pollPath: "/images/edits",
-        });
-    }
 
     const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
     const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;

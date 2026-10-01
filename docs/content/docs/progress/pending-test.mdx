@@ -96,7 +96,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 配置与用户偏好：管理员导出 JSON 后应包含渠道、默认模型、生成偏好、提示词来源和 WebDAV 配置，普通用户导出的文件不得包含提示词来源，导入时也不得修改来源配置；在修改当前配置后重新导入该文件，应恢复有权限导出的设置，错误 JSON 文件应提示格式不正确。配置文件包含 API Key 和 WebDAV 凭据，不应公开分享。
 - Image protocol fallback: models whose names contain `grok` must use the OpenAI protocol and must not switch to Gemini because of a creation or async polling failure; only a clear protocol/request-shape error during task creation may try the reverse protocol when the model is not identified as belonging to the other protocol; polling failures after receiving a task ID must never switch protocols again.
 - 模型渠道协议：渠道编辑可选择「火山方舟」并自动填入方舟接口地址；任意名称的生图模型应按方舟 JSON 格式提交参考图，任意名称的视频模型应按方舟任务格式提交和查询，不再依赖模型名包含 `doubao`、`seedream` 或 `seedance`；1080p 不应再因模型名包含 `fast` 被禁用，参考视频应允许最大 200MB、总像素 409600-8295044，并继续校验官方宽高、比例和时长限制。
-- Image edit protocols: models whose names contain `grok` must call `/images/edits` with `multipart/form-data`, repeat reference files under `image[]`, preserve the real JPEG/PNG MIME type, omit JSON-only fields such as `quality` and `background`, and reject mask editing with a clear message; ordinary OpenAI models continue to use JSON `images[].image_url` editing, while Ark continues to use JSON `image` on `/images/generations`.
+- Image edit protocols: Grok and ordinary OpenAI models must both call `/images/edits` with JSON `images[].image_url`, including the same optional image parameters and async polling behavior; Ark continues to use JSON `image` on `/images/generations`.
 - 图片编辑弹窗：遮罩、切图和裁剪连续滚轮缩放时，图片与遮罩应保持同步且不再闪烁、短暂消失或跳动；遮罩画笔圆心应始终固定在鼠标位置，仅直径随缩放变化，缩放后仍可准确涂抹、拖动切分线和调整裁剪框。
 - 提示词中心布局：页面标题及提示词总数应居中；连续输入搜索文字时应在停止输入约 300ms 后再查询；桌面端分类与标签应在左侧独立滚动，右侧搜索框下直接展示提示词卡片；标签数量较多时不能继续向下挤压提示词，窄屏下应恢复上下排列且内容不溢出；不再显示「我的提示词」Tab，收藏提示词应直接加入我的资产。
 - 提示词详情弹窗：封面和参考图应固定显示在上方，复制及加入资产操作栏固定在底部，只有中间的标签、描述及提示词内容区域可以滚动；弹窗宽高应受视口限制且不超出屏幕。
@@ -147,7 +147,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 - 参考图大小限制：生图工作台和画布上传/引用图片时，单张超过 15MB 应被拦截，多张参考图总大小超过 50MB 应被拦截，并显示明确的超限提示；压缩后的图片、剪贴板图片、素材侧栏图片和服务端 413 兜底也需验证。
 - AI 调用日志真实请求与响应：生图工作台和画布的同步、异步图片生成无论成功或失败，管理后台详情中的“请求参数”都应与实际发送给上游的参数一致，“返回结果”应保留上游原始响应；异步任务应同时展示创建任务响应与最终查询响应。上游返回提示词违规等失败原因时，画布应显示具体原因，日志返回结果不得为空。长 JSON 默认截断展示并支持“展开全部/收起”；普通文本完整保留，base64 二进制仅记录类型和长度，不写入原始内容。
 - AI 调用日志生成总耗时：图片、视频、音频和文本调用成功或失败后，日志列表及详情均应以 `s` 展示总耗时；图片、视频异步任务应从创建请求开始计时，并覆盖轮询等待及本地保存处理，旧记录没有耗时时显示 `—`。
-- 渠道图片返回格式：编辑渠道时可将图片 `response_format` 设为 URL 或 Base64（`b64_json`）；默认选择 URL，文生图、普通图生图、Grok multipart 图生图和火山方舟图生图请求均应发送对应的 `response_format`，并在调用日志实际请求参数中可见。
+- 渠道图片返回格式：编辑渠道时可将图片 `response_format` 设为 URL 或 Base64（`b64_json`）；默认选择 URL，文生图、OpenAI（含 Grok）JSON 图生图和火山方舟图生图请求均应发送对应的 `response_format`，并在调用日志实际请求参数中可见。
 
 - 多 Base URL 锁定：
   - LOCKED_CHANNEL_BASE_URLS 环境变量支持逗号分隔多个中转地址。
