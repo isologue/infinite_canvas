@@ -2,7 +2,7 @@ import { Button, Drawer, Input, Modal, Segmented, Select, Space } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { defaultBaseUrlForApiFormat, guessCapability, incompatibleModelNames, inferChannelApiFormat, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageResponseFormat, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { defaultBaseUrlForApiFormat, guessCapability, incompatibleModelNames, inferChannelApiFormat, normalizeChannelModels, type ApiCallFormat, type ChannelModel, type ImageResponseFormat, type ModelCapability, type ModelChannel, type ReferenceImageRequestFormat } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 import { ModelSelectModal } from "./model-select-modal";
 
@@ -23,6 +23,11 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
 const imageResponseFormatOptions: Array<{ label: string; value: ImageResponseFormat }> = [
     { label: "URL", value: "url" },
     { label: "Base64", value: "b64_json" },
+];
+
+const referenceImageRequestFormatOptions: Array<{ label: string; value: ReferenceImageRequestFormat }> = [
+    { label: "FormData（上传文件）", value: "form-data" },
+    { label: "JSON（公网 URL）", value: "json" },
 ];
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -124,6 +129,11 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                     <Select className="w-full" value={draft.imageResponseFormat} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
                     <span className="mt-1 block text-xs text-stone-500">图片接口默认发送 response_format=url。</span>
                 </label>
+                {draft.apiFormat === "openai" ? <label className="block md:col-span-2">
+                    <span className="mb-1 block text-sm font-medium">参考图请求格式</span>
+                    <Select className="w-full" value={draft.referenceImageRequestFormat} options={referenceImageRequestFormatOptions} onChange={(referenceImageRequestFormat: ReferenceImageRequestFormat) => patch({ referenceImageRequestFormat })} />
+                    <span className="mt-1 block text-xs text-stone-500">适用于图生图和视频；JSON 模式会将参考图转存为 WebDAV 公网 URL。</span>
+                </label> : null}
             </div>
 
             <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">

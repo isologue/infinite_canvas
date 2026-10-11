@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
 import { readSessionUser } from "@/lib/server/auth";
-import { lockedChannelBaseUrls, readSharedConfig, readUserConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
+import { lockedChannelBaseUrls, readSharedConfig, readUserConfig, redactWebdavConfig, writeSharedConfig, writeUserConfig } from "@/lib/server/shared-config-db";
 
 export async function GET() {
     try {
@@ -15,7 +15,9 @@ export async function GET() {
             code: 0,
             data: {
                 config: shared.config,
-                webdav: shared.webdav,
+                // WebDAV is a global administrator-only setting. Never expose its endpoint or
+                // credentials to regular users; their uploads still use it server-side.
+                webdav: redactWebdavConfig(isAdmin ? shared.webdav : {}),
                 // 所有登录用户都能保存自己的配置；只有超管能改渠道 URL。
                 canManage: Boolean(user),
                 canManageUrl: isAdmin,
@@ -39,11 +41,11 @@ export async function PUT(request: NextRequest) {
             // 超管直接保存全局配置，不执行普通用户的 URL 白名单校验。
             if (!body?.webdav) return Response.json({ code: 400, msg: "配置数据不完整" }, { status: 400 });
             const saved = await writeSharedConfig({ config: body.config, webdav: body.webdav });
-            return Response.json({ code: 0, msg: "配置已保存", data: saved });
+            return Response.json({ code: 0, msg: "配置已保存", data: { ...saved, webdav: redactWebdavConfig(saved.webdav) } });
         }
-        // 普通用户：存自己那份（config + webdav），服务端只强制锁定渠道 URL，其余全是用户自己的。
-        const saved = await writeUserConfig(user.id, body.config, body.webdav);
-        return Response.json({ code: 0, msg: "配置已保存", data: saved });
+        // 普通用户 only save their own channel/model settings. WebDAV is globally managed by admins.
+        const saved = await writeUserConfig(user.id, body.config);
+        return Response.json({ code: 0, msg: "配置已保存", data: { ...saved, webdav: redactWebdavConfig(saved.webdav) } });
     } catch (error) {
         return Response.json({ code: 500, msg: error instanceof Error ? error.message : "保存配置失败" }, { status: 500 });
     }

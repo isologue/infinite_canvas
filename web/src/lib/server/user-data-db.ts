@@ -325,3 +325,26 @@ export async function readUserFileRange(userId: string, storageKey: string, star
     return result.rows[0]?.content || null;
 }
 
+export async function listUserImageFiles(userId: string) {
+    await ensureUserDataTables();
+    const result = await getPgPool().query<{ storage_key: string; mime_type: string; content: Buffer }>(
+        `SELECT files.storage_key, files.mime_type, files.content
+         FROM user_files files
+         INNER JOIN user_resources resources ON resources.user_id = files.user_id AND resources.storage_key = files.storage_key
+         WHERE files.user_id = $1 AND files.storage_key NOT LIKE 'preview:%' AND resources.kind = 'image' AND resources.deleted_at IS NULL`,
+        [userId],
+    );
+    return result.rows;
+}
+
+export async function listAllUserImageFiles() {
+    await ensureUserDataTables();
+    const result = await getPgPool().query<{ user_id: string; storage_key: string; mime_type: string; content: Buffer }>(
+        `SELECT files.user_id, files.storage_key, files.mime_type, files.content
+         FROM user_files files
+         INNER JOIN user_resources resources ON resources.user_id = files.user_id AND resources.storage_key = files.storage_key
+         WHERE files.storage_key NOT LIKE 'preview:%' AND resources.kind = 'image' AND resources.deleted_at IS NULL`,
+    );
+    return result.rows;
+}
+

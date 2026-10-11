@@ -4,6 +4,8 @@ import { resolveImageMimeType } from "@/lib/image-mime";
 import { readSessionUser } from "@/lib/server/auth";
 import { getUserImagePreview } from "@/lib/server/image-preview";
 import { saveUserFileResource } from "@/lib/server/resource-db";
+import { readSharedConfig } from "@/lib/server/shared-config-db";
+import { uploadUserImageToWebdav } from "@/lib/server/webdav-image-storage";
 
 const MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024;
 const REFERENCE_UPLOAD_SOURCES = new Set(["reference-upload", "canvas-upload", "asset-upload"]);
@@ -23,8 +25,13 @@ export async function POST(request: NextRequest) {
         return Response.json({ code: 413, msg: "参考图超过单张 15MB 限制" }, { status: 413 });
     }
     await saveUserFileResource(user.id, { storageKey, mimeType, bytes: content.length, content, title, source, metadata: { ...metadata, mimeType } });
+    let url = "";
+    if (mimeType.startsWith("image/")) {
+        const webdav = (await readSharedConfig()).webdav;
+        url = await uploadUserImageToWebdav(webdav, user.id, { storageKey, mimeType, content });
+    }
     if (mimeType.startsWith("image/")) after(() => getUserImagePreview(user.id, storageKey).then(() => undefined).catch(() => undefined));
-    return Response.json({ code: 0, msg: "保存成功" });
+    return Response.json({ code: 0, msg: "保存成功", data: url ? { url } : undefined });
 }
 
 export async function DELETE() {

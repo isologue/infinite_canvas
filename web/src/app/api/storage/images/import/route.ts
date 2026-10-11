@@ -7,6 +7,8 @@ import { readSessionUser } from "@/lib/server/auth";
 import { getUserImagePreview } from "@/lib/server/image-preview";
 import { downloadRemoteMedia, parseRemoteMediaUrl, RemoteMediaDownloadError } from "@/lib/server/remote-media-download";
 import { saveUserFileResource } from "@/lib/server/resource-db";
+import { readSharedConfig } from "@/lib/server/shared-config-db";
+import { uploadUserImageToWebdav } from "@/lib/server/webdav-image-storage";
 
 const MAX_IMAGE_PIXELS = 100_000_000;
 
@@ -35,12 +37,14 @@ export async function POST(request: NextRequest) {
             source,
             metadata: { ...metadata, width, height, mimeType, bytes: content.length, transfer: "server", originUrl: finalUrl.toString() },
         });
+        const webdav = (await readSharedConfig()).webdav;
+        const publicUrl = await uploadUserImageToWebdav(webdav, user.id, { storageKey, mimeType, content });
         after(() =>
             getUserImagePreview(user.id, storageKey)
                 .then(() => undefined)
                 .catch(() => undefined),
         );
-        return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType, width, height } });
+        return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType, width, height, url: publicUrl || undefined } });
     } catch (error) {
         const status = error instanceof RemoteMediaDownloadError ? error.status : error instanceof ImageInspectError ? error.status : 502;
         return Response.json({ code: status, msg: error instanceof Error ? error.message : "图片服务端转存失败" }, { status });

@@ -4,8 +4,8 @@ import { buildAiProxyUrl, buildApiUrl, inferModelApiFormat, modelOptionName, res
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
-import { normalizeImageSource } from "@/lib/image-utils";
-import { imageToDataUrl } from "@/services/image-storage";
+import { dataUrlToFile, normalizeImageSource } from "@/lib/image-utils";
+import { ensurePublicImageUrl, imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
@@ -1190,8 +1190,36 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
     const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const requestPrompt = withSystemPrompt(config, prompt);
 
-    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-    const maskDataUrl = mask ? await imageToDataUrl(mask) : undefined;
+    if (config.referenceImageRequestFormat === "form-data") {
+        const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+        const maskFile = mask ? dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask) }) : undefined;
+        const createBody = (asyncMode: boolean) => {
+            const body = new FormData();
+            body.set("model", config.model);
+            body.set("prompt", requestPrompt);
+            body.set("n", String(n));
+            if (responseFormat) body.set("response_format", responseFormat);
+            body.set("output_format", IMAGE_OUTPUT_FORMAT);
+            if (quality) body.set("quality", quality);
+            if (requestSize) body.set("size", requestSize);
+            if (background) body.set("background", background);
+            if (asyncMode) body.set("async", "true");
+            files.forEach((file) => body.append("image[]", file, file.name));
+            if (maskFile) body.set("mask", maskFile, maskFile.name);
+            return body;
+        };
+        return startImagesWithAsyncFallback({
+            key: imageTaskKey(config, "/images/edits:multipart"),
+            config,
+            create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), createBody(asyncMode), { headers: aiHeaders(config), signal: options?.signal })).data,
+            requestParams: (asyncMode) => formDataRequestParams(createBody(asyncMode)),
+            parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
+            pollPath: "/images/edits",
+        });
+    }
+
+    const refs = await Promise.all(references.map(ensurePublicImageUrl));
+    const maskUrl = mask ? await ensurePublicImageUrl(mask) : undefined;
     const body = {
         model: config.model,
         prompt: requestPrompt,
@@ -1199,7 +1227,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         ...(responseFormat ? { response_format: responseFormat } : {}),
         output_format: IMAGE_OUTPUT_FORMAT,
         images: refs.map((image_url) => ({ image_url })),
-        ...(maskDataUrl ? { mask: { image_url: maskDataUrl } } : {}),
+        ...(maskUrl ? { mask: { image_url: maskUrl } } : {}),
         ...(quality ? { quality } : {}),
         ...(requestSize ? { size: requestSize } : {}),
         ...(background ? { background } : {}),
@@ -1212,6 +1240,17 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
         pollPath: "/images/edits",
     });
+}
+
+function formDataRequestParams(formData: FormData) {
+    const params: Record<string, unknown> = {};
+    for (const [key, value] of formData.entries()) {
+        const item = value instanceof File ? { name: value.name, type: value.type, bytes: value.size } : value;
+        if (!(key in params)) params[key] = item;
+        else if (Array.isArray(params[key])) (params[key] as unknown[]).push(item);
+        else params[key] = [params[key], item];
+    }
+    return params;
 }
 
 async function requestOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {

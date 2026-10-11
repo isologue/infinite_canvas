@@ -11,6 +11,7 @@ const defaultConfig = {
     apiKey: "",
     apiFormat: "openai",
     imageResponseFormat: "url",
+    referenceImageRequestFormat: "json",
     channels: [
         {
             id: "default",
@@ -19,6 +20,7 @@ const defaultConfig = {
             apiKey: "",
             apiFormat: "openai",
             imageResponseFormat: "url",
+            referenceImageRequestFormat: "json",
             models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
         },
     ],
@@ -50,11 +52,14 @@ const defaultConfig = {
 };
 
 const defaultWebdavConfig = {
+    enabled: false,
+    storageMode: "local+webdav",
     proxyMode: "direct",
     url: "",
     username: "",
     password: "",
-    directory: "infinite-canvas",
+    directory: "images",
+    publicUrlPrefix: "",
     lastSyncedAt: "",
 };
 
@@ -126,6 +131,8 @@ export async function readSharedConfig(): Promise<SharedConfigRecord> {
 export async function writeSharedConfig(record: SharedConfigRecord) {
     await ensureSchema();
     const db = pool();
+    const current = await readSharedConfig();
+    const webdav = mergeWebdavPassword(current.webdav, record.webdav);
     await db.query(
         `
         UPDATE shared_configs
@@ -134,7 +141,7 @@ export async function writeSharedConfig(record: SharedConfigRecord) {
             updated_at = NOW()
         WHERE config_key = 'global'
         `,
-        [JSON.stringify(record.config), JSON.stringify(record.webdav)],
+        [JSON.stringify(record.config), JSON.stringify(webdav)],
     );
     return readSharedConfig();
 }
@@ -190,7 +197,7 @@ async function ensureUserConfigSchema() {
      const locked = lockedChannelBaseUrls()[0] || "https://moai.wiki";
      return {
         ...defaultConfig,
-        channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", imageResponseFormat: "url", models: [] }],
+        channels: [{ id: "default", name: "默认渠道", baseUrl: locked, apiKey: "", apiFormat: "openai", imageResponseFormat: "url", referenceImageRequestFormat: "json", models: [] }],
         model: "",
         imageModel: "",
         videoModel: "",
@@ -222,13 +229,13 @@ export async function readUserConfig(userId: string): Promise<SharedConfigRecord
     };
 }
 
-export async function writeUserConfig(userId: string, config: Record<string, unknown>, webdav?: Record<string, unknown>) {
+export async function writeUserConfig(userId: string, config: Record<string, unknown>) {
     await ensureSchema();
     await ensureUserConfigSchema();
     const db = pool();
-    // 保存前强制把所有渠道 baseUrl 锁成中转地址，丢弃用户对 URL 的任何改动（绕过前端也无效）。其余（key/模型/webdav）全是用户自己的。
+    // 保存前强制把所有渠道 baseUrl 锁成中转地址，丢弃用户对 URL 的任何改动（绕过前端也无效）。WebDAV 仅由超级管理员维护。
     const safeConfig = enforceLockedBaseUrl(config);
-    const safeWebdav = { ...defaultWebdavConfig, ...(webdav || {}) };
+    const safeWebdav = defaultWebdavConfig;
     await db.query(
         `
         INSERT INTO user_configs (user_id, config_json, webdav_json, updated_at)
@@ -238,4 +245,14 @@ export async function writeUserConfig(userId: string, config: Record<string, unk
         [userId, JSON.stringify(safeConfig), JSON.stringify(safeWebdav)],
     );
     return { config: safeConfig, webdav: safeWebdav };
+}
+
+function mergeWebdavPassword(current: Record<string, unknown>, next: Record<string, unknown>) {
+    const password = typeof next.password === "string" ? next.password : "";
+    return { ...defaultWebdavConfig, ...current, ...next, password: password || (typeof current.password === "string" ? current.password : "") };
+}
+
+export function redactWebdavConfig(config: Record<string, unknown>) {
+    const password = typeof config.password === "string" ? config.password : "";
+    return { ...config, password: "", passwordConfigured: Boolean(password) };
 }

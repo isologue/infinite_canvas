@@ -8,6 +8,7 @@ import i18n from "@/i18n";
 export type ApiCallFormat = "openai" | "gemini" | "ark" | "minimax";
 export type ApiFormatMode = "auto" | "manual";
 export type ImageResponseFormat = "url" | "b64_json";
+export type ReferenceImageRequestFormat = "form-data" | "json";
 export type ModelCapability = "image" | "video" | "text" | "audio";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
@@ -25,6 +26,7 @@ export type ModelChannel = {
     apiFormat: ApiCallFormat;
     apiFormatMode: ApiFormatMode;
     imageResponseFormat: ImageResponseFormat;
+    referenceImageRequestFormat: ReferenceImageRequestFormat;
     models: ChannelModel[];
 };
 
@@ -34,6 +36,7 @@ export type AiConfig = {
     apiKey: string;
     apiFormat: ApiCallFormat;
     imageResponseFormat: ImageResponseFormat;
+    referenceImageRequestFormat: ReferenceImageRequestFormat;
     channels: ModelChannel[];
     model: string;
     imageModel: string;
@@ -61,10 +64,14 @@ export type AiConfig = {
 };
 
 export type WebdavSyncConfig = {
+    enabled: boolean;
+    storageMode: "local" | "webdav" | "local+webdav";
     url: string;
     username: string;
     password: string;
     directory: string;
+    publicUrlPrefix: string;
+    passwordConfigured?: boolean;
     lastSyncedAt: string;
 };
 export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav" | "local-storage";
@@ -82,6 +89,7 @@ export const defaultConfig: AiConfig = {
     apiKey: "",
     apiFormat: "openai",
     imageResponseFormat: "url",
+    referenceImageRequestFormat: "json",
     channels: [
         {
             id: "default",
@@ -91,6 +99,7 @@ export const defaultConfig: AiConfig = {
             apiFormat: "openai",
             apiFormatMode: "auto",
             imageResponseFormat: "url",
+            referenceImageRequestFormat: "json",
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
@@ -125,10 +134,13 @@ export const defaultConfig: AiConfig = {
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
+    enabled: false,
+    storageMode: "local+webdav",
     url: "",
     username: "",
     password: "",
-    directory: "infinite-canvas",
+    directory: "images",
+    publicUrlPrefix: "",
     lastSyncedAt: "",
 };
 
@@ -320,6 +332,10 @@ function normalizeImageResponseFormat(value: unknown): ImageResponseFormat {
     return value === "b64_json" ? "b64_json" : "url";
 }
 
+function normalizeReferenceImageRequestFormat(value: unknown): ReferenceImageRequestFormat {
+    return value === "form-data" ? "form-data" : "json";
+}
+
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
     const models = normalizeChannelModels(channel?.models);
     const hasMode = Boolean(channel && Object.prototype.hasOwnProperty.call(channel, "apiFormatMode"));
@@ -334,6 +350,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiFormat,
         apiFormatMode,
         imageResponseFormat: normalizeImageResponseFormat(channel?.imageResponseFormat),
+        referenceImageRequestFormat: normalizeReferenceImageRequestFormat(channel?.referenceImageRequestFormat),
         models,
     };
 }
@@ -395,6 +412,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         apiKey: channel.apiKey,
         apiFormat: channel.apiFormat,
         imageResponseFormat: channel.imageResponseFormat,
+        referenceImageRequestFormat: channel.referenceImageRequestFormat,
     };
 }
 
@@ -409,6 +427,7 @@ function normalizeConfig(config: AiConfig) {
         apiKey: channels[0]?.apiKey || config.apiKey,
         apiFormat: channels[0]?.apiFormat || config.apiFormat,
         imageResponseFormat: normalizeImageResponseFormat(channels[0]?.imageResponseFormat),
+        referenceImageRequestFormat: normalizeReferenceImageRequestFormat(channels[0]?.referenceImageRequestFormat),
     };
     return {
         ...normalized,

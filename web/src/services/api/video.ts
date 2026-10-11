@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { imageToDataUrl } from "@/services/image-storage";
+import { ensurePublicImageUrl, imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildSeedancePromptText, isSeedanceVideoConfig, normalizeSeedanceDuration, normalizeSeedanceRatio, normalizeSeedanceResolution, seedanceVideoReferenceError, SEEDANCE_REFERENCE_LIMITS } from "@/lib/seedance-video";
 import { buildAiErrorResponseResult, generationDurationSeconds, prepareAiLogValue, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
@@ -194,6 +194,29 @@ export async function storeGeneratedVideo(result: VideoGenerationResult, title =
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
+    if (config.referenceImageRequestFormat === "json") {
+        const seconds = normalizeVideoSeconds(config.videoSeconds);
+        const images = await Promise.all(references.slice(0, 7).map(ensurePublicImageUrl));
+        const size = normalizeVideoSize(config.size);
+        const body = {
+            model: modelOptionName(model),
+            prompt,
+            ...(images.length ? { images } : {}),
+            ...(size ? { size } : {}),
+            aspect_ratio: normalizeVideoAspectRatio(config.size),
+            duration: Number(seconds),
+            seconds,
+            n: 1,
+        };
+        captureRequestParams?.(body);
+        try {
+            const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+            if (!created.id) throw new Error("视频接口没有返回任务 ID");
+            return { id: created.id, provider: "openai", model };
+        } catch (error) {
+            throw videoResponseError(readAxiosError(error, "视频任务创建失败"), buildAiErrorResponseResult(error));
+        }
+    }
     const body = new FormData();
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
@@ -395,7 +418,7 @@ async function buildSeedanceContent(config: AiConfig, prompt: string, references
     const text = buildSeedancePromptText(prompt, references, videoReferences, audioReferences);
     if (text) content.push({ type: "text", text });
     for (const image of references.slice(0, SEEDANCE_REFERENCE_LIMITS.images)) {
-        content.push({ type: "image_url", image_url: { url: await resolveSeedanceImageUrl(config, image) }, role: "reference_image" });
+        content.push({ type: "image_url", image_url: { url: await resolveSeedanceImageUrl(image) }, role: "reference_image" });
     }
     for (const video of videoReferences.slice(0, SEEDANCE_REFERENCE_LIMITS.videos)) {
         content.push({ type: "video_url", video_url: { url: await resolveSeedanceVideoUrl(video) }, role: "reference_video" });
@@ -406,12 +429,8 @@ async function buildSeedanceContent(config: AiConfig, prompt: string, references
     return content;
 }
 
-async function resolveSeedanceImageUrl(config: AiConfig, image: ReferenceImage) {
-    const directUrl = image.url || image.dataUrl;
-    if (isPublicMediaUrl(directUrl) || directUrl.startsWith("asset://")) return directUrl;
-    const dataUrl = await imageToDataUrl(image);
-    if (!dataUrl) throw new Error("参考图读取失败，请换一张图片或重新上传");
-    return dataUrl;
+async function resolveSeedanceImageUrl(image: ReferenceImage) {
+    return ensurePublicImageUrl(image);
 }
 
 async function resolveSeedanceVideoUrl(video: ReferenceVideo) {
