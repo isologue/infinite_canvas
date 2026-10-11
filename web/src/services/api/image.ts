@@ -776,12 +776,12 @@ async function withGenerationLog<T>(config: AiConfig, kind: string, run: () => P
     try {
         const result = await run();
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "success", reason: kind, durationSeconds: generationDurationSeconds(startedAt), requestParams });
+            void reportAiCall({ kind: logKind, model, status: "success", reason: kind, durationSeconds: generationDurationSeconds(startedAt), upstreamDurationSeconds: generationDurationSeconds(startedAt), requestParams });
         }
         return result;
     } catch (error) {
         if (logKind !== "image") {
-            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, durationSeconds: generationDurationSeconds(startedAt), requestParams, responseResult: buildAiErrorResponseResult(error), errorMessage: error instanceof Error ? error.message : String(error) });
+            void reportAiCall({ kind: logKind, model, status: "failed", reason: kind, durationSeconds: generationDurationSeconds(startedAt), upstreamDurationSeconds: generationDurationSeconds(startedAt), requestParams, responseResult: buildAiErrorResponseResult(error), errorMessage: error instanceof Error ? error.message : String(error) });
         }
         throw error;
     }

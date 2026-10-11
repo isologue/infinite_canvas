@@ -47,7 +47,7 @@ function aiHeaders(config: AiConfig, contentType?: string) {
 }
 
 // 视频任务结束时上报一条 AI 调用日志（每个任务只报一次）。函数名沿用以兼容调用方。
-export async function settleVideoTaskCredits(task: VideoGenerationTask, status: "success" | "failed", extra?: { errorMessage?: string; result?: unknown }) {
+export async function settleVideoTaskCredits(task: VideoGenerationTask, status: "success" | "failed", extra?: { errorMessage?: string; result?: unknown; upstreamDurationSeconds?: number; localProcessingDurationSeconds?: number }) {
     if (!task.logReported) {
         task.logReported = true;
         void reportAiCall({
@@ -56,6 +56,8 @@ export async function settleVideoTaskCredits(task: VideoGenerationTask, status: 
             status,
             reason: `video generation: ${task.logModel || task.model}`,
             durationSeconds: generationDurationSeconds(task.createdAt),
+            upstreamDurationSeconds: extra?.upstreamDurationSeconds,
+            localProcessingDurationSeconds: extra?.localProcessingDurationSeconds,
             requestParams: task.logParams,
             responseResult: extra?.result,
             errorMessage: status === "failed" ? extra?.errorMessage : undefined,
@@ -82,16 +84,32 @@ export async function requestVideoGeneration(
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const state = await pollVideoGenerationTask(config, task, options);
             if (state.status === "completed") {
+                const resultReceivedAt = Date.now();
                 // 若调用方提供了 onStored，先存储拿到 storageKey，再让日志带上它。存储只在此发生一次。
-                const stored = onStored ? await onStored(state.result).catch(() => undefined) : undefined;
-                await settleVideoTaskCredits(task, "success", stored ? { result: stored } : undefined);
+                let stored;
+                try {
+                    stored = onStored ? await onStored(state.result) : undefined;
+                } catch (error) {
+                    await settleVideoTaskCredits(task, "failed", {
+                        errorMessage: error instanceof Error ? error.message : String(error),
+                        result: buildAiErrorResponseResult(error),
+                        upstreamDurationSeconds: generationDurationSeconds(task.createdAt, resultReceivedAt),
+                        localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt),
+                    });
+                    throw error;
+                }
+                await settleVideoTaskCredits(task, "success", {
+                    ...(stored ? { result: stored } : {}),
+                    upstreamDurationSeconds: generationDurationSeconds(task.createdAt, resultReceivedAt),
+                    ...(onStored ? { localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt) } : {}),
+                });
                 return state.result;
             }
             if (state.status === "failed") throw videoResponseError(state.error, state.responseResult);
             await delay(delayMs, options?.signal);
         }
     } catch (error) {
-        if (task) await settleVideoTaskCredits(task, "failed", { errorMessage: error instanceof Error ? error.message : String(error), result: buildAiErrorResponseResult(error) });
+        if (task) await settleVideoTaskCredits(task, "failed", { errorMessage: error instanceof Error ? error.message : String(error), result: buildAiErrorResponseResult(error), upstreamDurationSeconds: generationDurationSeconds(task.createdAt) });
         throw error;
     }
 }
@@ -125,6 +143,7 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
             status: "failed",
             reason: `video generation: ${logExtras.logModel}`,
             durationSeconds: generationDurationSeconds(createdAt),
+            upstreamDurationSeconds: generationDurationSeconds(createdAt),
             requestParams,
             responseResult: buildAiErrorResponseResult(error),
             errorMessage: error instanceof Error ? error.message : String(error),

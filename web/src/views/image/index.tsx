@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Progress, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
@@ -103,6 +103,8 @@ export default function ImagePage() {
     const displayedLogIdRef = useRef<string | null>(null);
     const activeItemKeysRef = useRef<Set<string>>(new Set());
     const pollTimersRef = useRef<Map<string, number>>(new Map());
+    const generationControllersRef = useRef<Map<string, AbortController>>(new Map());
+    const canceledItemKeysRef = useRef<Set<string>>(new Set());
     const logWriteQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -247,16 +249,22 @@ export default function ImagePage() {
         return next;
     }, [updateAgentTask, updateLog]);
 
-    const scheduleItemPoll = useCallback((logId: string, itemId: string, delay = 5000) => {
+    const clearItemPollTimer = useCallback((logId: string, itemId: string) => {
         const key = `${logId}:${itemId}`;
         const current = pollTimersRef.current.get(key);
         if (current) window.clearTimeout(current);
+        pollTimersRef.current.delete(key);
+    }, []);
+
+    const scheduleItemPoll = useCallback((logId: string, itemId: string, delay = 5000) => {
+        const key = `${logId}:${itemId}`;
+        clearItemPollTimer(logId, itemId);
         const timer = window.setTimeout(() => {
             pollTimersRef.current.delete(key);
             void pollGenerationItemRef.current?.(logId, itemId);
         }, delay);
         pollTimersRef.current.set(key, timer);
-    }, []);
+    }, [clearItemPollTimer]);
 
     const completeImageItem = useCallback(async (logId: string, itemId: string, rawImage: { id: string; dataUrl: string }, trace?: { requestParams?: unknown; responseResult?: unknown }) => {
         const log = logsRef.current.find((item) => item.id === logId);
@@ -285,6 +293,8 @@ export default function ImagePage() {
                 status: "success",
                 reason: `image generation: ${modelOptionName(log.model)}`,
                 durationSeconds: generationDurationSeconds(taskCreatedAt, renderCompletedAt),
+                upstreamDurationSeconds: generationDurationSeconds(taskCreatedAt, resultReceivedAt),
+                localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt, renderCompletedAt),
                 requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), size: log.config.size, aspectRatio: log.config.size, quality: log.config.quality, resolution: log.config.resolution, count: 1, ...buildReferenceAssetLogParams({ images: log.references.length }) },
                 responseResult: {
                     upstreamResponse: trace?.responseResult ?? item.responseResult ?? null,
@@ -294,36 +304,41 @@ export default function ImagePage() {
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : "图片保存失败";
             updateLogItem(logId, itemId, { status: "failed", error: `图片已生成，但本地处理失败：${errorMessage}`, resultReceivedAt, waitingDurationMs: Math.max(0, resultReceivedAt - taskCreatedAt), renderDurationMs: Math.max(0, Date.now() - resultReceivedAt) });
-            void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), ...buildReferenceAssetLogParams({ images: log.references.length }) }, responseResult: { upstreamResponse: trace?.responseResult ?? item.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, errorMessage });
+            void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), upstreamDurationSeconds: generationDurationSeconds(taskCreatedAt, resultReceivedAt), localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt), requestParams: trace?.requestParams ?? item.requestParams ?? item.task?.requestParams ?? { prompt: log.prompt, model: modelOptionName(log.model), ...buildReferenceAssetLogParams({ images: log.references.length }) }, responseResult: { upstreamResponse: trace?.responseResult ?? item.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, errorMessage });
         }
     }, [updateLogItem]);
 
     const pollGenerationItemRef = useRef<((logId: string, itemId: string, manual?: boolean) => Promise<void>) | null>(null);
     const pollGenerationItem = useCallback(async (logId: string, itemId: string, manual = false) => {
         const key = `${logId}:${itemId}`;
-        if (activeItemKeysRef.current.has(key)) return;
+        if (canceledItemKeysRef.current.has(key) || activeItemKeysRef.current.has(key)) return;
         const log = logsRef.current.find((entry) => entry.id === logId);
         const item = log?.items.find((entry) => entry.id === itemId);
         if (!log || !item?.task || !["waiting", "creating"].includes(item.status)) return;
         activeItemKeysRef.current.add(key);
         if (manual) setRefreshingItemKeys((value) => (value.includes(key) ? value : [...value, key]));
         try {
-            const state = await pollImageGenerationTask({ ...effectiveConfig, ...log.config, model: item.task.model, imageModel: item.task.model, count: "1" }, item.task);
+            const controller = generationControllersRef.current.get(key);
+            const state = await pollImageGenerationTask({ ...effectiveConfig, ...log.config, model: item.task.model, imageModel: item.task.model, count: "1" }, item.task, { signal: controller?.signal });
+            if (canceledItemKeysRef.current.has(key)) return;
             if (state.status === "completed") {
                 const image = state.images[0];
                 if (!image) throw new Error("图片任务已完成，但没有返回图片");
                 const responseResult = item.task.createResponse === undefined ? state.responseResult : { createResponse: item.task.createResponse, finalResponse: state.responseResult };
                 await completeImageItem(logId, itemId, image, { requestParams: item.task.requestParams, responseResult });
+                generationControllersRef.current.delete(key);
                 message.success("图片已生成");
             } else if (state.status === "failed") {
                 updateLogItem(logId, itemId, { status: "failed", error: state.error, progress: 100, waitingDurationMs: Date.now() - (item.taskCreatedAt || log.createdAt) });
-                void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(item.taskCreatedAt || log.createdAt), requestParams: item.task.requestParams, responseResult: item.task.createResponse === undefined ? state.responseResult : { createResponse: item.task.createResponse, finalResponse: state.responseResult }, errorMessage: state.error });
+                void reportAiCall({ kind: "image", model: modelOptionName(log.model), status: "failed", reason: `image generation: ${modelOptionName(log.model)}`, durationSeconds: generationDurationSeconds(item.taskCreatedAt || log.createdAt), upstreamDurationSeconds: generationDurationSeconds(item.taskCreatedAt || log.createdAt), requestParams: item.task.requestParams, responseResult: item.task.createResponse === undefined ? state.responseResult : { createResponse: item.task.createResponse, finalResponse: state.responseResult }, errorMessage: state.error });
+                generationControllersRef.current.delete(key);
                 message.error(state.error);
             } else {
                 updateLogItem(logId, itemId, { status: "waiting", progress: state.progress, waitingDurationMs: Date.now() - (item.taskCreatedAt || log.createdAt) });
                 scheduleItemPoll(logId, itemId);
             }
         } catch (error) {
+            if (canceledItemKeysRef.current.has(key) || (error instanceof DOMException && error.name === "AbortError")) return;
             if (manual) message.warning(error instanceof Error ? error.message : "刷新结果失败");
             scheduleItemPoll(logId, itemId);
         } finally {
@@ -334,24 +349,45 @@ export default function ImagePage() {
     pollGenerationItemRef.current = pollGenerationItem;
 
     const runGenerationSlot = useCallback(async (logId: string, itemId: string, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+        const key = `${logId}:${itemId}`;
+        canceledItemKeysRef.current.delete(key);
+        generationControllersRef.current.get(key)?.abort();
+        const controller = new AbortController();
+        generationControllersRef.current.set(key, controller);
         const taskCreatedAt = Date.now();
         updateLogItem(logId, itemId, { status: "creating", taskCreatedAt, waitingDurationMs: 0, renderDurationMs: 0, error: undefined });
         try {
-            const start = await createImageGenerationTask(snapshot.config, snapshot.text, snapshot.references);
+            const start = await createImageGenerationTask(snapshot.config, snapshot.text, snapshot.references, undefined, { signal: controller.signal });
             if (start.mode === "immediate") {
                 const image = start.images[0];
                 if (!image) throw new Error("接口没有返回图片");
                 await completeImageItem(logId, itemId, image, { requestParams: start.requestParams, responseResult: start.responseResult });
+                generationControllersRef.current.delete(key);
                 return;
             }
             updateLogItem(logId, itemId, { status: "waiting", task: start.task, taskCreatedAt, progress: 0 });
             await pollGenerationItem(logId, itemId);
         } catch (error) {
+            if (canceledItemKeysRef.current.has(key) || (error instanceof DOMException && error.name === "AbortError")) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             updateLogItem(logId, itemId, { status: "failed", error: errorMessage, waitingDurationMs: Date.now() - taskCreatedAt });
-            void reportAiCall({ kind: "image", model: modelOptionName(snapshot.config.model), status: "failed", reason: `image generation: ${modelOptionName(snapshot.config.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), requestParams: buildAiErrorRequestParams(error) ?? { prompt: snapshot.text, model: modelOptionName(snapshot.config.model), ...buildReferenceAssetLogParams({ images: snapshot.references.length }) }, responseResult: buildAiErrorResponseResult(error), errorMessage });
+            generationControllersRef.current.delete(key);
+            void reportAiCall({ kind: "image", model: modelOptionName(snapshot.config.model), status: "failed", reason: `image generation: ${modelOptionName(snapshot.config.model)}`, durationSeconds: generationDurationSeconds(taskCreatedAt), upstreamDurationSeconds: generationDurationSeconds(taskCreatedAt), requestParams: buildAiErrorRequestParams(error) ?? { prompt: snapshot.text, model: modelOptionName(snapshot.config.model), ...buildReferenceAssetLogParams({ images: snapshot.references.length }) }, responseResult: buildAiErrorResponseResult(error), errorMessage });
         }
     }, [completeImageItem, pollGenerationItem, updateLogItem]);
+
+    const cancelGenerationItem = useCallback((logId: string, itemId: string) => {
+        const key = `${logId}:${itemId}`;
+        const log = logsRef.current.find((entry) => entry.id === logId);
+        const item = log?.items.find((entry) => entry.id === itemId);
+        if (!log || !item || item.status === "rendering") return;
+        canceledItemKeysRef.current.add(key);
+        clearItemPollTimer(logId, itemId);
+        generationControllersRef.current.get(key)?.abort();
+        generationControllersRef.current.delete(key);
+        updateLogItem(logId, itemId, { status: "failed", error: "已取消生成", waitingDurationMs: Date.now() - (item.taskCreatedAt || log.createdAt) });
+        message.info("已取消生成");
+    }, [clearItemPollTimer, message, updateLogItem]);
 
     const generate = async () => {
         const agentTaskId = agentTaskIdRef.current;
@@ -544,6 +580,8 @@ export default function ImagePage() {
             disposed = true;
             pollTimersRef.current.forEach((timer) => window.clearTimeout(timer));
             pollTimersRef.current.clear();
+            generationControllersRef.current.forEach((controller) => controller.abort());
+            generationControllersRef.current.clear();
         };
     }, [scheduleItemPoll, setLogState]);
 
@@ -691,7 +729,7 @@ export default function ImagePage() {
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} result={result} refreshing={Boolean(result.logId && result.itemId && refreshingItemKeys.includes(`${result.logId}:${result.itemId}`))} onRefresh={result.phase === "waiting" && result.logId && result.itemId ? () => void pollGenerationItem(result.logId!, result.itemId!, true) : undefined} />
+                                        <PendingImageCard key={result.id} result={result} refreshing={Boolean(result.logId && result.itemId && refreshingItemKeys.includes(`${result.logId}:${result.itemId}`))} onRefresh={result.phase === "waiting" && result.logId && result.itemId ? () => void pollGenerationItem(result.logId!, result.itemId!, true) : undefined} onCancel={result.phase !== "rendering" && result.logId && result.itemId ? () => cancelGenerationItem(result.logId!, result.itemId!) : undefined} />
                                     ),
                                 )}
                             </div>
@@ -805,7 +843,7 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard({ result, refreshing, onRefresh }: { result: GenerationResult; refreshing: boolean; onRefresh?: () => void }) {
+function PendingImageCard({ result, refreshing, onRefresh, onCancel }: { result: GenerationResult; refreshing: boolean; onRefresh?: () => void; onCancel?: () => void }) {
     const now = useElapsedClock(result.status === "pending");
     const waitingMs = result.phase === "rendering"
         ? result.waitingDurationMs || 0
@@ -818,7 +856,7 @@ function PendingImageCard({ result, refreshing, onRefresh }: { result: Generatio
                 {result.progress === undefined ? <LoaderCircle className="size-7 animate-spin" /> : <Progress type="circle" percent={result.progress} size={72} />}
                 <span>{result.phase === "rendering" ? "正在保存并渲染图片" : result.progress === undefined ? "正在创建任务" : `当前进度 ${result.progress}%`}</span>
                 <span className="text-xs">等待结果 {formatDuration(waitingMs)}{result.phase === "rendering" ? ` · 本地处理 ${formatDuration(renderMs)}` : ""}</span>
-                {onRefresh && result.phase !== "rendering" ? <Button size="small" icon={<RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />} loading={refreshing} onClick={onRefresh}>刷新结果</Button> : null}
+                {result.phase !== "rendering" && (onRefresh || onCancel) ? <div className="flex gap-2">{onRefresh ? <Button size="small" icon={<RefreshCw className={`size-3.5 ${refreshing ? "animate-spin" : ""}`} />} loading={refreshing} onClick={onRefresh}>刷新结果</Button> : null}{onCancel ? <Button size="small" danger icon={<X className="size-3.5" />} onClick={onCancel}>取消</Button> : null}</div> : null}
             </div>
         </div>
     );

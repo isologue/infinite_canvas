@@ -22,6 +22,8 @@ type AiCallLog = {
     responseResult: unknown | null;
     errorMessage: string | null;
     durationSeconds: number | null;
+    upstreamDurationSeconds: number | null;
+    localProcessingDurationSeconds: number | null;
     createdAt: string;
     updatedAt: string;
 };
@@ -97,10 +99,17 @@ export default function AdminAiLogsPage() {
             render: (value: AiCallStatus) => <Tag color={STATUS_META[value].color}>{STATUS_META[value].label}</Tag>,
         },
         {
-            title: "总耗时",
-            dataIndex: "durationSeconds",
-            key: "durationSeconds",
-            width: 110,
+            title: "上游结果耗时",
+            dataIndex: "upstreamDurationSeconds",
+            key: "upstreamDurationSeconds",
+            width: 130,
+            render: (value: number | null) => displayDurationSeconds(value),
+        },
+        {
+            title: "本地处理耗时",
+            dataIndex: "localProcessingDurationSeconds",
+            key: "localProcessingDurationSeconds",
+            width: 130,
             render: (value: number | null) => displayDurationSeconds(value),
         },
         {
@@ -193,6 +202,8 @@ export default function AdminAiLogsPage() {
                             <DetailRow label="类型" value={KIND_META[detail.kind].label} />
                             <DetailRow label="模型" value={detail.model || "—"} />
                             <DetailRow label="状态" value={STATUS_META[detail.status].label} />
+                            <DetailRow label="上游结果耗时" value={displayDurationSeconds(detail.upstreamDurationSeconds)} />
+                            <DetailRow label="本地处理耗时" value={displayDurationSeconds(detail.localProcessingDurationSeconds)} />
                             <DetailRow label="生成总耗时" value={displayDurationSeconds(detail.durationSeconds)} />
                             <DetailRow label="原因" value={detail.reason || "—"} />
                             {detail.errorMessage ? <DetailRow label="错误信息" value={detail.errorMessage} /> : null}

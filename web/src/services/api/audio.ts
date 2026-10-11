@@ -66,6 +66,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             status: "success",
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
             durationSeconds: generationDurationSeconds(startedAt),
+            upstreamDurationSeconds: generationDurationSeconds(startedAt),
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: Number(normalizeAudioSpeedValue(config.audioSpeed)), promptLength: prompt.length },
             responseResult: typeof result === "string" ? (/^https?:\/\//i.test(result) ? { url: result } : { data: "base64" }) : { bytes: result.size, mimeType: result.type },
         });
@@ -78,6 +79,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             status: "failed",
             reason: `audio generation: ${modelOptionName(selectedModel)}`,
             durationSeconds: generationDurationSeconds(startedAt),
+            upstreamDurationSeconds: generationDurationSeconds(startedAt),
             requestParams: { model, voice: normalizeAudioVoiceValue(config.audioVoice), format, promptLength: prompt.length },
             errorMessage: messageText,
         });

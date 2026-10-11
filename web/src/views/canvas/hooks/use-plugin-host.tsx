@@ -64,7 +64,12 @@ export function usePluginHost(params: PluginHostParams) {
                     ...(options?.seconds ? { videoSeconds: options.seconds } : {}),
                 };
                 ensureReady(config);
-                const file = await storeGeneratedVideo(await requestVideoGeneration(config, prompt, toReferences(options?.references), [], [], { signal: options?.signal }));
+                let file: Awaited<ReturnType<typeof storeGeneratedVideo>> | undefined;
+                await requestVideoGeneration(config, prompt, toReferences(options?.references), [], [], { signal: options?.signal }, async (result) => {
+                    file = await storeGeneratedVideo(result);
+                    return { storageKey: file.storageKey, width: file.width, height: file.height, bytes: file.bytes, mimeType: file.mimeType, durationMs: file.durationMs };
+                });
+                if (!file) throw new Error("视频本地处理失败");
                 return { url: file.url, mimeType: file.mimeType, width: file.width, height: file.height, durationMs: file.durationMs };
             },
             generateText: async (prompt, options) => {

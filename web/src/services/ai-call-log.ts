@@ -25,6 +25,8 @@ export type ReportAiCallInput = {
     status: AiCallLogStatus;
     reason?: string;
     durationSeconds?: number;
+    upstreamDurationSeconds?: number;
+    localProcessingDurationSeconds?: number;
     requestParams?: unknown;
     responseResult?: unknown;
     errorMessage?: string;

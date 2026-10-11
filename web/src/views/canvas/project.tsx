@@ -157,6 +157,8 @@ function reportCanvasImageLog(
     hasMask = false,
     startedAt: number,
     trace?: { requestParams?: unknown; responseResult?: unknown },
+    resultReceivedAt = Date.now(),
+    completedAt = Date.now(),
 ) {
     const model = modelOptionName(config.model);
     void reportAiCall({
@@ -165,6 +167,8 @@ function reportCanvasImageLog(
         status: "success",
         reason: `image generation: ${model}`,
         durationSeconds: generationDurationSeconds(startedAt),
+        upstreamDurationSeconds: generationDurationSeconds(startedAt, resultReceivedAt),
+        localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt, completedAt),
         requestParams:
             trace?.requestParams ??
             {
@@ -184,7 +188,7 @@ function reportCanvasImageLog(
     });
 }
 
-function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown, referenceImageCount: number, hasMask: boolean, startedAt: number) {
+function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown, referenceImageCount: number, hasMask: boolean, startedAt: number, resultReceivedAt?: number) {
     const model = modelOptionName(config.model);
     void reportAiCall({
         kind: "image",
@@ -192,6 +196,8 @@ function reportCanvasImageError(config: AiConfig, prompt: string, error: unknown
         status: "failed",
         reason: `image generation: ${model}`,
         durationSeconds: generationDurationSeconds(startedAt),
+        upstreamDurationSeconds: generationDurationSeconds(startedAt, resultReceivedAt),
+        ...(resultReceivedAt ? { localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt) } : {}),
         requestParams:
             buildAiErrorRequestParams(error) ??
             {
@@ -508,7 +514,7 @@ function InfiniteCanvasPage() {
                         await settleVideoTaskCredits(
                             { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, createdAt: task.createdAt, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
                             "failed",
-                            { errorMessage: state.error, result: state.responseResult },
+                            { errorMessage: state.error, result: state.responseResult, upstreamDurationSeconds: generationDurationSeconds(task.createdAt) },
                         );
                     const taskError = Object.assign(new Error(state.error), {
                         requestParams: task.requestParams,
@@ -550,6 +556,7 @@ function InfiniteCanvasPage() {
                     } catch (error) {
                         throw Object.assign(error instanceof Error ? error : new Error("图片本地处理失败"), {
                             requestParams: task.requestParams,
+                            resultReceivedAt,
                             responseResult: {
                                 upstreamResponse: task.createResponse === undefined ? state.responseResult : { createResponse: task.createResponse, finalResponse: state.responseResult },
                                 localError: buildAiErrorResponseResult(error),
@@ -573,7 +580,7 @@ function InfiniteCanvasPage() {
                     reportCanvasImageLog(generationConfig, node.metadata?.prompt || "", uploaded, task.referenceImageCount ?? node.metadata?.references?.length ?? 0, Boolean(task.hasMask), task.createdAt, {
                         requestParams: task.requestParams,
                         responseResult: task.createResponse === undefined ? state.responseResult : { createResponse: task.createResponse, finalResponse: state.responseResult },
-                    });
+                    }, resultReceivedAt, Date.now());
                     finishCanvasTask(nodeId, uploaded);
                     return;
                 }
@@ -587,7 +594,7 @@ function InfiniteCanvasPage() {
                     await settleVideoTaskCredits(
                         { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, createdAt: task.createdAt, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
                         "failed",
-                        { errorMessage, result: buildAiErrorResponseResult(error) },
+                        { errorMessage, result: buildAiErrorResponseResult(error), upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: (Date.now() - resultReceivedAt) / 1000 },
                     );
                     throw new Error(`上游已生成视频，但本地转存或处理失败：${errorMessage}`);
                 }
@@ -609,7 +616,7 @@ function InfiniteCanvasPage() {
                 await settleVideoTaskCredits(
                     { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, createdAt: task.createdAt, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
                     "success",
-                    { result: { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs } },
+                    { result: { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs }, upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 },
                 );
                 finishCanvasTask(nodeId, video);
             } catch (error) {
@@ -673,6 +680,7 @@ function InfiniteCanvasPage() {
                     } catch (error) {
                         throw Object.assign(error instanceof Error ? error : new Error("图片本地处理失败"), {
                             requestParams: start.requestParams,
+                            resultReceivedAt,
                             responseResult: { upstreamResponse: start.responseResult, localError: buildAiErrorResponseResult(error) },
                         });
                     }
@@ -687,7 +695,7 @@ function InfiniteCanvasPage() {
                     reportCanvasImageLog(params.config, params.prompt, uploaded, params.references?.length || 0, Boolean(params.mask), createdAt, {
                         requestParams: start.requestParams,
                         responseResult: start.responseResult,
-                    });
+                    }, resultReceivedAt, Date.now());
                     return uploaded;
                 }
                 const task: CanvasGenerationTaskMetadata = { ...start.task, kind: "image", createdAt, phase: "waiting", referenceImageCount: params.references?.length || 0, hasMask: Boolean(params.mask) };
@@ -696,7 +704,15 @@ function InfiniteCanvasPage() {
                 return (await waitForCanvasTask(params.targetNodeId)) as UploadedImage;
             } catch (error) {
                 if (!isGenerationCanceled(error) && !(error && typeof error === "object" && (error as { aiCallReported?: boolean }).aiCallReported)) {
-                    reportCanvasImageError(params.config, params.prompt, error, params.references?.length || 0, Boolean(params.mask), createdAt);
+                    reportCanvasImageError(
+                        params.config,
+                        params.prompt,
+                        error,
+                        params.references?.length || 0,
+                        Boolean(params.mask),
+                        createdAt,
+                        error && typeof error === "object" ? (error as { resultReceivedAt?: number }).resultReceivedAt : undefined,
+                    );
                 }
                 throw error;
             }

@@ -30,6 +30,8 @@ export async function POST(request: NextRequest) {
         status?: string;
         reason?: string;
         durationSeconds?: number;
+        upstreamDurationSeconds?: number;
+        localProcessingDurationSeconds?: number;
         requestParams?: unknown;
         responseResult?: unknown;
         errorMessage?: string;
@@ -38,7 +40,9 @@ export async function POST(request: NextRequest) {
 
     const kind = KINDS.includes(body.kind as AiCallKind) ? (body.kind as AiCallKind) : "other";
     const status = STATUSES.includes(body.status as AiCallStatus) ? (body.status as AiCallStatus) : "success";
-    const durationSeconds = typeof body.durationSeconds === "number" && Number.isFinite(body.durationSeconds) && body.durationSeconds >= 0 ? Math.round(body.durationSeconds * 1000) / 1000 : undefined;
+    const durationSeconds = normalizeDuration(body.durationSeconds);
+    const upstreamDurationSeconds = normalizeDuration(body.upstreamDurationSeconds);
+    const localProcessingDurationSeconds = normalizeDuration(body.localProcessingDurationSeconds);
 
     try {
         await recordAiCall({
@@ -48,6 +52,8 @@ export async function POST(request: NextRequest) {
             status,
             reason: (body.reason || "").toString().slice(0, 500),
             durationSeconds,
+            upstreamDurationSeconds,
+            localProcessingDurationSeconds,
             requestParams: clampJson(body.requestParams),
             responseResult: clampJson(body.responseResult),
             errorMessage: body.errorMessage ? body.errorMessage.toString().slice(0, 1000) : null,
@@ -56,4 +62,8 @@ export async function POST(request: NextRequest) {
     } catch (error) {
         return Response.json({ code: 500, msg: error instanceof Error ? error.message : "记录失败" }, { status: 500 });
     }
+}
+
+function normalizeDuration(value: unknown) {
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value * 1000) / 1000 : undefined;
 }

@@ -17,6 +17,8 @@ export type AiCallLog = {
     responseResult: unknown | null;
     errorMessage: string | null;
     durationSeconds: number | null;
+    upstreamDurationSeconds: number | null;
+    localProcessingDurationSeconds: number | null;
     createdAt: string;
     updatedAt: string;
 };
@@ -38,11 +40,15 @@ export async function ensureAiCallLogsTable() {
             response_result JSONB,
             error_message TEXT,
             duration_seconds DOUBLE PRECISION,
+            upstream_duration_seconds DOUBLE PRECISION,
+            local_processing_duration_seconds DOUBLE PRECISION,
             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     `);
     await db.query(`ALTER TABLE ai_call_logs ADD COLUMN IF NOT EXISTS duration_seconds DOUBLE PRECISION`);
+    await db.query(`ALTER TABLE ai_call_logs ADD COLUMN IF NOT EXISTS upstream_duration_seconds DOUBLE PRECISION`);
+    await db.query(`ALTER TABLE ai_call_logs ADD COLUMN IF NOT EXISTS local_processing_duration_seconds DOUBLE PRECISION`);
     await db.query(`CREATE INDEX IF NOT EXISTS ai_call_logs_created_idx ON ai_call_logs(created_at DESC)`);
     await db.query(`CREATE INDEX IF NOT EXISTS ai_call_logs_user_idx ON ai_call_logs(user_id)`);
     initialized = true;
@@ -60,14 +66,16 @@ export async function recordAiCall(input: {
     responseResult?: unknown;
     errorMessage?: string | null;
     durationSeconds?: number;
+    upstreamDurationSeconds?: number;
+    localProcessingDurationSeconds?: number;
 }) {
     await ensureAiCallLogsTable();
     const db = getPgPool();
     const id = randomUUID();
     await db.query(
         `
-        INSERT INTO ai_call_logs (id, user_id, kind, model, status, reason, request_params, response_result, error_message, duration_seconds)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
+        INSERT INTO ai_call_logs (id, user_id, kind, model, status, reason, request_params, response_result, error_message, duration_seconds, upstream_duration_seconds, local_processing_duration_seconds)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)
         `,
         [
             id,
@@ -80,6 +88,8 @@ export async function recordAiCall(input: {
             input.responseResult === undefined ? null : JSON.stringify(input.responseResult),
             input.errorMessage || null,
             input.durationSeconds ?? null,
+            input.upstreamDurationSeconds ?? null,
+            input.localProcessingDurationSeconds ?? null,
         ],
     );
     return id;
@@ -97,6 +107,8 @@ type AiCallLogRow = {
     response_result: unknown | null;
     error_message: string | null;
     duration_seconds: number | null;
+    upstream_duration_seconds: number | null;
+    local_processing_duration_seconds: number | null;
     created_at: Date;
     updated_at: Date;
 };
@@ -114,6 +126,8 @@ function mapRow(row: AiCallLogRow): AiCallLog {
         responseResult: row.response_result,
         errorMessage: row.error_message,
         durationSeconds: row.duration_seconds,
+        upstreamDurationSeconds: row.upstream_duration_seconds,
+        localProcessingDurationSeconds: row.local_processing_duration_seconds,
         createdAt: new Date(row.created_at).toISOString(),
         updatedAt: new Date(row.updated_at).toISOString(),
     };
@@ -160,7 +174,7 @@ export async function listAiCallLogs(filter: ListAiCallLogsFilter): Promise<{ lo
     const result = await db.query<AiCallLogRow>(
         `
         SELECT l.id, l.user_id, u.username, l.kind, l.model, l.status, l.reason,
-               l.request_params, l.response_result, l.error_message, l.duration_seconds, l.created_at, l.updated_at
+               l.request_params, l.response_result, l.error_message, l.duration_seconds, l.upstream_duration_seconds, l.local_processing_duration_seconds, l.created_at, l.updated_at
         FROM ai_call_logs l
         JOIN app_users u ON u.id = l.user_id
         ${where}

@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, Music2, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, Music2, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload, VideoIcon, X } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Input, Modal, Progress, Tag, Typography } from "antd";
 import { nanoid } from "nanoid";
@@ -89,6 +89,8 @@ export default function VideoPage() {
     const dragDepthRef = useRef(0);
     const activeLogIdsRef = useRef<Set<string>>(new Set());
     const pollTimersRef = useRef<Map<string, number>>(new Map());
+    const generationControllersRef = useRef<Map<string, AbortController>>(new Map());
+    const canceledLogIdsRef = useRef<Set<string>>(new Set());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -136,6 +138,8 @@ export default function VideoPage() {
     useEffect(() => () => {
         pollTimersRef.current.forEach((timer) => window.clearTimeout(timer));
         pollTimersRef.current.clear();
+        generationControllersRef.current.forEach((controller) => controller.abort());
+        generationControllersRef.current.clear();
     }, []);
 
     const addReferences = async (files?: FileList | null) => {
@@ -231,8 +235,10 @@ export default function VideoPage() {
         setStartedAt(batchStartedAt);
         try {
             const taskCreatedAt = Date.now();
-            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences);
+            const controller = new AbortController();
+            const task = await createVideoGenerationTask(snapshot.config, snapshot.text, snapshot.references, snapshot.videoReferences, snapshot.audioReferences, { signal: controller.signal });
             const log = buildLog({ prompt: snapshot.text, model, config: snapshot.config, references: snapshot.references, videoReferences: snapshot.videoReferences, audioReferences: snapshot.audioReferences, durationMs: 0, status: "生成中", task, phase: "waiting", taskCreatedAt });
+            generationControllersRef.current.set(log.id, controller);
             await saveLog(log, false);
             setResults([{ id: log.id, logId: log.id, status: "pending", progress: log.progress, phase: log.phase, taskCreatedAt: log.taskCreatedAt, waitingDurationMs: log.waitingDurationMs, renderDurationMs: log.renderDurationMs }]);
             void useUserStore.getState().refreshSession();
@@ -381,7 +387,9 @@ export default function VideoPage() {
     };
 
     const pollGenerationLog = async (log: GenerationLog, configOverride?: AiConfig, agentTaskId?: string) => {
-        if (!log.task || activeLogIdsRef.current.has(log.id)) return;
+        if (!log.task || canceledLogIdsRef.current.has(log.id) || activeLogIdsRef.current.has(log.id)) return;
+        const controller = generationControllersRef.current.get(log.id) || new AbortController();
+        generationControllersRef.current.set(log.id, controller);
         activeLogIdsRef.current.add(log.id);
         setRefreshingLogIds((value) => (value.includes(log.id) ? value : [...value, log.id]));
         setRunning(true);
@@ -390,7 +398,8 @@ export default function VideoPage() {
         const taskConfig = buildVideoConfig({ ...effectiveConfig, ...log.config }, log.task.model || log.model);
         let failureResult: unknown;
         try {
-            const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task);
+            const state = await pollVideoGenerationTask(configOverride || taskConfig, log.task, { signal: controller.signal });
+            if (canceledLogIdsRef.current.has(log.id)) return;
             if (state.status === "completed") {
                 const resultReceivedAt = Date.now();
                 const taskCreatedAt = log.taskCreatedAt || log.createdAt;
@@ -405,8 +414,9 @@ export default function VideoPage() {
                     const errorMessage = error instanceof Error ? error.message : "视频本地处理失败";
                     const renderDurationMs = Date.now() - resultReceivedAt;
                     clearPollTimer(log.id);
+                    generationControllersRef.current.delete(log.id);
                     await saveLog({ ...renderingLog, status: "失败", durationMs: waitingDurationMs + renderDurationMs, renderDurationMs, error: `上游已生成视频，但本地转存或处理失败：${errorMessage}` });
-                    await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: buildAiErrorResponseResult(error) });
+                    await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: buildAiErrorResponseResult(error), upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 });
                     setResults([{ id: log.id, logId: log.id, status: "failed", error: `上游已生成视频，但本地转存或处理失败：${errorMessage}` }]);
                     message.error(`上游已生成视频，但本地处理失败：${errorMessage}`);
                     return;
@@ -423,11 +433,14 @@ export default function VideoPage() {
                     mimeType: stored.mimeType,
                 };
                 clearPollTimer(log.id);
+                generationControllersRef.current.delete(log.id);
                 setResults([{ id: nextVideo.id, status: "success", video: nextVideo, waitingDurationMs, renderDurationMs }]);
                 if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
                 await saveLog({ ...renderingLog, status: "成功", durationMs: nextVideo.durationMs, waitingDurationMs, renderDurationMs, video: nextVideo, error: undefined });
                 await settleVideoTaskCredits(log.task, "success", {
                     result: { storageKey: nextVideo.storageKey, mimeType: nextVideo.mimeType, width: nextVideo.width, height: nextVideo.height, bytes: nextVideo.bytes, durationMs: nextVideo.durationMs },
+                    upstreamDurationSeconds: waitingDurationMs / 1000,
+                    localProcessingDurationSeconds: renderDurationMs / 1000,
                 });
                 message.success("视频已生成");
                 return;
@@ -444,10 +457,12 @@ export default function VideoPage() {
             setResults((value) => value.map((item) => (item.logId === log.id || item.id === log.id ? { ...item, logId: log.id, status: "pending", progress: nextLog.progress, phase: nextLog.phase, taskCreatedAt: nextLog.taskCreatedAt, waitingDurationMs: nextLog.waitingDurationMs } : item)));
             schedulePoll(nextLog, configOverride, agentTaskId);
         } catch (error) {
+            if (canceledLogIdsRef.current.has(log.id) || controller.signal.aborted) return;
             const errorMessage = error instanceof Error ? error.message : "生成失败";
             clearPollTimer(log.id);
+            generationControllersRef.current.delete(log.id);
             setResults([{ id: log.id, logId: log.id, status: "failed", error: errorMessage }]);
-            await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: failureResult ?? buildAiErrorResponseResult(error) });
+            await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: failureResult ?? buildAiErrorResponseResult(error), upstreamDurationSeconds: (log.waitingDurationMs ?? Date.now() - (log.taskCreatedAt || log.createdAt)) / 1000 });
             if (agentTaskId) updateAgentTask(agentTaskId, { status: "failed", successCount: 0, failCount: 1, error: errorMessage });
             await saveLog({ ...log, status: "失败", durationMs: Date.now() - log.createdAt, waitingDurationMs: log.waitingDurationMs ?? Date.now() - (log.taskCreatedAt || log.createdAt), error: errorMessage });
             message.error(errorMessage);
@@ -467,6 +482,22 @@ export default function VideoPage() {
         if (!log?.task || log.status !== "生成中") return;
         clearPollTimer(log.id);
         void pollGenerationLog(log);
+    };
+
+    const cancelGenerationLog = async (logId: string) => {
+        const log = logs.find((item) => item.id === logId);
+        if (!log?.task || log.status !== "生成中" || log.phase === "rendering") return;
+        canceledLogIdsRef.current.add(logId);
+        clearPollTimer(logId);
+        generationControllersRef.current.get(logId)?.abort();
+        generationControllersRef.current.delete(logId);
+        const taskCreatedAt = log.taskCreatedAt || log.createdAt;
+        const waitingDurationMs = Date.now() - taskCreatedAt;
+        const canceledLog = { ...log, status: "失败" as const, durationMs: waitingDurationMs, waitingDurationMs, error: "已取消生成" };
+        setResults([{ id: log.id, logId: log.id, status: "failed", error: "已取消生成" }]);
+        await saveLog(canceledLog, false);
+        await settleVideoTaskCredits(log.task, "failed", { errorMessage: "已取消生成", result: { canceled: true }, upstreamDurationSeconds: waitingDurationMs / 1000 });
+        message.info("已取消生成");
     };
 
     const previewGenerationLog = (log: GenerationLog) => {
@@ -658,7 +689,13 @@ export default function VideoPage() {
                         </div>
                         {results.length ? (
                             <div className="grid gap-4">
-                                {results.map((result) => (result.status === "success" && result.video ? <ResultVideoCard key={result.id} result={result} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} /> : result.status === "failed" ? <FailedVideoCard key={result.id} error={result.error || "生成失败"} onRetry={retryResult} /> : <PendingVideoCard key={result.id} result={result} refreshing={Boolean(result.logId && refreshingLogIds.includes(result.logId))} onRefresh={result.logId ? () => refreshPendingLog(result.logId!) : undefined} />))}
+                                {results.map((result) => (
+                                    result.status === "success" && result.video
+                                        ? <ResultVideoCard key={result.id} result={result} video={result.video} onDownload={downloadVideo} onSaveAsset={saveResultToAssets} />
+                                        : result.status === "failed"
+                                            ? <FailedVideoCard key={result.id} error={result.error || "生成失败"} onRetry={retryResult} />
+                                            : <PendingVideoCard key={result.id} result={result} refreshing={Boolean(result.logId && refreshingLogIds.includes(result.logId))} onRefresh={result.logId ? () => refreshPendingLog(result.logId!) : undefined} onCancel={result.logId && result.phase !== "rendering" ? () => void cancelGenerationLog(result.logId!) : undefined} />
+                                ))}
                             </div>
                         ) : (
                             <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-stone-300 text-center dark:border-stone-700 lg:min-h-[560px]">
@@ -739,7 +776,7 @@ function ResultVideoCard({ result, video, onDownload, onSaveAsset }: { result: G
     );
 }
 
-function PendingVideoCard({ result, refreshing, onRefresh }: { result: GenerationResult; refreshing: boolean; onRefresh?: () => void }) {
+function PendingVideoCard({ result, refreshing, onRefresh, onCancel }: { result: GenerationResult; refreshing: boolean; onRefresh?: () => void; onCancel?: () => void }) {
     const now = useElapsedClock(result.status === "pending");
     const waitingMs = result.phase === "rendering"
         ? result.waitingDurationMs || 0
@@ -751,7 +788,7 @@ function PendingVideoCard({ result, refreshing, onRefresh }: { result: Generatio
                 <Progress type="circle" percent={result.progress ?? 0} size={76} status={result.progress === undefined ? "active" : undefined} format={(value) => (result.phase === "rendering" ? "处理" : result.progress === undefined ? "等待" : `${value}%`)} />
                 <span>{result.phase === "rendering" ? "上游已完成，正在转存并渲染视频" : result.progress === undefined ? "等待上游返回进度" : `当前进度 ${result.progress}%`}</span>
                 <span className="text-xs">等待结果 {formatDuration(waitingMs)}{result.phase === "rendering" ? ` · 本地处理 ${formatDuration(renderMs)}` : ""}</span>
-                {onRefresh && result.phase !== "rendering" ? <Button size="small" icon={<RefreshCw className={refreshing ? "animate-spin" : ""} />} loading={refreshing} disabled={refreshing} onClick={onRefresh}>刷新进度</Button> : null}
+                {result.phase !== "rendering" && (onRefresh || onCancel) ? <div className="flex gap-2">{onRefresh ? <Button size="small" icon={<RefreshCw className={refreshing ? "animate-spin" : ""} />} loading={refreshing} disabled={refreshing} onClick={onRefresh}>刷新进度</Button> : null}{onCancel ? <Button size="small" danger icon={<X className="size-3.5" />} onClick={onCancel}>取消</Button> : null}</div> : null}
             </div>
         </div>
     );
