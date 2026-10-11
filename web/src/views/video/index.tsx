@@ -13,7 +13,7 @@ import { formatBytes, formatDuration } from "@/lib/image-utils";
 import { VIDEO_REFERENCE_LIMITS, VIDEO_REFERENCE_MIME_TYPES, videoReferenceLabel } from "@/lib/video-references";
 import { deleteStoredMedia, resolveMediaUrl, uploadMediaFile } from "@/services/file-storage";
 import { createVideoThumbnail, resolveImageUrl, uploadImage } from "@/services/image-storage";
-import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, videoTaskPollInterval, type VideoGenerationTask } from "@/services/api/video";
 import { buildAiErrorResponseResult } from "@/services/ai-call-log";
 import { createUserLogStore } from "@/services/user-log-store";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -376,7 +376,7 @@ export default function VideoPage() {
         const timer = window.setTimeout(() => {
             pollTimersRef.current.delete(log.id);
             void pollGenerationLog(log, configOverride, agentTaskId);
-        }, 5000);
+        }, videoTaskPollInterval(log.task!));
         pollTimersRef.current.set(log.id, timer);
     };
 

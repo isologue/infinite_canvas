@@ -5,11 +5,15 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- SD 视频（Seedance 2.0）协议：在「配置 > 渠道」选择 `SD 视频（Seedance 2.0）` 后，默认 Base URL 应为 `https://api.meaicc.com`；清晰度可选择 480P、720P、1080P，参考素材请求格式只显示 `JSON（公网 URL）`。创建应发送 `POST /v1/videos`，请求体使用 `model`、`input.prompt`、`input.media`、`parameters.resolution`、`parameters.ratio`、`parameters.duration`；图片、视频、音频分别最多取 9、3、3 条，并转存为 WebDAV 公网 URL 后映射成 `reference_image`、`reference_video`、`reference_voice`。查询应请求 `GET /v1/videos/{task_id}`，每 20 秒轮询一次；`SUCCEEDED` 的 `object` 作为视频 URL，`FAILED: 错误信息` 应显示实际错误。SD 协议不应出现 FormData 或 JSON 转 FormData 重试。
+
+- MiniMax 视频高分辨率：设置面板应提供 2K、4K 和 `CF-MJ` 工作流。选择 2K/4K 时，只允许 `cf-multi-reference`、`cf-fl2v`、`cf-mj` 工作流；请求的 `size` 应为 `2K` 或 `4K`，且同时传入所选的 `aspect_ratio`。模型名包含 `480P`、`768P`、`1080P`、`2K` 或 `4K` 时，应自动选中该清晰度并禁用其余清晰度，实际请求也必须以模型名指定的清晰度为准；未声明清晰度的模型仍可自由选择。480P、768P、1080P 的既有尺寸映射与工作流保持不变。
+
 - 视频 URL 结果转存：OpenAI 或 MiniMax 视频轮询返回公网 URL 后，浏览器不应再先完整下载视频再上传；应由服务端直接转存到本地资源库，完成后预览可播放。大视频生成完成后的“本地处理”等待应明显缩短，刷新页面不应再成为加速处理的必要条件。选择 JSON 公网 URL 但 WebDAV 未启用或转存失败时，图片编辑、OpenAI 视频和 MiniMax 视频应自动使用 FormData 重试一次；上游已收到 JSON 请求后的报错不得重复提交。
 
 - OpenAI 参考素材请求格式：在「配置 > 渠道 > 编辑 OpenAI 渠道」选择 `JSON（公网 URL）` 后，图生图和视频创建请求都应使用 WebDAV 公网 URL；视频的参考图片、视频、音频分别通过 `images`、`reference_videos`、`reference_audios` 数组提交。图生图的 `images[].image_url` 与蒙版 URL 不得再是 data URL，视频日志应显示数值型 `duration`、字符串型 `seconds` 与 `n: 1`。默认应为 JSON；选择 `FormData（上传文件）` 时，图生图应发送 `image[]` 文件，视频继续发送图片 `input_reference[]`、视频 `reference_videos`、音频 `reference_audios` 文件字段。
 
-- MiniMax 视频参考素材请求格式：在「配置 > 渠道 > 编辑 MiniMax 渠道」可选择 `JSON（公网 URL）` 或 `FormData（上传文件）`，默认 JSON。JSON 请求应将参考图片、视频、音频转存为 WebDAV 公网 URL，并分别通过 `images`、`reference_videos`、`reference_audios` 数组提交。火山方舟及 Seedance 协议、任务路径和设置面板不应再显示或参与请求。
+- MiniMax 视频参考素材请求格式：在「配置 > 渠道 > 编辑 MiniMax 渠道」可选择 `JSON（公网 URL）` 或 `FormData（上传文件）`，默认 JSON。JSON 请求应将参考图片、视频、音频转存为 WebDAV 公网 URL，并分别通过 `images`、`reference_videos`、`reference_audios` 数组提交。旧火山方舟 Agent Plan 路径不应再显示或参与请求；独立 SD 视频（Seedance 2.0）协议按本页对应条目验证。
 
 - WebDAV 媒体存储：仅超级管理员可在「配置 > WebDAV」启用并维护 WebDAV URL、用户名、密码、根路径和公开访问前缀；普通用户不显示该入口，也不能调用测试或同步接口。所有用户新上传或生成的图片、视频、音频应保留本地副本并上传至管理员 WebDAV 的 `根路径/用户目录/`；需要公网 URL 的图片、视频调用会将已有本地参考素材按需补传后使用该公开 URL。管理员点击「全量同步」后应补传所有用户既有媒体文件。重新打开配置时密码不得回显，留空保存不得覆盖已配置密码。
 

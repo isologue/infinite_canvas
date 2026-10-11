@@ -10,6 +10,7 @@ const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
     { label: "OpenAI", value: "openai" },
     { label: "Gemini", value: "gemini" },
     { label: "MiniMax H3", value: "minimax" },
+    { label: "SD 视频（Seedance 2.0）", value: "sd" },
 ];
 
 const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
@@ -58,7 +59,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
         if (apiFormat === draft.apiFormat) return;
         const apply = () => {
             const baseUrl = canManageUrl && (!draft.baseUrl.trim() || draft.baseUrl.trim() === defaultBaseUrlForApiFormat(draft.apiFormat)) ? defaultBaseUrlForApiFormat(apiFormat) : draft.baseUrl;
-            patch({ apiFormat, apiFormatMode: "manual", baseUrl });
+            patch({ apiFormat, apiFormatMode: "manual", baseUrl, ...(apiFormat === "sd" ? { referenceImageRequestFormat: "json" } : {}) });
         };
         const incompatible = incompatibleModelNames(draft.models, apiFormat);
         if (!incompatible.length) {
@@ -69,7 +70,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
         const suffix = incompatible.length > 3 ? ` 等 ${incompatible.length} 个模型` : "";
         Modal.confirm({
             title: "模型与调用协议可能不匹配",
-            content: `当前模型列表包含 ${preview}${suffix}，可能不兼容 ${apiFormat === "gemini" ? "Gemini" : apiFormat === "minimax" ? "MiniMax H3" : "OpenAI"} 协议，确定仍要修改吗？`,
+            content: `当前模型列表包含 ${preview}${suffix}，可能不兼容 ${apiFormat === "gemini" ? "Gemini" : apiFormat === "minimax" ? "MiniMax H3" : apiFormat === "sd" ? "SD 视频（Seedance 2.0）" : "OpenAI"} 协议，确定仍要修改吗？`,
             okText: "确定修改",
             cancelText: "取消",
             onOk: apply,
@@ -128,10 +129,10 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                     <Select className="w-full" value={draft.imageResponseFormat} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
                     <span className="mt-1 block text-xs text-stone-500">图片接口默认发送 response_format=url。</span>
                 </label>
-                {draft.apiFormat === "openai" || draft.apiFormat === "minimax" ? <label className="block md:col-span-2">
+                {draft.apiFormat === "openai" || draft.apiFormat === "minimax" || draft.apiFormat === "sd" ? <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">参考素材请求格式</span>
-                    <Select className="w-full" value={draft.referenceImageRequestFormat} options={referenceImageRequestFormatOptions} onChange={(referenceImageRequestFormat: ReferenceImageRequestFormat) => patch({ referenceImageRequestFormat })} />
-                    <span className="mt-1 block text-xs text-stone-500">适用于 OpenAI 图生图、视频与 MiniMax 视频；JSON 模式会将参考图片、视频和音频转存为 WebDAV 公网 URL。</span>
+                    <Select className="w-full" value={draft.apiFormat === "sd" ? "json" : draft.referenceImageRequestFormat} options={draft.apiFormat === "sd" ? referenceImageRequestFormatOptions.filter((item) => item.value === "json") : referenceImageRequestFormatOptions} onChange={(referenceImageRequestFormat: ReferenceImageRequestFormat) => patch({ referenceImageRequestFormat })} />
+                    <span className="mt-1 block text-xs text-stone-500">{draft.apiFormat === "sd" ? "SD 视频协议仅支持 JSON；参考图片、视频和音频会转存为 WebDAV 公网 URL。" : "适用于 OpenAI 图生图、视频与 MiniMax 视频；JSON 模式会将参考图片、视频和音频转存为 WebDAV 公网 URL。"}</span>
                 </label> : null}
             </div>
 

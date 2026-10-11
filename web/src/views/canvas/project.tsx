@@ -8,7 +8,7 @@ import { createImageGenerationTask, pollImageGenerationTask, requestImageQuestio
 import { fetchCanvasProject, flushCanvasProjectSaves, queueCanvasProjectSave } from "@/services/api/canvas-projects";
 import { buildAiErrorRequestParams, buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, reportAiCall } from "@/services/ai-call-log";
 import { requestAudioGeneration, storeGeneratedAudio } from "@/services/api/audio";
-import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, type VideoGenerationTask } from "@/services/api/video";
+import { createVideoGenerationTask, pollVideoGenerationTask, settleVideoTaskCredits, storeGeneratedVideo, videoTaskPollInterval, type VideoGenerationTask } from "@/services/api/video";
 import { DOCS_URL } from "@/constant/env";
 import { defaultConfig, modelOptionName, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { useSharedConfigGate } from "@/hooks/use-shared-config-gate";
@@ -388,14 +388,16 @@ function InfiniteCanvasPage() {
     }, []);
 
     const scheduleCanvasTaskPoll = useCallback(
-        (nodeId: string, delay = 5000) => {
+        (nodeId: string, delay?: number) => {
             clearCanvasTaskTimer(nodeId);
+            const task = nodesRef.current.find((node) => node.id === nodeId)?.metadata?.generationTask;
+            const pollDelay = delay ?? (task?.kind === "video" ? videoTaskPollInterval({ provider: task.provider as VideoGenerationTask["provider"] }) : 5000);
             canvasTaskTimersRef.current.set(
                 nodeId,
                 window.setTimeout(() => {
                     canvasTaskTimersRef.current.delete(nodeId);
                     void pollCanvasTaskRef.current(nodeId);
-                }, delay),
+                }, pollDelay),
             );
         },
         [clearCanvasTaskTimer],

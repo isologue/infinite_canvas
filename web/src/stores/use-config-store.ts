@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 
-export type ApiCallFormat = "openai" | "gemini" | "minimax";
+export type ApiCallFormat = "openai" | "gemini" | "minimax" | "sd";
 export type ApiFormatMode = "auto" | "manual";
 export type ImageResponseFormat = "url" | "b64_json";
 export type ReferenceImageRequestFormat = "form-data" | "json";
@@ -81,6 +81,7 @@ const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const MINIMAX_BASE_URL = "https://api.minimaxi.com";
+const SD_BASE_URL = "https://api.meaicc.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -301,12 +302,14 @@ export function normalizeChannelModels(models: Array<string | ChannelModel> | un
 const GEMINI_MODEL_NAME_PATTERN = /(^|[/:._-])gemini(?:$|[/:._-])/i;
 const OPENAI_MODEL_NAME_PATTERN = /(^|[/:._-])(?:openai|gpt|dall[-_]?e|dalle|grok|o[1-9])(?:$|[/:._-])/i;
 const MINIMAX_MODEL_NAME_PATTERN = /(^|[/:._-])minimax(?:$|[/:._-])/i;
+const SD_MODEL_NAME_PATTERN = /(^|[/:._-])(?:sd-2|seedance)(?:$|[/:._-])/i;
 
 export function inferModelApiFormat(modelName: string): ApiCallFormat | undefined {
     const value = modelName.trim();
     if (!value) return undefined;
     if (GEMINI_MODEL_NAME_PATTERN.test(value)) return "gemini";
     if (MINIMAX_MODEL_NAME_PATTERN.test(value)) return "minimax";
+    if (SD_MODEL_NAME_PATTERN.test(value)) return "sd";
     if (OPENAI_MODEL_NAME_PATTERN.test(value)) return "openai";
     return undefined;
 }
@@ -315,7 +318,7 @@ export function inferChannelApiFormat(models: Array<string | ChannelModel> | und
     const formats = new Set<ApiCallFormat>();
     for (const item of models || []) {
         const format = inferModelApiFormat(typeof item === "string" ? item : item?.name || "");
-        if (format === "openai" || format === "gemini" || format === "minimax") formats.add(format);
+        if (format) formats.add(format);
     }
     return formats.size === 1 ? formats.values().next().value : undefined;
 }
@@ -349,7 +352,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiFormat,
         apiFormatMode,
         imageResponseFormat: normalizeImageResponseFormat(channel?.imageResponseFormat),
-        referenceImageRequestFormat: normalizeReferenceImageRequestFormat(channel?.referenceImageRequestFormat),
+        referenceImageRequestFormat: apiFormat === "sd" ? "json" : normalizeReferenceImageRequestFormat(channel?.referenceImageRequestFormat),
         models,
     };
 }
@@ -465,11 +468,12 @@ function normalizeChannels(config: AiConfig) {
 export function defaultBaseUrlForApiFormat(apiFormat: ApiCallFormat) {
     if (apiFormat === "gemini") return GEMINI_BASE_URL;
     if (apiFormat === "minimax") return MINIMAX_BASE_URL;
+    if (apiFormat === "sd") return SD_BASE_URL;
     return OPENAI_BASE_URL;
 }
 
 function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
-    return apiFormat === "gemini" || apiFormat === "minimax" ? apiFormat : "openai";
+    return apiFormat === "gemini" || apiFormat === "minimax" || apiFormat === "sd" ? apiFormat : "openai";
 }
 
 function uniqueModelOptions(models: string[]) {

@@ -1,6 +1,10 @@
 # CHANGELOG
 
 ## Unreleased
++ [优化] SD 视频清晰度新增 1080P；MiniMax 视频新增 2K、4K 与 CF-MJ 工作流，2K/4K 自动使用兼容工作流并传递必填的 `aspect_ratio`；模型名声明清晰度时自动锁定对应选项和实际请求参数。
+
++ [新增] 新增 SD 视频（Seedance 2.0）协议：以 JSON 调用 `/v1/videos`，参考图片、视频和音频统一转存为 WebDAV 公网 URL；按 20 秒间隔轮询任务，完成后读取 `object` 视频地址。
+
 + [修复] 视频轮询拿到公网结果 URL 后改由服务端直接转存，避免浏览器先下载完整视频再上传导致本地处理和预览等待过长；JSON 参考素材无法获得 WebDAV 公网 URL 时自动回退为 FormData 重试一次。
 
 + [新增] OpenAI 图生图和视频共用参考素材请求格式，默认 JSON 会将图片、视频、音频转存为 WebDAV 公网 URL；也可切换为 FormData 文件上传，视频保留字符串型 `seconds` 与数值型 `duration` 参数。

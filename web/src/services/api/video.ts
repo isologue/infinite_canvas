@@ -12,6 +12,7 @@ import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type VideoResponse = { id: string; status?: string; progress?: number | string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
 type MiniMaxVideoResponse = { task_id?: string; id?: string; status?: string; progress?: number | string; fail_reason?: string; error?: { message?: string } | string; url?: string; video_url?: string; result_url?: string; content?: { video_url?: string; url?: string } | null };
+type SdVideoResponse = { task_id?: string; id?: string; object?: string; status?: string; progress?: number | string; created_at?: number; seconds?: number };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
 
@@ -22,13 +23,17 @@ function boolConfig(value: string | undefined, fallback: boolean) {
 }
 
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
-export type VideoGenerationTask = { id: string; provider: "openai" | "minimax" | "plugin"; model: string; createdAt: number; logModel?: string; logParams?: unknown; logReported?: boolean };
+export type VideoGenerationTask = { id: string; provider: "openai" | "minimax" | "sd" | "plugin"; model: string; createdAt: number; logModel?: string; logParams?: unknown; logReported?: boolean };
 export type VideoGenerationTaskState = { status: "pending"; progress?: number } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string; responseResult?: unknown };
 type VideoGenerationTaskHandle = Pick<VideoGenerationTask, "id" | "provider" | "model">;
 type CaptureRequestParams = (params: unknown) => void;
 
 /** Results for scripted (plugin) video models, which run their own create+poll in one shot at task creation. */
 const pluginVideoResults = new Map<string, VideoGenerationResult>();
+
+export function videoTaskPollInterval(task: Pick<VideoGenerationTask, "provider">) {
+    return task.provider === "sd" ? 20_000 : 5_000;
+}
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildAiProxyUrl(buildApiUrl(config.baseUrl, path));
@@ -72,7 +77,7 @@ export async function requestVideoGeneration(
     let task: VideoGenerationTask | null = null;
     try {
         task = await createVideoGenerationTask(config, prompt, references, videoReferences, audioReferences, options);
-        const delayMs = 5000;
+        const delayMs = videoTaskPollInterval(task);
         for (;;) {
             if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
             const state = await pollVideoGenerationTask(config, task, options);
@@ -109,6 +114,9 @@ export async function createVideoGenerationTask(config: AiConfig, prompt: string
         if (requestConfig.apiFormat === "minimax") {
             return attachLog(await createMiniMaxVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options, captureRequestParams));
         }
+        if (requestConfig.apiFormat === "sd") {
+            return attachLog(await createSdVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options, captureRequestParams));
+        }
         return attachLog(await createOpenAIVideoTask(requestConfig, selectedModel, prompt, references, videoReferences, audioReferences, options, captureRequestParams));
     } catch (error) {
         void reportAiCall({
@@ -132,7 +140,9 @@ export async function pollVideoGenerationTask(config: AiConfig, task: VideoGener
     }
     const requestConfig = resolveModelRequestConfig(config, task.model);
     assertVideoConfig(requestConfig, requestConfig.model);
-    return task.provider === "minimax" ? pollMiniMaxTask(requestConfig, task, options) : pollOpenAIVideoTask(requestConfig, task, options);
+    if (task.provider === "minimax") return pollMiniMaxTask(requestConfig, task, options);
+    if (task.provider === "sd") return pollSdVideoTask(requestConfig, task, options);
+    return pollOpenAIVideoTask(requestConfig, task, options);
 }
 
 async function createPluginVideoTask(config: AiConfig, model: string, script: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTaskHandle> {
@@ -255,7 +265,11 @@ function formDataRequestParams(formData: FormData) {
 }
 
 async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams, requestFormat = config.referenceImageRequestFormat): Promise<VideoGenerationTaskHandle> {
-    const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length);
+    const quality = miniMaxModelResolution(model) || config.vquality;
+    const highResolution = isMiniMaxHighResolution(quality);
+    const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length, highResolution);
+    const size = normalizeMiniMaxSize(config.size, quality);
+    const aspectRatio = highResolution ? normalizeMiniMaxAspectRatio(config.size) : undefined;
     const seconds = String(Math.max(1, Math.min(15, Number(normalizeVideoSeconds(config.videoSeconds)))));
     if (requestFormat === "json") {
         let images: string[];
@@ -276,7 +290,8 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
             prompt,
             seconds,
             workflow_id: workflowId,
-            size: normalizeMiniMaxSize(config.size, config.vquality),
+            size,
+            ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
             ...(images.length ? { images } : {}),
             ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
             ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
@@ -297,7 +312,8 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
     body.append("prompt", prompt);
     body.append("seconds", seconds);
     body.append("workflow_id", workflowId);
-    body.append("size", normalizeMiniMaxSize(config.size, config.vquality));
+    body.append("size", size);
+    if (aspectRatio) body.append("aspect_ratio", aspectRatio);
     const imageFiles = await Promise.all(references.slice(0, 9).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     imageFiles.forEach((file) => body.append("images", file));
     const videoFiles = await Promise.all(videoReferences.slice(0, 3).map((video) => referenceMediaFile(video.storageKey, video.url, video.name, video.type)));
@@ -313,6 +329,38 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
         return { id, provider: "minimax", model };
     } catch (error) {
         throw videoResponseError(readAxiosError(error, "MiniMax H3 视频任务创建失败"), buildAiErrorResponseResult(error));
+    }
+}
+
+async function createSdVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
+    try {
+        const [images, videos, audios] = await Promise.all([
+            Promise.all(references.slice(0, 9).map(ensurePublicImageUrl)),
+            Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+            Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+        ]);
+        const media = [
+            ...images.map((url) => ({ type: "reference_image", url })),
+            ...audios.map((url) => ({ type: "reference_voice", url })),
+            ...videos.map((url) => ({ type: "reference_video", url })),
+        ];
+        const body = {
+            model: modelOptionName(model),
+            input: { prompt, ...(media.length ? { media } : {}) },
+            parameters: {
+                resolution: normalizeVideoResolution(config.vquality),
+                ratio: normalizeSdVideoRatio(config.size),
+                duration: Number(normalizeVideoSeconds(config.videoSeconds)),
+            },
+        };
+        captureRequestParams?.(body);
+        const created = (await axios.post<SdVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data;
+        if (created.status?.toUpperCase().startsWith("FAILED")) throw videoResponseError(sdFailureMessage(created.status), created);
+        const id = created.task_id || created.id;
+        if (!id) throw new Error("SD 视频接口没有返回任务 ID");
+        return { id, provider: "sd", model };
+    } catch (error) {
+        throw videoResponseError(readAxiosError(error, "SD 视频任务创建失败"), buildAiErrorResponseResult(error));
     }
 }
 
@@ -334,20 +382,34 @@ async function pollMiniMaxTask(config: AiConfig, task: VideoGenerationTask, opti
     }
 }
 
+async function pollSdVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
+    try {
+        const state = (await axios.get<SdVideoResponse>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: aiHeaders(config), signal: options?.signal })).data;
+        if (typeof state.object === "string" && isPublicMediaUrl(state.object)) return { status: "completed", result: { url: state.object, mimeType: "video/mp4" } };
+        const status = state.status?.trim().toUpperCase() || "";
+        if (status.startsWith("FAILED")) return { status: "failed", error: sdFailureMessage(state.status), responseResult: state };
+        if (status === "SUCCEEDED") return { status: "failed", error: "SD 视频任务已完成，但没有返回视频地址", responseResult: state };
+        return { status: "pending", progress: normalizeProgress(state.progress) };
+    } catch (error) {
+        throw videoResponseError(readAxiosError(error, "SD 视频任务查询失败"), buildAiErrorResponseResult(error));
+    }
+}
+
 async function referenceMediaFile(storageKey: string | undefined, url: string | undefined, name: string, type: string) {
     const blob = storageKey ? await getMediaBlob(storageKey) : url ? await (await fetch(url)).blob() : null;
     if (!blob) throw new Error(`读取参考素材失败：${name}`);
     return new File([blob], name || "reference", { type: blob.type || type || "application/octet-stream" });
 }
 
-function resolveMiniMaxWorkflow(value: string, imageCount: number, videoCount: number, audioCount: number) {
-    if (value && value !== "auto") return value;
-    if (videoCount || audioCount || imageCount > 2) return "multi-reference";
-    if (imageCount) return "fl2v";
-    return "text-to-video";
+function resolveMiniMaxWorkflow(value: string, imageCount: number, videoCount: number, audioCount: number, highResolution = false) {
+    const workflow = value && value !== "auto" ? value : videoCount || audioCount || imageCount > 2 ? "multi-reference" : imageCount ? "fl2v" : "text-to-video";
+    if (highResolution) return ["cf-multi-reference", "cf-fl2v", "cf-mj"].includes(workflow) ? workflow : "cf-multi-reference";
+    return workflow;
 }
 
 function normalizeMiniMaxSize(value: string, quality: string) {
+    const resolution = String(quality).trim().toUpperCase();
+    if (resolution === "2K" || resolution === "4K") return resolution;
     if (/^\d+x\d+$/i.test(value || "")) return value;
     const ratio = normalizeVideoAspectRatio(value);
     const level = Number(String(quality).replace(/p$/i, "")) || 768;
@@ -362,6 +424,21 @@ function normalizeMiniMaxSize(value: string, quality: string) {
         "21:9": { "480": "992x416", "720": "1568x672", "768": "1568x672", "1080": "2208x960" },
     };
     return sizes[ratio]?.[String(level)] || sizes[ratio]?.["768"] || "1376x768";
+}
+
+function isMiniMaxHighResolution(value: string) {
+    return /^(2K|4K)$/i.test(value.trim());
+}
+
+function miniMaxModelResolution(model: string) {
+    const matched = model.match(/(?:^|[^a-z0-9])(480|768|1080)p?(?:$|[^a-z0-9])|(?:^|[^a-z0-9])(2k|4k)(?:$|[^a-z0-9])/i);
+    if (!matched) return undefined;
+    return (matched[1] || matched[2]).toUpperCase();
+}
+
+function normalizeMiniMaxAspectRatio(value: string) {
+    const ratio = normalizeVideoAspectRatio(value);
+    return ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "21:9"].includes(ratio) ? ratio : "16:9";
 }
 
 function unwrapMiniMaxResponse(payload: MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }) {
@@ -413,11 +490,20 @@ function normalizeVideoAspectRatio(value: string) {
     return `${width / divisor}:${height / divisor}`;
 }
 
+function normalizeSdVideoRatio(value: string) {
+    const ratio = normalizeVideoAspectRatio(value);
+    return ["1:1", "16:9", "9:16"].includes(ratio) ? ratio : "16:9";
+}
+
 function normalizeVideoResolution(value: string) {
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
     const resolution = value.replace(/p$/i, "") || "720";
     return `${resolution}p`;
+}
+
+function sdFailureMessage(status: string | undefined) {
+    return status?.replace(/^FAILED\s*:?\s*/i, "").trim() || "SD 视频生成失败";
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {

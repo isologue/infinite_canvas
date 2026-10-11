@@ -5,9 +5,13 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
+- SD 视频（Seedance 2.0）协议：在「配置 > 渠道」选择 `SD 视频（Seedance 2.0）` 后，默认 Base URL 应为 `https://api.meaicc.com`；清晰度可选择 480P、720P、1080P，参考素材请求格式只显示 `JSON（公网 URL）`。创建应发送 `POST /v1/videos`，请求体使用 `model`、`input.prompt`、`input.media`、`parameters.resolution`、`parameters.ratio`、`parameters.duration`；图片、视频、音频分别最多取 9、3、3 条，并转存为 WebDAV 公网 URL 后映射成 `reference_image`、`reference_video`、`reference_voice`。查询应请求 `GET /v1/videos/{task_id}`，每 20 秒轮询一次；`SUCCEEDED` 的 `object` 作为视频 URL，`FAILED: 错误信息` 应显示实际错误。SD 协议不应出现 FormData 或 JSON 转 FormData 重试。
+
+- MiniMax 视频高分辨率：设置面板应提供 2K、4K 和 `CF-MJ` 工作流。选择 2K/4K 时，只允许 `cf-multi-reference`、`cf-fl2v`、`cf-mj` 工作流；请求的 `size` 应为 `2K` 或 `4K`，且同时传入所选的 `aspect_ratio`。模型名包含 `480P`、`768P`、`1080P`、`2K` 或 `4K` 时，应自动选中该清晰度并禁用其余清晰度，实际请求也必须以模型名指定的清晰度为准；未声明清晰度的模型仍可自由选择。480P、768P、1080P 的既有尺寸映射与工作流保持不变。
+
 - 视频 URL 结果转存：OpenAI 或 MiniMax 视频轮询返回公网 URL 后，浏览器不应再先完整下载视频再上传；应由服务端直接转存到本地资源库，完成后预览可播放。大视频生成完成后的“本地处理”等待应明显缩短，刷新页面不应再成为加速处理的必要条件。选择 JSON 公网 URL 但 WebDAV 未启用或转存失败时，图片编辑、OpenAI 视频和 MiniMax 视频应自动使用 FormData 重试一次；上游已收到 JSON 请求后的报错不得重复提交。
 
-- OpenAI 与 MiniMax 视频参考素材请求格式：在「配置 > 渠道」选择 `JSON（公网 URL）` 后，参考图片、视频、音频都会转存为 WebDAV 公网 URL，分别使用 `images`、`reference_videos`、`reference_audios` 数组提交；默认 JSON。选择 `FormData（上传文件）` 时继续使用对应文件字段。火山方舟及 Seedance 协议、任务路径和设置面板不应再显示或参与请求。
+- OpenAI 与 MiniMax 视频参考素材请求格式：在「配置 > 渠道」选择 `JSON（公网 URL）` 后，参考图片、视频、音频都会转存为 WebDAV 公网 URL，分别使用 `images`、`reference_videos`、`reference_audios` 数组提交；默认 JSON。选择 `FormData（上传文件）` 时继续使用对应文件字段。旧火山方舟 Agent Plan 路径不应再显示或参与请求；独立 SD 视频（Seedance 2.0）协议按本页对应条目验证。
 
 - 画布选择与平移：左下工具栏应能切换「选择」与「移动」模式并用图标显示当前模式；选择模式拖动空白区域应显示疏朗清晰的虚线框，虚线长度、间距和粗细在任意缩放比例下保持一致；移动模式应能从空白区域或节点上拖动画布。按住 Control 或空格应临时反转当前工具且不改变工具栏模式，即选择变移动、移动变范围选择；点击画布页任意按钮后按空格应只临时切换工具，不得再次触发该按钮；输入框和可编辑文本内仍可正常输入空格。中键平移以及 Shift/Cmd 追加选择节点应继续可用。
 - 文档站国际化：访问文档站首页及 `/docs` 应默认显示英文，切换简体中文后 URL 应带 `/zh-CN` 且首页、顶部导航、侧边栏、正文、搜索框和页面操作文案均显示中文；刷新、站内跳转和再次切回 English 后语言应保持正确，搜索结果与 Markdown/LLM 文档内容不得混入另一种语言。
