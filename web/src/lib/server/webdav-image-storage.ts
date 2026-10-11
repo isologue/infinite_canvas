@@ -10,15 +10,17 @@ type WebdavImageConfig = {
 
 type WebdavImageFile = { storageKey: string; mimeType: string; content: Buffer };
 
-export async function uploadUserImageToWebdav(config: WebdavImageConfig, userId: string, file: WebdavImageFile) {
+export async function uploadUserFileToWebdav(config: WebdavImageConfig, userId: string, file: WebdavImageFile) {
     if (config.enabled !== true || config.storageMode === "local") return "";
     const client = createWebdavClient(config);
     const relativePath = `${safeSegment(userId)}/${safeSegment(file.storageKey)}.${extensionForMimeType(file.mimeType)}`;
     await client.ensureDirectory(relativePath.split("/").slice(0, -1));
     const response = await client.fetch(relativePath, { method: "PUT", headers: { "content-type": file.mimeType }, body: new Uint8Array(file.content) });
-    if (!response.ok) throw new Error(`WebDAV 图片上传失败（HTTP ${response.status}）`);
+    if (!response.ok) throw new Error(`WebDAV 媒体上传失败（HTTP ${response.status}）`);
     return client.publicUrl(relativePath);
 }
+
+export const uploadUserImageToWebdav = uploadUserFileToWebdav;
 
 export async function testWebdavImageStorage(config: WebdavImageConfig) {
     const client = createWebdavClient(config);
@@ -80,5 +82,16 @@ function extensionForMimeType(mimeType: string) {
     if (mimeType === "image/webp") return "webp";
     if (mimeType === "image/gif") return "gif";
     if (mimeType === "image/avif") return "avif";
+    if (mimeType === "video/mp4" || mimeType === "video/x-m4v") return "mp4";
+    if (mimeType === "video/webm") return "webm";
+    if (mimeType === "video/quicktime") return "mov";
+    if (mimeType === "video/x-msvideo") return "avi";
+    if (mimeType === "video/mpeg") return "mpeg";
+    if (mimeType === "audio/mpeg") return "mp3";
+    if (mimeType === "audio/wav" || mimeType === "audio/x-wav") return "wav";
+    if (mimeType === "audio/ogg") return "ogg";
+    if (mimeType === "audio/mp4" || mimeType === "audio/x-m4a") return "m4a";
+    if (mimeType === "audio/aac") return "aac";
+    if (mimeType === "audio/flac") return "flac";
     return "png";
 }

@@ -6,6 +6,7 @@ import { storageFileUrl } from "@/services/storage-url";
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const objectUrls = new Map<string, string>();
+const publicUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: { title?: string; source?: string }): Promise<UploadedFile> {
     const mediaKind = prefix.startsWith("video") ? "video" : prefix.startsWith("audio") ? "audio" : "";
@@ -25,13 +26,13 @@ async function importMediaFromServer(url: string, kind: "video" | "audio", optio
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ url, title: options?.title, source: options?.source }),
     });
-    const payload = (await response.json().catch(() => null)) as { code?: number; msg?: string; data?: { storageKey?: string; bytes?: number; mimeType?: string } } | null;
+    const payload = (await response.json().catch(() => null)) as { code?: number; msg?: string; data?: { storageKey?: string; bytes?: number; mimeType?: string; url?: string } } | null;
     if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `${kind === "video" ? "视频" : "音频"}服务端转存失败（HTTP ${response.status}）`);
     return {
         storageKey: payload.data.storageKey,
         bytes: Number(payload.data.bytes || 0),
         mimeType: payload.data.mimeType || (kind === "video" ? "video/mp4" : "audio/mpeg"),
-        url: storageFileUrl(payload.data.storageKey),
+        url: payload.data.url || storageFileUrl(payload.data.storageKey),
     };
 }
 
@@ -44,6 +45,25 @@ export async function resolveMediaUrl(storageKey?: string, fallback = "") {
 
 export async function getMediaBlob(storageKey: string) {
     return downloadFile(storageKey);
+}
+
+export async function ensurePublicMediaUrl(media: { storageKey?: string; url?: string }) {
+    if (media.storageKey) {
+        const cached = publicUrls.get(media.storageKey);
+        if (cached) return cached;
+        const response = await fetch("/api/storage/files/public-url", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ storageKey: media.storageKey }),
+        });
+        const payload = await response.json().catch(() => null) as { code?: number; msg?: string; data?: { url?: string } } | null;
+        const url = payload?.data?.url || "";
+        if (!response.ok || payload?.code !== 0 || !/^https?:\/\//i.test(url)) throw new Error(payload?.msg || "参考素材无法转为公网 URL");
+        publicUrls.set(media.storageKey, url);
+        return url;
+    }
+    if (/^https?:\/\//i.test(media.url || "")) return media.url!;
+    throw new Error("参考素材读取失败，请重新上传");
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {

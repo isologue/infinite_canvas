@@ -5,6 +5,8 @@ import { NextRequest } from "next/server";
 import { readSessionUser } from "@/lib/server/auth";
 import { downloadRemoteMedia, parseRemoteMediaUrl, RemoteMediaDownloadError } from "@/lib/server/remote-media-download";
 import { saveUserFileResource } from "@/lib/server/resource-db";
+import { readSharedConfig } from "@/lib/server/shared-config-db";
+import { uploadUserFileToWebdav } from "@/lib/server/webdav-image-storage";
 
 type AudioImportPayload = { url?: unknown; title?: unknown; source?: unknown };
 
@@ -31,7 +33,8 @@ export async function POST(request: NextRequest) {
             source,
             metadata: { transfer: "server", originUrl: finalUrl.toString(), mimeType, bytes: content.length },
         });
-        return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType } });
+        const publicUrl = await uploadUserFileToWebdav((await readSharedConfig()).webdav, user.id, { storageKey, mimeType, content });
+        return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType, ...(publicUrl ? { url: publicUrl } : {}) } });
     } catch (error) {
         const status = error instanceof RemoteMediaDownloadError ? error.status : error instanceof MediaTypeError ? error.status : 502;
         return Response.json({ code: status, msg: error instanceof Error ? error.message : "音频服务端转存失败" }, { status });

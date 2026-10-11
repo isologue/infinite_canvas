@@ -1305,44 +1305,6 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
                 if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
                 return startGeminiImagesOnce(activeConfig, requestPrompt, references, options);
             }
-            if (activeConfig.apiFormat === "ark" && references.length) {
-                if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
-                const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-                const quality = normalizeQuality(activeConfig.quality);
-                const requestSize = resolveRequestSize(quality, activeConfig.size, activeConfig.resolution);
-                const background = normalizeBackground(activeConfig.background);
-                const responseFormat = normalizeImageResponseFormat(activeConfig.imageResponseFormat);
-                return startImagesWithAsyncFallback({
-                    key: imageTaskKey(activeConfig, "/images/generations:ark-edit"),
-                    config: activeConfig,
-                    create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
-                        model: activeConfig.model,
-                        prompt: withSystemPrompt(activeConfig, requestPrompt),
-                        n: 1,
-                        ...(responseFormat ? { response_format: responseFormat } : {}),
-                        output_format: IMAGE_OUTPUT_FORMAT,
-                        image: refs,
-                        ...(quality ? { quality } : {}),
-                        ...(requestSize ? { size: requestSize } : {}),
-                        ...(background ? { background } : {}),
-                        ...(asyncMode ? { async: true } : {}),
-                    }, { headers: aiHeaders(activeConfig, "application/json"), signal: options?.signal })).data,
-                    requestParams: (asyncMode) => ({
-                        model: activeConfig.model,
-                        prompt: withSystemPrompt(activeConfig, requestPrompt),
-                        n: 1,
-                        ...(responseFormat ? { response_format: responseFormat } : {}),
-                        output_format: IMAGE_OUTPUT_FORMAT,
-                        image: refs,
-                        ...(quality ? { quality } : {}),
-                        ...(requestSize ? { size: requestSize } : {}),
-                        ...(background ? { background } : {}),
-                        ...(asyncMode ? { async: true } : {}),
-                    }),
-                    parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
-                    pollPath: "/images/generations",
-                });
-            }
             return references.length ? startOpenAiEdit(activeConfig, requestPrompt, references, mask, 1, options) : startOpenAiGeneration(activeConfig, prompt, 1, options);
         }, { hasMask: Boolean(mask) });
         return start.mode === "task" ? { ...start, task: { ...start.task, model } } : start;
@@ -1417,26 +1379,6 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
                 if (activeConfig.apiFormat === "gemini") {
                     if (mask) throw new Error("Gemini 调用格式暂不支持蒙版编辑");
                     return requestGeminiImages(activeConfig, requestPrompt, references, n, options);
-                }
-                if (activeConfig.apiFormat === "ark") {
-                    if (mask) throw new Error("蒙版编辑暂不支持该模型，请使用其他渠道");
-                    const quality = normalizeQuality(config.quality);
-                    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
-                    const background = normalizeBackground(config.background);
-                    const responseFormat = normalizeImageResponseFormat(activeConfig.imageResponseFormat);
-                    const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
-                    const response = await axios.post<unknown>(aiApiUrl(activeConfig, "/images/generations"), {
-                        model: activeConfig.model,
-                        prompt: withSystemPrompt(activeConfig, requestPrompt),
-                        n,
-                        ...(responseFormat ? { response_format: responseFormat } : {}),
-                        output_format: IMAGE_OUTPUT_FORMAT,
-                        image: refs,
-                        ...(quality ? { quality } : {}),
-                        ...(requestSize ? { size: requestSize } : {}),
-                        ...(background ? { background } : {}),
-                    }, { headers: aiHeaders(activeConfig, "application/json"), signal: options?.signal });
-                    return parseImagePayload(response.data);
                 }
                 return requestOpenAiEdit(activeConfig, requestPrompt, references, mask, n, options);
             }, { hasMask: Boolean(mask) });
