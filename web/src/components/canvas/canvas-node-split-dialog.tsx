@@ -9,7 +9,7 @@ import { useImageEditorViewport } from "@/components/canvas/use-image-editor-vie
 
 export type CanvasImageSplitParams = ImageSplitParams;
 
-const defaultParams: CanvasImageSplitParams = { rows: 2, columns: 2, horizontalLines: [0.5], verticalLines: [0.5] };
+const defaultParams: CanvasImageSplitParams = { rows: 2, columns: 2, horizontalLines: [0.5], verticalLines: [0.5], horizontalLineWidths: [0], verticalLineWidths: [0] };
 const maxGridSize = 12;
 type ActiveLine = { axis: "horizontal" | "vertical"; index: number } | null;
 
@@ -27,10 +27,13 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
     const previewRef = viewport.stageRef;
     const horizontalLines = params.horizontalLines || [];
     const verticalLines = params.verticalLines || [];
+    const horizontalLineWidths = horizontalLines.map((_, index) => params.horizontalLineWidths?.[index] || 0);
+    const verticalLineWidths = verticalLines.map((_, index) => params.verticalLineWidths?.[index] || 0);
+    const activeLineWidth = active ? (active.axis === "horizontal" ? horizontalLineWidths[active.index] : verticalLineWidths[active.index]) : 0;
     const rows = horizontalLines.length + 1;
     const columns = verticalLines.length + 1;
     const total = rows * columns;
-    const pieceSize = image ? { width: Math.max(1, Math.floor(image.width / columns)), height: Math.max(1, Math.floor(image.height / rows)) } : null;
+    const pieceSize = image ? { width: Math.max(1, Math.floor((image.width - sumLineWidths(verticalLineWidths)) / columns)), height: Math.max(1, Math.floor((image.height - sumLineWidths(horizontalLineWidths)) / rows)) } : null;
 
     useEffect(() => {
         if (!open) return;
@@ -57,23 +60,30 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         const count = clampGrid(value ?? params[key]);
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
-        setParams((current) => ({ ...current, [key]: count, [key === "rows" ? "horizontalLines" : "verticalLines"]: buildGridLines(count) }));
+        setParams((current) => key === "rows"
+            ? { ...current, rows: count, horizontalLines: buildGridLines(count), horizontalLineWidths: buildLineWidths(count) }
+            : { ...current, columns: count, verticalLines: buildGridLines(count), verticalLineWidths: buildLineWidths(count) });
     };
     const addLine = (axis: "horizontal" | "vertical") => {
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
-        const key = axis === "horizontal" ? "horizontalLines" : "verticalLines";
-        const spot = findLineSpot(params[key] || []);
-        const lines = [...(params[key] || []), spot].sort((a, b) => a - b);
-        setActive({ axis, index: lines.indexOf(spot) });
-        setParams({ ...params, [key]: lines, rows: axis === "horizontal" ? lines.length + 1 : params.rows, columns: axis === "vertical" ? lines.length + 1 : params.columns });
+        const currentLines = axis === "horizontal" ? horizontalLines : verticalLines;
+        const spot = findLineSpot(currentLines);
+        const lines = [...currentLines, spot].sort((a, b) => a - b);
+        const index = lines.indexOf(spot);
+        setActive({ axis, index });
+        if (axis === "horizontal") setParams({ ...params, horizontalLines: lines, horizontalLineWidths: insertLineWidth(horizontalLineWidths, index), rows: lines.length + 1 });
+        else setParams({ ...params, verticalLines: lines, verticalLineWidths: insertLineWidth(verticalLineWidths, index), columns: lines.length + 1 });
     };
     const deleteLine = () => {
         if (!active) return;
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setParams((current) => {
-            const key = active.axis === "horizontal" ? "horizontalLines" : "verticalLines";
-            const lines = (current[key] || []).filter((_, index) => index !== active.index);
-            return { ...current, [key]: lines, rows: active.axis === "horizontal" ? lines.length + 1 : current.rows, columns: active.axis === "vertical" ? lines.length + 1 : current.columns };
+            if (active.axis === "horizontal") {
+                const lines = (current.horizontalLines || []).filter((_, index) => index !== active.index);
+                return { ...current, horizontalLines: lines, horizontalLineWidths: (current.horizontalLineWidths || []).filter((_, index) => index !== active.index), rows: lines.length + 1 };
+            }
+            const lines = (current.verticalLines || []).filter((_, index) => index !== active.index);
+            return { ...current, verticalLines: lines, verticalLineWidths: (current.verticalLineWidths || []).filter((_, index) => index !== active.index), columns: lines.length + 1 };
         });
         setActive(null);
     };
@@ -105,6 +115,19 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         pushHistory(historyRef, redoRef, params, setHistorySize, setRedoSize);
         setActive(null);
         setParams((current) => ({ ...current, horizontalLines: buildGridLines(current.rows), verticalLines: buildGridLines(current.columns) }));
+    };
+    const setActiveLineWidth = (value: string | number | null) => {
+        if (!active) return;
+        setParams((current) => {
+            if (active.axis === "horizontal") {
+                const widths = [...(current.horizontalLineWidths || buildLineWidths((current.horizontalLines || []).length + 1))];
+                widths[active.index] = clampLineWidth(value);
+                return { ...current, horizontalLineWidths: widths };
+            }
+            const widths = [...(current.verticalLineWidths || buildLineWidths((current.verticalLines || []).length + 1))];
+            widths[active.index] = clampLineWidth(value);
+            return { ...current, verticalLineWidths: widths };
+        });
     };
     const undoSplit = useCallback(() => {
         const previous = historyRef.current.pop();
@@ -145,7 +168,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
         window.addEventListener("keydown", handleKeyDown, true);
         return () => window.removeEventListener("keydown", handleKeyDown, true);
     }, [active, open, params, redoSplit, undoSplit]);
-    const confirmParams = { ...params, horizontalLines, verticalLines, rows, columns };
+    const confirmParams = { ...params, horizontalLines, verticalLines, horizontalLineWidths, verticalLineWidths, rows, columns };
 
     return (
         <Modal title={null} open={open && Boolean(dataUrl)} onCancel={onClose} footer={null} width={780} centered destroyOnHidden transitionName="" maskTransitionName="">
@@ -167,7 +190,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
                                     <div className="absolute left-0 top-0 [backface-visibility:hidden]" style={viewport.mediaStyle}>
                                         <img src={dataUrl} alt="" className="block h-full w-full object-contain" draggable={false} />
                                     </div>
-                                    <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} active={active} onPointerDown={startDrag} />
+                                    <SplitGrid horizontalLines={horizontalLines} verticalLines={verticalLines} horizontalLineWidths={horizontalLineWidths} verticalLineWidths={verticalLineWidths} image={image} active={active} onPointerDown={startDrag} />
                                 </div>
                             </div>
                         </div>
@@ -195,6 +218,7 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
                     <div className="space-y-5 py-2">
                         <NumberField label={t("canvas.editors.rows")} value={rows} onChange={(value) => update("rows", value)} />
                         <NumberField label={t("canvas.editors.columns")} value={columns} onChange={(value) => update("columns", value)} />
+                        <NumberField label={t("canvas.editors.splitLineWidth")} value={activeLineWidth} min={0} max={100} suffix="px" disabled={!active} onChange={setActiveLineWidth} />
                         <div className="grid grid-cols-2 gap-2">
                             <Button icon={<Rows3 className="size-4" />} onClick={() => addLine("horizontal")}>
                                 {t("canvas.editors.horizontalLine")}
@@ -229,34 +253,44 @@ export function CanvasNodeSplitDialog({ dataUrl, open, onClose, onConfirm }: { d
     );
 }
 
-function NumberField({ label, value, onChange }: { label: string; value: number; onChange: (value: string | number | null) => void }) {
+function NumberField({ label, value, min = 1, max = maxGridSize, suffix, disabled, onChange }: { label: string; value: number; min?: number; max?: number; suffix?: string; disabled?: boolean; onChange: (value: string | number | null) => void }) {
     return (
         <label className="block space-y-2">
             <span className="font-medium opacity-75">{label}</span>
-            <InputNumber className="w-full" min={1} max={maxGridSize} precision={0} value={value} onChange={onChange} />
+            <InputNumber className="w-full" min={min} max={max} precision={0} value={value} suffix={suffix} disabled={disabled} onChange={onChange} />
         </label>
     );
 }
 
-function SplitGrid({ horizontalLines, verticalLines, active, onPointerDown }: { horizontalLines: number[]; verticalLines: number[]; active: ActiveLine; onPointerDown: (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => void }) {
+function SplitGrid({ horizontalLines, verticalLines, horizontalLineWidths, verticalLineWidths, image, active, onPointerDown }: { horizontalLines: number[]; verticalLines: number[]; horizontalLineWidths: number[]; verticalLineWidths: number[]; image: { width: number; height: number } | null; active: ActiveLine; onPointerDown: (axis: "horizontal" | "vertical", index: number, event: ReactPointerEvent) => void }) {
     return (
         <div className="pointer-events-none absolute inset-0">
-            {verticalLines.map((line, index) => (
-                <div key={`column-${index}`} className="pointer-events-auto absolute inset-y-0 -ml-2 w-4 cursor-ew-resize" style={{ left: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("vertical", index, event)}>
-                    <div className={`absolute left-1/2 top-0 h-full border-l shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "vertical" && active.index === index ? "border-amber-300" : "border-white/90"}`} />
-                </div>
-            ))}
-            {horizontalLines.map((line, index) => (
-                <div key={`row-${index}`} className="pointer-events-auto absolute inset-x-0 -mt-2 h-4 cursor-ns-resize" style={{ top: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("horizontal", index, event)}>
-                    <div className={`absolute left-0 top-1/2 w-full border-t shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "horizontal" && active.index === index ? "border-amber-300" : "border-white/90"}`} />
-                </div>
-            ))}
+            {verticalLines.flatMap((line, index) => [
+                <div key={`column-visual-${index}`} className={`pointer-events-none absolute inset-y-0 -translate-x-1/2 shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "vertical" && active.index === index ? "bg-amber-300/80" : "bg-white/80"}`} style={{ left: `${line * 100}%`, width: `max(2px, ${((verticalLineWidths[index] || 0) / Math.max(1, image?.width || 1)) * 100}%)` }} />,
+                <div key={`column-hit-${index}`} className="pointer-events-auto absolute inset-y-0 -ml-2 w-4 cursor-ew-resize" style={{ left: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("vertical", index, event)} />,
+            ])}
+            {horizontalLines.flatMap((line, index) => [
+                <div key={`row-visual-${index}`} className={`pointer-events-none absolute inset-x-0 -translate-y-1/2 shadow-[0_0_0_1px_rgba(0,0,0,.35)] ${active?.axis === "horizontal" && active.index === index ? "bg-amber-300/80" : "bg-white/80"}`} style={{ top: `${line * 100}%`, height: `max(2px, ${((horizontalLineWidths[index] || 0) / Math.max(1, image?.height || 1)) * 100}%)` }} />,
+                <div key={`row-hit-${index}`} className="pointer-events-auto absolute inset-x-0 -mt-2 h-4 cursor-ns-resize" style={{ top: `${line * 100}%` }} onPointerDown={(event) => onPointerDown("horizontal", index, event)} />,
+            ])}
         </div>
     );
 }
 
 function buildGridLines(count: number) {
     return Array.from({ length: Math.max(1, count) - 1 }, (_, index) => (index + 1) / count);
+}
+
+function buildLineWidths(count: number) {
+    return Array.from({ length: Math.max(1, count) - 1 }, () => 0);
+}
+
+function insertLineWidth(widths: number[], index: number) {
+    return [...widths.slice(0, index), 0, ...widths.slice(index)];
+}
+
+function sumLineWidths(widths: number[]) {
+    return widths.reduce((total, width) => total + width, 0);
 }
 
 function findLineSpot(lines: number[]) {
@@ -282,11 +316,18 @@ function clampGrid(value: string | number) {
     return Math.min(maxGridSize, Math.max(1, Math.round(Number.isFinite(numberValue) ? numberValue : 1)));
 }
 
+function clampLineWidth(value: string | number | null) {
+    const numberValue = Number(value);
+    return Math.min(100, Math.max(0, Math.round(Number.isFinite(numberValue) ? numberValue : 0)));
+}
+
 function cloneSplitParams(params: CanvasImageSplitParams) {
     return {
         ...params,
         horizontalLines: [...(params.horizontalLines || [])],
         verticalLines: [...(params.verticalLines || [])],
+        horizontalLineWidths: [...(params.horizontalLineWidths || [])],
+        verticalLineWidths: [...(params.verticalLineWidths || [])],
     };
 }
 

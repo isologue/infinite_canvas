@@ -26,6 +26,8 @@ export type ImageSplitParams = {
     columns: number;
     horizontalLines?: number[];
     verticalLines?: number[];
+    horizontalLineWidths?: number[];
+    verticalLineWidths?: number[];
 };
 
 export type ImageSplitPiece = {
@@ -49,15 +51,15 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
     const image = await loadImage(dataUrl);
     const xCuts = buildSplitCuts(params.verticalLines, image.width, Math.max(1, Math.floor(params.columns)));
     const yCuts = buildSplitCuts(params.horizontalLines, image.height, Math.max(1, Math.floor(params.rows)));
+    const horizontalLineWidths = (params.horizontalLineWidths || []).map(normalizeLineWidth);
+    const verticalLineWidths = (params.verticalLineWidths || []).map(normalizeLineWidth);
     const pieces: ImageSplitPiece[] = [];
 
     for (let row = 0; row < yCuts.length - 1; row += 1) {
-        const sy = yCuts[row];
-        const sh = yCuts[row + 1] - sy;
+        const { start: sy, end: ey } = splitRange(yCuts, row, horizontalLineWidths);
         for (let column = 0; column < xCuts.length - 1; column += 1) {
-            const sx = xCuts[column];
-            const sw = xCuts[column + 1] - sx;
-            pieces.push({ row, column, dataUrl: drawCrop(image, sx, sy, sw, sh) });
+            const { start: sx, end: ex } = splitRange(xCuts, column, verticalLineWidths);
+            pieces.push({ row, column, dataUrl: drawCrop(image, sx, sy, ex - sx, ey - sy) });
         }
     }
 
@@ -67,6 +69,19 @@ export async function splitDataUrl(dataUrl: string, params: ImageSplitParams): P
 function buildSplitCuts(lines: number[] | undefined, size: number, count: number) {
     if (!lines?.length) return Array.from({ length: count + 1 }, (_, index) => Math.floor((index * size) / count));
     return [0, ...lines.map((line) => Math.round(line * size)).filter((line) => line > 0 && line < size).sort((a, b) => a - b), size];
+}
+
+function splitRange(cuts: number[], index: number, lineWidths: number[]) {
+    const startCut = cuts[index];
+    const endCut = cuts[index + 1];
+    const start = index ? startCut + Math.floor((lineWidths[index - 1] || 0) / 2) : startCut;
+    const end = index < cuts.length - 2 ? endCut - Math.ceil((lineWidths[index] || 0) / 2) : endCut;
+    const safeStart = Math.min(Math.max(startCut, start), endCut - 1);
+    return { start: safeStart, end: Math.max(safeStart + 1, Math.min(endCut, end)) };
+}
+
+function normalizeLineWidth(value: number) {
+    return Math.max(0, Math.floor(value || 0));
 }
 
 export async function transformAngleDataUrl(dataUrl: string, params: ImageAngleTransform) {
