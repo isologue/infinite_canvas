@@ -180,12 +180,22 @@ export async function storeGeneratedVideo(result: VideoGenerationResult, title =
     throw new Error("视频接口没有返回可播放的视频");
 }
 
-async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
-    if (config.referenceImageRequestFormat === "json") {
+async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams, requestFormat = config.referenceImageRequestFormat): Promise<VideoGenerationTaskHandle> {
+    if (requestFormat === "json") {
         const seconds = normalizeVideoSeconds(config.videoSeconds);
-        const images = await Promise.all(references.slice(0, 7).map(ensurePublicImageUrl));
-        const referenceVideos = await Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl));
-        const referenceAudios = await Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl));
+        let images: string[];
+        let referenceVideos: string[];
+        let referenceAudios: string[];
+        try {
+            [images, referenceVideos, referenceAudios] = await Promise.all([
+                Promise.all(references.slice(0, 7).map(ensurePublicImageUrl)),
+                Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+                Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+            ]);
+        } catch (error) {
+            if (options?.signal?.aborted) throw error;
+            return createOpenAIVideoTask(config, model, prompt, references, videoReferences, audioReferences, options, captureRequestParams, "form-data");
+        }
         const size = normalizeVideoSize(config.size);
         const body = {
             model: modelOptionName(model),
@@ -244,19 +254,32 @@ function formDataRequestParams(formData: FormData) {
     return params;
 }
 
-async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
+async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams, requestFormat = config.referenceImageRequestFormat): Promise<VideoGenerationTaskHandle> {
     const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length);
     const seconds = String(Math.max(1, Math.min(15, Number(normalizeVideoSeconds(config.videoSeconds)))));
-    if (config.referenceImageRequestFormat === "json") {
+    if (requestFormat === "json") {
+        let images: string[];
+        let referenceVideos: string[];
+        let referenceAudios: string[];
+        try {
+            [images, referenceVideos, referenceAudios] = await Promise.all([
+                Promise.all(references.slice(0, 9).map(ensurePublicImageUrl)),
+                Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+                Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
+            ]);
+        } catch (error) {
+            if (options?.signal?.aborted) throw error;
+            return createMiniMaxVideoTask(config, model, prompt, references, videoReferences, audioReferences, options, captureRequestParams, "form-data");
+        }
         const body = {
             model: modelOptionName(model),
             prompt,
             seconds,
             workflow_id: workflowId,
             size: normalizeMiniMaxSize(config.size, config.vquality),
-            ...(references.length ? { images: await Promise.all(references.slice(0, 9).map(ensurePublicImageUrl)) } : {}),
-            ...(videoReferences.length ? { reference_videos: await Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)) } : {}),
-            ...(audioReferences.length ? { reference_audios: await Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)) } : {}),
+            ...(images.length ? { images } : {}),
+            ...(referenceVideos.length ? { reference_videos: referenceVideos } : {}),
+            ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
         };
         captureRequestParams?.(body);
         try {

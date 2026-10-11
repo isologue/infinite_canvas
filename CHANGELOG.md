@@ -1,7 +1,7 @@
 # CHANGELOG
 
 ## Unreleased
-+ [修复] 视频轮询拿到公网结果 URL 后改由服务端直接转存，避免浏览器先下载完整视频再上传导致本地处理和预览等待过长。
++ [修复] 视频轮询拿到公网结果 URL 后改由服务端直接转存，避免浏览器先下载完整视频再上传导致本地处理和预览等待过长；JSON 参考素材无法获得 WebDAV 公网 URL 时自动回退为 FormData 重试一次。
 
 + [新增] OpenAI 图生图和视频共用参考素材请求格式，默认 JSON 会将图片、视频、音频转存为 WebDAV 公网 URL；也可切换为 FormData 文件上传，视频保留字符串型 `seconds` 与数值型 `duration` 参数。
 + [新增] MiniMax 视频参考素材支持 JSON（WebDAV 公网 URL）与 FormData 两种请求格式，默认 JSON；JSON 可提交图片、视频、音频 URL；移除火山方舟及 Seedance 协议和相关请求路径。

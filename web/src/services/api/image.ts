@@ -1183,14 +1183,14 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
     return finishImageGenerationStart(config, await startOpenAiGeneration(config, prompt, n, options), options);
 }
 
-async function startOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions) {
+async function startOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions, requestFormat = config.referenceImageRequestFormat) {
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size, config.resolution);
     const background = normalizeBackground(config.background);
     const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const requestPrompt = withSystemPrompt(config, prompt);
 
-    if (config.referenceImageRequestFormat === "form-data") {
+    if (requestFormat === "form-data") {
         const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
         const maskFile = mask ? dataUrlToFile({ ...mask, dataUrl: await imageToDataUrl(mask) }) : undefined;
         const createBody = (asyncMode: boolean) => {
@@ -1218,8 +1218,17 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         });
     }
 
-    const refs = await Promise.all(references.map(ensurePublicImageUrl));
-    const maskUrl = mask ? await ensurePublicImageUrl(mask) : undefined;
+    let refs: string[];
+    let maskUrl: string | undefined;
+    try {
+        [refs, maskUrl] = await Promise.all([
+            Promise.all(references.map(ensurePublicImageUrl)),
+            mask ? ensurePublicImageUrl(mask) : Promise.resolve(undefined),
+        ]);
+    } catch (error) {
+        if (options?.signal?.aborted) throw error;
+        return startOpenAiEdit(config, prompt, references, mask, n, options, "form-data");
+    }
     const body = {
         model: config.model,
         prompt: requestPrompt,

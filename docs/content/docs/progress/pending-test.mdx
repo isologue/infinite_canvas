@@ -5,7 +5,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 # 待测试
 
-- 视频 URL 结果转存：OpenAI 或 MiniMax 视频轮询返回公网 URL 后，浏览器不应再先完整下载视频再上传；应由服务端直接转存到本地资源库，完成后预览可播放。大视频生成完成后的“本地处理”等待应明显缩短，刷新页面不应再成为加速处理的必要条件。
+- 视频 URL 结果转存：OpenAI 或 MiniMax 视频轮询返回公网 URL 后，浏览器不应再先完整下载视频再上传；应由服务端直接转存到本地资源库，完成后预览可播放。大视频生成完成后的“本地处理”等待应明显缩短，刷新页面不应再成为加速处理的必要条件。选择 JSON 公网 URL 但 WebDAV 未启用或转存失败时，图片编辑、OpenAI 视频和 MiniMax 视频应自动使用 FormData 重试一次；上游已收到 JSON 请求后的报错不得重复提交。
 
 - OpenAI 参考素材请求格式：在「配置 > 渠道 > 编辑 OpenAI 渠道」选择 `JSON（公网 URL）` 后，图生图和视频创建请求都应使用 WebDAV 公网 URL；视频的参考图片、视频、音频分别通过 `images`、`reference_videos`、`reference_audios` 数组提交。图生图的 `images[].image_url` 与蒙版 URL 不得再是 data URL，视频日志应显示数值型 `duration`、字符串型 `seconds` 与 `n: 1`。默认应为 JSON；选择 `FormData（上传文件）` 时，图生图应发送 `image[]` 文件，视频继续发送图片 `input_reference[]`、视频 `reference_videos`、音频 `reference_audios` 文件字段。
 
