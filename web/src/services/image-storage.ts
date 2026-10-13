@@ -26,13 +26,12 @@ export async function uploadImage(input: string | Blob, options?: { compress?: b
     const storageKey = `image:${nanoid()}`;
     const localUrl = URL.createObjectURL(blob);
     const meta = await readImageMeta(localUrl);
-    const remoteUrl = await uploadFile(storageKey, blob, {
+    await uploadFile(storageKey, blob, {
         ...options,
         metadata: { ...(options?.metadata || {}), width: meta.width, height: meta.height, mimeType: blob.type || meta.mimeType, bytes: blob.size },
     });
-    const url = remoteUrl || localUrl;
-    objectUrls.set(storageKey, url);
-    return { url, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
+    objectUrls.set(storageKey, localUrl);
+    return { url: localUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
 }
 
 async function importImageFromServer(url: string, options?: { title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
@@ -47,13 +46,14 @@ async function importImageFromServer(url: string, options?: { title?: string; so
         data?: { storageKey?: string; bytes?: number; mimeType?: string; width?: number; height?: number; url?: string };
     } | null;
     if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `图片服务端转存失败（HTTP ${response.status}）`);
+    if (payload.data.url) publicUrls.set(payload.data.storageKey, payload.data.url);
     return {
         storageKey: payload.data.storageKey,
         bytes: Number(payload.data.bytes || 0),
         mimeType: payload.data.mimeType || "image/png",
         width: Number(payload.data.width || 1024),
         height: Number(payload.data.height || 1024),
-        url: payload.data.url || storageFileUrl(payload.data.storageKey),
+        url: storageFileUrl(payload.data.storageKey),
     };
 }
 
@@ -70,14 +70,14 @@ export async function getImageBlob(storageKey: string) {
 
 export async function setImageBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
     const normalized = await normalizeImageBlobMimeType(blob);
-    const remoteUrl = await uploadFile(storageKey, normalized, options);
-    const url = remoteUrl || URL.createObjectURL(normalized);
+    await uploadFile(storageKey, normalized, options);
+    const url = URL.createObjectURL(normalized);
     objectUrls.set(storageKey, url);
     return url;
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
-    const url = image.dataUrl || (await resolveImageUrl(image.storageKey, image.url || ""));
+    const url = await resolveImageUrl(image.storageKey, image.dataUrl || image.url || "");
     if (!url) return url;
     if (url.startsWith("data:")) return normalizeImageDataUrlMimeType(url);
     const response = await fetch(url);
@@ -104,9 +104,7 @@ export async function ensurePublicImageUrl(image: { url?: string; dataUrl?: stri
     if (/^https?:\/\//i.test(directUrl) || directUrl.startsWith("asset://")) return directUrl;
     if (!directUrl) throw new Error("参考图读取失败，请重新上传");
     const uploaded = await uploadImage(directUrl, { source: "reference-upload" });
-    if (!/^https?:\/\//i.test(uploaded.url)) throw new Error("管理员尚未启用 WebDAV 图片存储");
-    publicUrls.set(uploaded.storageKey, uploaded.url);
-    return uploaded.url;
+    return ensurePublicImageUrl(uploaded);
 }
 
 export async function createVideoThumbnail(videoUrl: string, title = "??") {
@@ -184,7 +182,10 @@ async function uploadFile(storageKey: string, blob: Blob, options?: { title?: st
     if (!response.ok) {
         throw new Error(payload?.msg || (response.status === 413 ? "参考图超过单张 15MB 限制" : "图片保存失败"));
     }
-    return payload?.data?.url || "";
+    // 公网地址只供上游引用；页面预览始终读取本地 Blob 或本站存储。
+    const publicUrl = payload?.data?.url;
+    if (publicUrl) publicUrls.set(storageKey, publicUrl);
+    else publicUrls.delete(storageKey);
 }
 
 async function downloadFile(storageKey: string) {

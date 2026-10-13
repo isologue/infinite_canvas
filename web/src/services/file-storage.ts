@@ -28,11 +28,12 @@ async function importMediaFromServer(url: string, kind: "video" | "audio", optio
     });
     const payload = (await response.json().catch(() => null)) as { code?: number; msg?: string; data?: { storageKey?: string; bytes?: number; mimeType?: string; url?: string } } | null;
     if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `${kind === "video" ? "视频" : "音频"}服务端转存失败（HTTP ${response.status}）`);
+    if (payload.data.url) publicUrls.set(payload.data.storageKey, payload.data.url);
     return {
         storageKey: payload.data.storageKey,
         bytes: Number(payload.data.bytes || 0),
         mimeType: payload.data.mimeType || (kind === "video" ? "video/mp4" : "audio/mpeg"),
-        url: payload.data.url || storageFileUrl(payload.data.storageKey),
+        url: storageFileUrl(payload.data.storageKey),
     };
 }
 
