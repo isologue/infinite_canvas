@@ -11,6 +11,7 @@ import dayjs from "dayjs";
 import "dayjs/locale/zh-cn";
 import { useTranslation } from "react-i18next";
 
+import { UploadProgressPanel } from "@/components/upload-progress-panel";
 import { ClientRootInit } from "@/components/layout/client-root-init";
 import { getStoredAppLocale, type AppLocale } from "@/i18n";
 import { getAntThemeConfig } from "@/lib/app-theme";
@@ -55,6 +56,7 @@ export function AppProviders({ children }: { children: ReactNode }) {
                 <App>
                     <QueryClientProvider client={queryClient}>
                         <ClientRootInit>{children}</ClientRootInit>
+                        <UploadProgressPanel />
                     </QueryClientProvider>
                 </App>
             </ProConfigProvider>

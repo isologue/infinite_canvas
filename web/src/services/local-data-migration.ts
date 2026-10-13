@@ -3,6 +3,7 @@
 import localforage from "localforage";
 import type { StorageValue } from "zustand/middleware";
 
+import { trackResourceUpload, uploadResourceFile } from "@/services/api/resource-upload";
 import { collectMediaStorageKeys } from "@/services/file-storage";
 import { collectImageStorageKeys } from "@/services/image-storage";
 import type { CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -219,16 +220,9 @@ async function uploadLegacyFiles(imageKeys: string[], mediaKeys: string[]) {
 }
 
 async function uploadLegacyBlob(storageKey: string, blob: Blob) {
-    return fetch("/api/storage/files", {
-        method: "POST",
-        headers: {
-            "content-type": "application/octet-stream",
-            "x-storage-key": storageKey,
-            "x-storage-mime-type": blob.type || "application/octet-stream",
-            "x-resource-source": "local-migration",
-        },
-        body: await blob.arrayBuffer(),
-    })
-        .then((res) => res.ok)
+    const kind = blob.type.startsWith("image/") ? "image" : blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
+    const options = { title: storageKey, source: "local-migration" };
+    return trackResourceUpload(blob, kind, options, (uploadId) => uploadResourceFile(storageKey, blob, options, uploadId))
+        .then(() => true)
         .catch(() => false);
 }

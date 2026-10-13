@@ -2,6 +2,7 @@
 
 import { nanoid } from "nanoid";
 import { storageFileUrl } from "@/services/storage-url";
+import { markUploadProcessing, trackResourceUpload, uploadResourceFile } from "@/services/api/resource-upload";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
@@ -9,15 +10,20 @@ const objectUrls = new Map<string, string>();
 const publicUrls = new Map<string, string>();
 
 export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: { title?: string; source?: string }): Promise<UploadedFile> {
-    const mediaKind = prefix.startsWith("video") ? "video" : prefix.startsWith("audio") ? "audio" : "";
-    if (typeof input === "string" && /^https?:\/\//i.test(input) && mediaKind) return importMediaFromServer(input, mediaKind, options);
-    const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
-    const storageKey = `${prefix}:${nanoid()}`;
-    await uploadFile(storageKey, blob, options);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
-    return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+    const kind = prefix.startsWith("video") ? "video" : prefix.startsWith("audio") ? "audio" : "file";
+    return trackResourceUpload(input, kind, options, async (uploadId) => {
+        if (typeof input === "string" && /^https?:\/\//i.test(input) && kind !== "file") {
+            markUploadProcessing(uploadId);
+            return importMediaFromServer(input, kind, options);
+        }
+        const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
+        const storageKey = `${prefix}:${nanoid()}`;
+        await uploadResourceFile(storageKey, blob, options, uploadId);
+        const url = URL.createObjectURL(blob);
+        objectUrls.set(storageKey, url);
+        const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
+        return { url, storageKey, bytes: blob.size, mimeType: blob.type || "application/octet-stream", ...meta };
+    });
 }
 
 async function importMediaFromServer(url: string, kind: "video" | "audio", options?: { title?: string; source?: string }): Promise<UploadedFile> {
@@ -68,10 +74,13 @@ export async function ensurePublicMediaUrl(media: { storageKey?: string; url?: s
 }
 
 export async function setMediaBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
-    await uploadFile(storageKey, blob, options);
-    const url = URL.createObjectURL(blob);
-    objectUrls.set(storageKey, url);
-    return url;
+    const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
+    return trackResourceUpload(blob, kind, options, async (uploadId) => {
+        await uploadResourceFile(storageKey, blob, options, uploadId);
+        const url = URL.createObjectURL(blob);
+        objectUrls.set(storageKey, url);
+        return url;
+    });
 }
 
 export async function deleteStoredMedia(keys: Iterable<string>) {
@@ -87,22 +96,6 @@ export function collectMediaStorageKeys(value: unknown, keys = new Set<string>()
     if ("storageKey" in value && typeof value.storageKey === "string" && value.storageKey.includes(":")) keys.add(value.storageKey);
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectMediaStorageKeys(child, keys)) : collectMediaStorageKeys(item, keys)));
     return keys;
-}
-
-async function uploadFile(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
-    const arrayBuffer = await blob.arrayBuffer();
-    const response = await fetch("/api/storage/files", {
-        method: "POST",
-        headers: {
-            "content-type": "application/octet-stream",
-            "x-storage-key": storageKey,
-            "x-storage-mime-type": blob.type || "application/octet-stream",
-            "x-resource-title": encodeURIComponent(options?.title || ""),
-            "x-resource-source": options?.source || "upload",
-        },
-        body: arrayBuffer,
-    });
-    if (!response.ok) throw new Error("文件保存失败");
 }
 
 async function downloadFile(storageKey: string) {

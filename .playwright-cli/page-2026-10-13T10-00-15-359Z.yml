@@ -1,0 +1,224 @@
+- generic [ref=f1e1]:
+  - generic [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - generic [ref=f1e4]:
+        - banner [ref=f1e5]:
+          - generic [ref=f1e6]:
+            - generic [ref=f1e7]:
+              - link "无限画布" [ref=f1e8] [cursor=pointer]:
+                - /url: /
+              - navigation [ref=f1e11]:
+                - link "我的画布" [ref=f1e12] [cursor=pointer]:
+                  - /url: /canvas
+                - link "生图工作台" [ref=f1e19] [cursor=pointer]:
+                  - /url: /image
+                - link "视频创作台" [ref=f1e25] [cursor=pointer]:
+                  - /url: /video
+                - link "提示词库" [ref=f1e30] [cursor=pointer]:
+                  - /url: /prompts
+                - link "我的资产" [ref=f1e35] [cursor=pointer]:
+                  - /url: /assets
+            - generic [ref=f1e42]:
+              - button "打开 Agent" [ref=f1e43] [cursor=pointer]
+              - generic [ref=f1e48]:
+                - button "切换到深色主题" [ref=f1e49]
+                - button "关于" [ref=f1e53]
+                - button "退出登录" [ref=f1e56]
+        - main [ref=f1e62]:
+          - complementary [ref=f1e63]:
+            - generic [ref=f1e64]:
+              - heading "生成记录" [level=2] [ref=f1e66]
+              - generic [ref=f1e67]: "0"
+            - generic [ref=f1e68]:
+              - button "新建" [ref=f1e69] [cursor=pointer]
+              - button "全选" [disabled] [ref=f1e73]
+              - button "删除" [disabled] [ref=f1e74]
+            - generic [ref=f1e75]: 暂无生成记录
+          - generic [ref=f1e77]:
+            - generic [ref=f1e78]:
+              - heading "生图工作台" [level=1] [ref=f1e82]
+              - generic [ref=f1e83]:
+                - generic [ref=f1e84]:
+                  - generic [ref=f1e85]:
+                    - generic [ref=f1e86]: 提示词
+                    - generic [ref=f1e87]:
+                      - button "查看提示词库" [ref=f1e88] [cursor=pointer]
+                      - button "查看我的资产" [ref=f1e93] [cursor=pointer]
+                  - textbox "描述画面主体、风格、构图、光线和用途" [ref=f1e98]
+                - generic [ref=f1e99]:
+                  - generic [ref=f1e100]:
+                    - generic [ref=f1e101]: 参考图
+                    - generic [ref=f1e102]:
+                      - button "剪切板" [ref=f1e103] [cursor=pointer]
+                      - button "上传" [active] [ref=f1e111] [cursor=pointer]
+                  - generic [ref=f1e118]:
+                    - img "button-upload.png" [ref=f1e119]
+                    - generic [ref=f1e120]: 图片1
+                - generic [ref=f1e121]:
+                  - generic [ref=f1e122]:
+                    - generic [ref=f1e123]: 模型
+                    - combobox "模型" [ref=f1e124]:
+                      - generic [ref=f1e125]: gpt-image-2（默认渠道）
+                  - generic [ref=f1e127]:
+                    - generic [ref=f1e128]:
+                      - generic [ref=f1e129]: 质量
+                      - generic [ref=f1e130]:
+                        - button "自动" [ref=f1e131] [cursor=pointer]
+                        - button "高" [ref=f1e132] [cursor=pointer]
+                        - button "中" [ref=f1e133] [cursor=pointer]
+                        - button "低" [ref=f1e134] [cursor=pointer]
+                    - generic [ref=f1e135]:
+                      - generic [ref=f1e136]: 分辨率
+                      - generic [ref=f1e137]:
+                        - button "1K" [ref=f1e138] [cursor=pointer]
+                        - button "2K" [ref=f1e139] [cursor=pointer]
+                        - button "4K" [ref=f1e140] [cursor=pointer]
+                    - generic [ref=f1e141]:
+                      - generic [ref=f1e142]:
+                        - generic [ref=f1e143]: 尺寸
+                        - generic [ref=f1e144]:
+                          - generic [ref=f1e145]: 16倍数对齐
+                          - generic "输入完成后自动向上补成 16 的倍数" [ref=f1e146]:
+                            - switch [checked] [ref=f1e147] [cursor=pointer]
+                      - generic [ref=f1e150]:
+                        - generic [ref=f1e151]:
+                          - generic [ref=f1e152]: W
+                          - spinbutton "W" [disabled] [ref=f1e153]
+                        - generic [ref=f1e154]: ↔
+                        - generic [ref=f1e155]:
+                          - generic [ref=f1e156]: H
+                          - spinbutton "H" [disabled] [ref=f1e157]
+                    - generic [ref=f1e158]:
+                      - generic [ref=f1e159]: 宽高比
+                      - generic [ref=f1e160]:
+                        - button "Auto" [ref=f1e161] [cursor=pointer]
+                        - button "1:1" [ref=f1e163] [cursor=pointer]
+                        - button "3:2" [ref=f1e167] [cursor=pointer]
+                        - button "2:3" [ref=f1e171] [cursor=pointer]
+                        - button "4:3" [ref=f1e175] [cursor=pointer]
+                        - button "3:4" [ref=f1e179] [cursor=pointer]
+                        - button "16:9" [ref=f1e183] [cursor=pointer]
+                        - button "9:16" [ref=f1e187] [cursor=pointer]
+                        - button "21:9" [ref=f1e191] [cursor=pointer]
+                        - button "9:21" [ref=f1e195] [cursor=pointer]
+                    - generic [ref=f1e199]:
+                      - generic [ref=f1e200]:
+                        - generic [ref=f1e201]: 透明背景
+                        - generic [ref=f1e202]: 开启后生成无背景的透明图像(仅部分模型可用)
+                      - switch [ref=f1e204] [cursor=pointer]
+                    - generic [ref=f1e207]:
+                      - generic [ref=f1e208]: 生成张数
+                      - generic [ref=f1e209]:
+                        - button "1 张" [ref=f1e210] [cursor=pointer]
+                        - button "2 张" [ref=f1e211] [cursor=pointer]
+                        - button "3 张" [ref=f1e212] [cursor=pointer]
+                        - button "4 张" [ref=f1e213] [cursor=pointer]
+                        - button "5 张" [ref=f1e214] [cursor=pointer]
+                        - button "6 张" [ref=f1e215] [cursor=pointer]
+                        - button "7 张" [ref=f1e216] [cursor=pointer]
+                        - button "8 张" [ref=f1e217] [cursor=pointer]
+                        - button "9 张" [ref=f1e218] [cursor=pointer]
+                        - button "10 张" [ref=f1e219] [cursor=pointer]
+                        - spinbutton [ref=f1e221]: "1"
+              - button "开始生成" [disabled] [ref=f1e223]
+            - generic [ref=f1e224]:
+              - heading "生成结果" [level=2] [ref=f1e227]
+              - generic [ref=f1e233]:
+                - img "暂无数据" [ref=f1e235]
+                - generic [ref=f1e241]: 还没有生成图片
+      - generic:
+        - complementary:
+          - button "调整右侧面板宽度"
+          - generic:
+            - generic:
+              - generic: Agent
+              - tablist "Agent 内容":
+                - tab "连接" [selected]
+                - tab "对话"
+                - tab "历史"
+                - tab "日志"
+              - generic:
+                - button "新对话" [disabled]
+                - button
+          - generic:
+            - generic:
+              - generic:
+                - generic: 连接本地 Agent
+                - generic: 按使用场景选择一种连接方式。
+              - generic:
+                - generic:
+                  - generic: 方式一：在 Codex 中使用插件
+                  - generic: 在 Codex app 安装 Infinite Canvas 插件后，通过插件启动画布，插件会自动启动本地 Agent 并带上连接信息。
+                - generic:
+                  - generic: Codex 插件提醒
+                  - generic: 只有安装 Codex 插件或手动添加 MCP 后，工具列表才会进入 Codex 上下文并增加 token 消耗；仅运行 npx -y @basketikun/canvas-agent 启动本地 Agent 不会安装 MCP。
+                  - generic:
+                    - generic:
+                      - generic: 移除插件
+                      - code: codex plugin remove infinite-canvas
+                      - button
+                    - generic:
+                      - generic: 移除手动 MCP
+                      - code: codex mcp remove infinite-canvas
+                      - button
+                - generic:
+                  - generic: 方式二：直接运行 Agent
+                  - generic: 不使用 Codex 插件时，在终端运行下面命令，再回到网页里连接或手动填入 Local URL 和 Connect token。
+                  - generic:
+                    - code: npx -y @basketikun/canvas-agent
+                    - button
+              - generic:
+                - generic:
+                  - generic:
+                    - generic:
+                      - generic: 网页连接
+                      - generic: 未连接
+                    - generic: 默认自动读取 Local URL 和 Connect token，失败时再手动填写。
+                  - button "连接"
+                - generic:
+                  - generic:
+                    - generic:
+                      - text: 本地地址
+                      - generic: Local URL
+                    - generic:
+                      - textbox "本地地址 Local URL":
+                        - /placeholder: 例如 http://127.0.0.1:17371
+                        - text: http://127.0.0.1:17371
+                  - generic:
+                    - generic:
+                      - text: 连接 Token
+                      - generic: Connect token
+                    - generic:
+                      - textbox "连接 Token Connect token 显示":
+                        - /placeholder: 自动发现，或手动填入 Connect token
+                      - generic:
+                        - button "显示":
+                          - img "eye-invisible"
+    - region "上传进度管理器" [ref=f1e242]:
+      - generic [ref=f1e243]:
+        - generic [ref=f1e247]:
+          - heading "上传进度" [level=2] [ref=f1e248]
+          - paragraph [ref=f1e249]: 1 个上传中
+        - button "清空已完成记录" [ref=f1e250] [cursor=pointer]
+        - button "折叠上传记录" [expanded] [ref=f1e255] [cursor=pointer]
+        - button "收起上传面板" [ref=f1e259] [cursor=pointer]
+      - list [ref=f1e264]:
+        - listitem [ref=f1e265]:
+          - generic [ref=f1e271]:
+            - generic [ref=f1e272]:
+              - generic "reference.png" [ref=f1e273]
+              - generic [ref=f1e274]: 100%
+            - progressbar [ref=f1e275]
+            - generic [ref=f1e279]:
+              - generic [ref=f1e282]: 服务器处理中
+              - generic [ref=f1e283]: 574 KB
+        - listitem [ref=f1e284]:
+          - generic [ref=f1e290]:
+            - generic [ref=f1e291]:
+              - generic "button-upload.png" [ref=f1e292]
+              - img "上传完成" [ref=f1e294]
+            - progressbar [ref=f1e296]
+            - generic [ref=f1e300]:
+              - generic [ref=f1e301]: 上传完成
+              - generic [ref=f1e302]: 882 KB
+  - alert [ref=f1e303]
