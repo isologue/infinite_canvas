@@ -6,7 +6,7 @@ import { readSessionUser } from "@/lib/server/auth";
 import { downloadRemoteMedia, parseRemoteMediaUrl, RemoteMediaDownloadError } from "@/lib/server/remote-media-download";
 import { saveUserFileResource } from "@/lib/server/resource-db";
 import { readSharedConfig } from "@/lib/server/shared-config-db";
-import { uploadUserFileToWebdav } from "@/lib/server/webdav-image-storage";
+import { uploadSavedUserFileToWebdav } from "@/lib/server/webdav-image-storage";
 
 type VideoImportPayload = { url?: unknown; title?: unknown; source?: unknown };
 
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
             source,
             metadata: { transfer: "server", originUrl: finalUrl.toString(), mimeType, bytes: content.length },
         });
-        const publicUrl = await uploadUserFileToWebdav((await readSharedConfig()).webdav, user.id, { storageKey, mimeType, content });
+        const publicUrl = await uploadSavedUserFileToWebdav((await readSharedConfig()).webdav, user.id, { storageKey, mimeType, content, source });
         return Response.json({ code: 0, data: { storageKey, bytes: content.length, mimeType, ...(publicUrl ? { url: publicUrl } : {}) } });
     } catch (error) {
         const status = error instanceof RemoteMediaDownloadError ? error.status : error instanceof MediaTypeError ? error.status : 502;

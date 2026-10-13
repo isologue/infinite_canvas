@@ -208,7 +208,7 @@ export default function VideoPage() {
             }
             const nextReferences = await Promise.all(
                 blobs.slice(0, VIDEO_REFERENCE_LIMITS.images - references.length).map(async (blob, index) => {
-                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload" });
+                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload", showProgress: true });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey };
                 }),
             );
@@ -315,7 +315,7 @@ export default function VideoPage() {
         if (payload.kind === "text") {
             setPrompt(payload.content);
         } else if (payload.kind === "image") {
-            const stored = await uploadImage(payload.dataUrl);
+            const stored = payload.storageKey ? { ...payload, url: payload.dataUrl, mimeType: payload.mimeType || "" } : await uploadImage(payload.dataUrl);
             setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey }].slice(0, VIDEO_REFERENCE_LIMITS.images));
         } else if (payload.kind === "video") {
             setVideoReferences((value) => [...value, { id: nanoid(), name: payload.title, type: "video/mp4", url: payload.url, storageKey: payload.storageKey, width: payload.width, height: payload.height }].slice(0, VIDEO_REFERENCE_LIMITS.videos));

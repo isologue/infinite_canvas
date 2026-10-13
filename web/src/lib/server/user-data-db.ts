@@ -350,8 +350,8 @@ export async function listAllUserImageFiles() {
 
 export async function listAllUserMediaFiles() {
     await ensureUserDataTables();
-    const result = await getPgPool().query<{ user_id: string; storage_key: string; mime_type: string; content: Buffer }>(
-        `SELECT files.user_id, files.storage_key, files.mime_type, files.content
+    const result = await getPgPool().query<{ user_id: string; storage_key: string; mime_type: string; content: Buffer; source: string }>(
+        `SELECT files.user_id, files.storage_key, files.mime_type, files.content, resources.source
          FROM user_files files
          INNER JOIN user_resources resources ON resources.user_id = files.user_id AND resources.storage_key = files.storage_key
          WHERE files.storage_key NOT LIKE 'preview:%' AND resources.kind IN ('image', 'video', 'audio') AND resources.deleted_at IS NULL`,

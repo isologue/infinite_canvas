@@ -1402,7 +1402,7 @@ async function attachmentNodeOps(endpoint: string, token: string, clientId: stri
                 const body = (await res.json().catch(() => null)) as { error?: string } | null;
                 throw new Error(body?.error || "读取图片附件失败");
             }
-            const image = await uploadImage(await res.blob());
+            const image = await uploadImage(await res.blob(), { source: "reference-upload" });
             const size = fitNodeSize(image.width, image.height);
             const position = item.position && typeof item.position === "object" ? (item.position as { x?: unknown; y?: unknown }) : {};
             return {

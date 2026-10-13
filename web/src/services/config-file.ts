@@ -1,6 +1,6 @@
 import { saveAs } from "file-saver";
 import { fetchPromptSourceSettings, replacePromptSourceSettings, type PromptSourceSettings } from "@/services/api/prompts";
-import { useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
+import { defaultWebdavSyncConfig, useConfigStore, type AiConfig, type WebdavSyncConfig } from "@/stores/use-config-store";
 
 type AppConfigFile = {
     app: "infinite-canvas";
@@ -27,6 +27,6 @@ export async function importAppConfig(file: File, includeAdminSettings = false) 
     try { data = JSON.parse(await file.text()) as AppConfigFile; }
     catch { throw new Error("配置文件格式不正确"); }
     if (data.app !== "infinite-canvas" || data.version !== 1 || !data.config) throw new Error("配置文件格式不正确");
-    useConfigStore.setState({ config: data.config, ...(includeAdminSettings && data.webdav ? { webdav: data.webdav } : {}) });
+    useConfigStore.setState({ config: data.config, ...(includeAdminSettings && data.webdav ? { webdav: { ...defaultWebdavSyncConfig, ...data.webdav } } : {}) });
     if (includeAdminSettings && data.promptSources) await replacePromptSourceSettings(data.promptSources);
 }

@@ -65,6 +65,7 @@ export type AiConfig = {
 
 export type WebdavSyncConfig = {
     enabled: boolean;
+    uploadGeneratedResources: boolean;
     storageMode: "local" | "webdav" | "local+webdav";
     url: string;
     username: string;
@@ -135,6 +136,7 @@ export const defaultConfig: AiConfig = {
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
     enabled: false,
+    uploadGeneratedResources: false,
     storageMode: "local+webdav",
     url: "",
     username: "",

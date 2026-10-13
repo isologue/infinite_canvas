@@ -5,7 +5,7 @@ import { readSessionUser } from "@/lib/server/auth";
 import { getUserImagePreview } from "@/lib/server/image-preview";
 import { saveUserFileResource } from "@/lib/server/resource-db";
 import { readSharedConfig } from "@/lib/server/shared-config-db";
-import { uploadUserFileToWebdav } from "@/lib/server/webdav-image-storage";
+import { uploadSavedUserFileToWebdav } from "@/lib/server/webdav-image-storage";
 
 const MAX_REFERENCE_IMAGE_BYTES = 15 * 1024 * 1024;
 const REFERENCE_UPLOAD_SOURCES = new Set(["reference-upload", "canvas-upload", "asset-upload"]);
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     let url = "";
     if (/^(image|video|audio)\//.test(mimeType)) {
         const webdav = (await readSharedConfig()).webdav;
-        url = await uploadUserFileToWebdav(webdav, user.id, { storageKey, mimeType, content });
+        url = await uploadSavedUserFileToWebdav(webdav, user.id, { storageKey, mimeType, content, source });
     }
     if (mimeType.startsWith("image/")) after(() => getUserImagePreview(user.id, storageKey).then(() => undefined).catch(() => undefined));
     return Response.json({ code: 0, msg: "保存成功", data: url ? { url } : undefined });

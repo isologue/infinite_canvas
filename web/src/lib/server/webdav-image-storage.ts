@@ -1,5 +1,6 @@
 type WebdavImageConfig = {
     enabled?: unknown;
+    uploadGeneratedResources?: unknown;
     storageMode?: unknown;
     url?: unknown;
     username?: unknown;
@@ -21,6 +22,15 @@ export async function uploadUserFileToWebdav(config: WebdavImageConfig, userId: 
 }
 
 export const uploadUserImageToWebdav = uploadUserFileToWebdav;
+
+export function shouldUploadSavedResourceToWebdav(config: WebdavImageConfig, source: string) {
+    return config.enabled === true && config.storageMode !== "local"
+        && (config.uploadGeneratedResources === true || !/^generated(?:-|$)/.test(source));
+}
+
+export async function uploadSavedUserFileToWebdav(config: WebdavImageConfig, userId: string, file: WebdavImageFile & { source: string }) {
+    return shouldUploadSavedResourceToWebdav(config, file.source) ? uploadUserFileToWebdav(config, userId, file) : "";
+}
 
 export async function testWebdavImageStorage(config: WebdavImageConfig) {
     const client = createWebdavClient(config);

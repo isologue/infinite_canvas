@@ -8,7 +8,7 @@ import { getUserImagePreview } from "@/lib/server/image-preview";
 import { downloadRemoteMedia, parseRemoteMediaUrl, RemoteMediaDownloadError } from "@/lib/server/remote-media-download";
 import { saveUserFileResource } from "@/lib/server/resource-db";
 import { readSharedConfig } from "@/lib/server/shared-config-db";
-import { uploadUserImageToWebdav } from "@/lib/server/webdav-image-storage";
+import { uploadSavedUserFileToWebdav } from "@/lib/server/webdav-image-storage";
 
 const MAX_IMAGE_PIXELS = 100_000_000;
 
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
             metadata: { ...metadata, width, height, mimeType, bytes: content.length, transfer: "server", originUrl: finalUrl.toString() },
         });
         const webdav = (await readSharedConfig()).webdav;
-        const publicUrl = await uploadUserImageToWebdav(webdav, user.id, { storageKey, mimeType, content });
+        const publicUrl = await uploadSavedUserFileToWebdav(webdav, user.id, { storageKey, mimeType, content, source });
         after(() =>
             getUserImagePreview(user.id, storageKey)
                 .then(() => undefined)

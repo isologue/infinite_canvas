@@ -5,7 +5,7 @@ import { nanoid } from "nanoid";
 import { resolveImageMimeType } from "@/lib/image-mime";
 import { compressImageIfLarge, readImageMeta } from "@/lib/image-utils";
 import { storageFileUrl } from "@/services/storage-url";
-import { markUploadProcessing, trackResourceUpload, uploadResourceFile } from "@/services/api/resource-upload";
+import { markUploadProcessing, trackResourceUpload, uploadResourceFile, type ResourceUploadOptions } from "@/services/api/resource-upload";
 
 export type UploadedImage = {
     url: string;
@@ -19,7 +19,8 @@ export type UploadedImage = {
 const objectUrls = new Map<string, string>();
 const publicUrls = new Map<string, string>();
 
-export async function uploadImage(input: string | Blob, options?: { compress?: boolean; title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
+export async function uploadImage(input: string | Blob, options?: ResourceUploadOptions & { compress?: boolean }): Promise<UploadedImage> {
+    options = { ...options, source: options?.source || (input instanceof File ? "upload" : "generated") };
     return trackResourceUpload(input, "image", options, async (uploadId) => {
         if (typeof input === "string" && /^https?:\/\//i.test(input)) {
             markUploadProcessing(uploadId);
@@ -45,7 +46,7 @@ export async function uploadImage(input: string | Blob, options?: { compress?: b
     });
 }
 
-async function importImageFromServer(url: string, options?: { title?: string; source?: string; metadata?: Record<string, unknown> }): Promise<UploadedImage> {
+async function importImageFromServer(url: string, options?: ResourceUploadOptions): Promise<UploadedImage> {
     const response = await fetch("/api/storage/images/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -79,7 +80,7 @@ export async function getImageBlob(storageKey: string) {
     return downloadFile(storageKey);
 }
 
-export async function setImageBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
+export async function setImageBlob(storageKey: string, blob: Blob, options?: ResourceUploadOptions) {
     return trackResourceUpload(blob, "image", options, async (uploadId) => {
         const normalized = await normalizeImageBlobMimeType(blob);
         await uploadFile(storageKey, normalized, options, uploadId);
@@ -177,7 +178,7 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
     return keys;
 }
 
-async function uploadFile(storageKey: string, blob: Blob, options: { title?: string; source?: string; metadata?: Record<string, unknown> } | undefined, uploadId: string) {
+async function uploadFile(storageKey: string, blob: Blob, options: ResourceUploadOptions | undefined, uploadId: string | undefined) {
     const payload = await uploadResourceFile(storageKey, blob, options, uploadId);
     // 公网地址只供上游引用；页面预览始终读取本地 Blob 或本站存储。
     const publicUrl = payload?.data?.url;

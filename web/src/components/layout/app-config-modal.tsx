@@ -284,12 +284,15 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                                 <Cloud className="size-4" />
                                                 媒体存储
                                             </div>
-                                            <div className="mt-1 text-xs text-stone-500">生成和上传的图片、视频、音频会保留本地副本，并按配置同步至 WebDAV；公开访问前缀用于生成可直接访问的媒体 URL。</div>
+                                            <div className="mt-1 text-xs text-stone-500">图片、视频、音频保留本地副本；主动上传的参考资源同步至 WebDAV，生成资源是否自动同步由下方开关控制。</div>
                                         </div>
                                         <div className="text-xs text-stone-500">{webdav.lastSyncedAt ? `上次同步 ${formatWebdavTime(webdav.lastSyncedAt)}` : "尚未同步"}</div>
                                     </div>
                                     <Form.Item className="mb-4">
                                         <Checkbox checked={webdav.enabled} onChange={(event) => updateWebdavConfig("enabled", event.target.checked)}>启用 WebDAV 媒体存储</Checkbox>
+                                    </Form.Item>
+                                    <Form.Item className="mb-4" extra="默认关闭：生成资源仅保存到本地，需要作为 JSON 请求的公网参考资源时才转存 WebDAV。开启后自动同步生成资源；全量同步也遵循此开关。">
+                                        <Checkbox checked={webdav.uploadGeneratedResources === true} onChange={(event) => updateWebdavConfig("uploadGeneratedResources", event.target.checked)}>生成资源上传 WebDAV</Checkbox>
                                     </Form.Item>
                                     <Form.Item label="存储模式" className="mb-4">
                                         <Select value={webdav.storageMode} options={[{ value: "local", label: "本地" }, { value: "webdav", label: "WebDAV" }, { value: "local+webdav", label: "本地 + WebDAV" }]} onChange={(value) => updateWebdavConfig("storageMode", value)} />

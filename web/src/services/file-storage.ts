@@ -2,14 +2,15 @@
 
 import { nanoid } from "nanoid";
 import { storageFileUrl } from "@/services/storage-url";
-import { markUploadProcessing, trackResourceUpload, uploadResourceFile } from "@/services/api/resource-upload";
+import { markUploadProcessing, trackResourceUpload, uploadResourceFile, type ResourceUploadOptions } from "@/services/api/resource-upload";
 
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const objectUrls = new Map<string, string>();
 const publicUrls = new Map<string, string>();
 
-export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: { title?: string; source?: string }): Promise<UploadedFile> {
+export async function uploadMediaFile(input: string | Blob, prefix = "file", options?: ResourceUploadOptions): Promise<UploadedFile> {
+    options = { ...options, source: options?.source || (input instanceof File ? "upload" : "generated") };
     const kind = prefix.startsWith("video") ? "video" : prefix.startsWith("audio") ? "audio" : "file";
     return trackResourceUpload(input, kind, options, async (uploadId) => {
         if (typeof input === "string" && /^https?:\/\//i.test(input) && kind !== "file") {
@@ -18,7 +19,8 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file", opt
         }
         const blob = typeof input === "string" ? await (await fetch(input)).blob() : input;
         const storageKey = `${prefix}:${nanoid()}`;
-        await uploadResourceFile(storageKey, blob, options, uploadId);
+        const payload = await uploadResourceFile(storageKey, blob, options, uploadId);
+        if (payload?.data?.url) publicUrls.set(storageKey, payload.data.url);
         const url = URL.createObjectURL(blob);
         objectUrls.set(storageKey, url);
         const meta = blob.type.startsWith("video/") ? await readVideoMeta(url) : blob.type.startsWith("audio/") ? await readAudioMeta(url) : {};
@@ -26,7 +28,7 @@ export async function uploadMediaFile(input: string | Blob, prefix = "file", opt
     });
 }
 
-async function importMediaFromServer(url: string, kind: "video" | "audio", options?: { title?: string; source?: string }): Promise<UploadedFile> {
+async function importMediaFromServer(url: string, kind: "video" | "audio", options?: ResourceUploadOptions): Promise<UploadedFile> {
     const response = await fetch(`/api/storage/${kind}s/import`, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -73,7 +75,7 @@ export async function ensurePublicMediaUrl(media: { storageKey?: string; url?: s
     throw new Error("参考素材读取失败，请重新上传");
 }
 
-export async function setMediaBlob(storageKey: string, blob: Blob, options?: { title?: string; source?: string }) {
+export async function setMediaBlob(storageKey: string, blob: Blob, options?: ResourceUploadOptions) {
     const kind = blob.type.startsWith("video/") ? "video" : blob.type.startsWith("audio/") ? "audio" : "file";
     return trackResourceUpload(blob, kind, options, async (uploadId) => {
         await uploadResourceFile(storageKey, blob, options, uploadId);

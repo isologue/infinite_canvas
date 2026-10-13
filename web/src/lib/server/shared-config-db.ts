@@ -53,6 +53,7 @@ const defaultConfig = {
 
 const defaultWebdavConfig = {
     enabled: false,
+    uploadGeneratedResources: false,
     storageMode: "local+webdav",
     proxyMode: "direct",
     url: "",

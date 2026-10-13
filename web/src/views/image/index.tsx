@@ -198,7 +198,7 @@ export default function ImagePage() {
             if (!accepted.length) return;
             const nextReferences = await Promise.all(
                 accepted.map(async (blob, index) => {
-                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload" });
+                    const image = await uploadImage(blob, { compress: true, title: `clipboard-${index + 1}.png`, source: "reference-upload", showProgress: true });
                     return { id: nanoid(), name: `clipboard-${index + 1}.png`, type: image.mimeType, dataUrl: image.url, storageKey: image.storageKey, bytes: image.bytes };
                 }),
             );
@@ -454,7 +454,7 @@ export default function ImagePage() {
 
     const addResultToReferences = async (image: GeneratedImage, index: number) => {
         try {
-            const stored = await uploadImage(image.dataUrl, { source: "reference-upload", title: `result-${index + 1}.png` });
+            const stored = image.storageKey ? { ...image, url: image.dataUrl, mimeType: image.mimeType || "" } : await uploadImage(image.dataUrl, { source: "generated", title: `result-${index + 1}.png` });
             const totalBytes = (await Promise.all(references.map(referenceImageBytes))).reduce((sum, bytes) => sum + bytes, 0);
             const validationError = referenceImageFileError({ size: stored.bytes, name: `result-${index + 1}.png` }, totalBytes);
             if (validationError) {
@@ -469,7 +469,7 @@ export default function ImagePage() {
     };
 
     const saveResultToAssets = async (image: GeneratedImage, index: number) => {
-        const stored = await uploadImage(image.dataUrl);
+        const stored = image.storageKey ? { ...image, url: image.dataUrl, mimeType: image.mimeType || "" } : await uploadImage(image.dataUrl);
         addAsset({
             kind: "image",
             title: `生成结果 ${index + 1}`,
@@ -491,7 +491,7 @@ export default function ImagePage() {
             if (validationError) message.warning(validationError);
             else {
                 try {
-                    const stored = await uploadImage(payload.dataUrl, { compress: true, title: payload.title, source: "reference-upload" });
+                    const stored = payload.storageKey ? { ...payload, url: payload.dataUrl, mimeType: payload.mimeType || "" } : await uploadImage(payload.dataUrl, { title: payload.title });
                     setReferences((value) => [...value, { id: nanoid(), name: payload.title, type: stored.mimeType, dataUrl: stored.url, storageKey: stored.storageKey, bytes: stored.bytes }]);
                 } catch (error) {
                     message.error(error instanceof Error ? error.message : "参考图上传失败，请重试");
