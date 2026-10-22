@@ -7,6 +7,8 @@ description: API documentation for external image and video clients
 
 The standalone external API documentation is available at [Unified API Documentation](/external-api.html).
 
-It is written for direct calls to `https://image.moai.wiki`, including model discovery, OpenAI-compatible image generation/editing, Gemini native image calls, OpenAI-compatible video tasks, polling, and error handling.
+It is written for direct calls to `https://image.moai.wiki`, including model discovery, OpenAI-compatible image generation/editing, asynchronous image submission and GET task queries, Gemini native image calls, OPENAI video and MiniMax video tasks, polling, and error handling.
+
+Request and response examples use JSON. OpenAI-compatible image and video references use publicly accessible URLs; Gemini image references retain Base64. GET requests have no body, and successful video content downloads return binary files. MiniMax workflow and aspect-ratio/size tables are included in the standalone document.
 
 > This is an external API gateway document. It does not describe the logged-in Infinite Canvas internal route `/api/ai-proxy`.

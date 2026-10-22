@@ -79,6 +79,7 @@
         <strong>图像</strong>
         <a href="#image-generation">文生图</a>
         <a href="#image-edit">图生图 / 编辑图</a>
+        <a href="#image-async">图片异步调用 / 查询</a>
         <a href="#gemini-image">Gemini 原生图像</a>
         <strong>OPENAI 视频</strong>
         <a href="#video-create">创建视频任务</a>
@@ -105,10 +106,13 @@
       <section id="auth">
         <span class="tag">START</span>
         <h2>鉴权与调用约定</h2>
-        <p class="muted">除 Gemini 原生接口外，所有请求使用 Bearer API Key。文生图与当前兼容编辑图使用 JSON；视频创建使用 <code class="inline">multipart/form-data</code>，不要手动指定带 boundary 的 Content-Type，HTTP 客户端会自动生成。</p>
-        <div class="code"><div class="code-head"><span>通用请求头</span><button class="copy" type="button">复制</button></div><pre>Authorization: Bearer &lt;API_KEY&gt;
-Content-Type: application/json</pre></div>
-        <div class="pill-row"><span class="pill"><b>参考图</b> 真实文件 MIME 必须正确</span><span class="pill"><b>视频</b> 创建后需要轮询</span><span class="pill"><b>任务 ID</b> 请妥善保存</span></div>
+        <p class="muted">POST 请求使用 <code class="inline">Content-Type: application/json</code>，下方示例为 JSON 请求体；GET 请求无需请求体。OpenAI 兼容图像及视频参考素材使用公网 URL；Gemini 原生参考图保持 Base64。所有调用携带 API Key。</p>
+        <div class="code"><div class="code-head"><span>请求头</span><button class="copy" type="button">复制</button></div><pre>{
+  "Authorization": "Bearer &lt;API_KEY&gt;",
+  "Content-Type": "application/json"
+}</pre></div>
+        <div class="pill-row"><span class="pill"><b>参考图</b> URL 必须可被上游直接访问</span><span class="pill"><b>视频</b> 创建后需要轮询</span><span class="pill"><b>任务 ID</b> 请妥善保存</span></div>
+              <div class="notice">参考素材 URL 需在任务处理期间保持有效，不能使用 localhost、内网地址、blob URL 或需要网页登录的地址。示例中的 example.com URL 请替换成真实素材。GET <code>/content</code> 下载成功时返回二进制文件。</div>
       </section>
 
       <section id="models">
@@ -117,8 +121,7 @@ Content-Type: application/json</pre></div>
         <h3><span>01</span>读取可用模型</h3>
         <p class="muted">返回当前 API Key 可用的模型列表。请按业务能力选择图像或视频模型。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/models</code></div></div>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/models" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <p class="muted">GET 请求无需请求体，携带鉴权头访问上述 URL。</p>
         <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
   "object": "list",
   "data": [
@@ -132,7 +135,7 @@ Content-Type: application/json</pre></div>
         <span class="tag">IMAGE</span>
         <h2>OpenAI 兼容图像接口</h2>
         <h3><span>02</span>文生图</h3>
-        <p class="muted">仅使用文字提示词生成图片。请求体为 JSON，成功响应在 <code class="inline">data[]</code> 中返回图片 URL 或 Base64。</p>
+        <p class="muted">GPT、Grok 等模型填写账户可用模型名。仅使用文字提示词生成图片；同步成功响应在 <code class="inline">data[]</code> 中返回图片 URL 或 Base64。</p>
         <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/images/generations</code></div></div>
         <h4>请求参数</h4>
         <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
@@ -143,30 +146,34 @@ Content-Type: application/json</pre></div>
           <tr><td><code>quality</code></td><td class="optional">否</td><td>string</td><td>如 <code>medium</code>、<code>high</code>，不支持时省略。</td></tr>
           <tr><td><code>background</code></td><td class="optional">否</td><td>string</td><td>支持透明背景的模型可传 <code>transparent</code>。</td></tr>
           <tr><td><code>response_format</code></td><td class="optional">否</td><td>string</td><td><code>url</code> 或 <code>b64_json</code>。</td></tr>
+                  <tr><td><code>output_format</code></td><td class="optional">否</td><td>string</td><td>当前项目发送 <code>png</code>，以模型支持范围为准。</td></tr>
+          <tr><td><code>async</code></td><td class="optional">否</td><td>boolean</td><td>传 <code>true</code> 请求异步任务；同步调用可省略。详见“图片异步调用与查询”。</td></tr>
         </tbody></table></div>
         <h4>请求</h4>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/generations" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "湖蓝色山谷，清晨薄雾，极简插画风",
-    "size": "1024x1536",
-    "quality": "medium",
-    "n": 1,
-    "response_format": "url"
-  }'</pre></div>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "gpt-image-2",
+  "prompt": "湖蓝色山谷，清晨薄雾，极简插画风",
+  "size": "1024x1536",
+  "quality": "medium",
+  "n": 1,
+  "response_format": "url",
+  "output_format": "png"
+}</pre></div>
         <h4>响应</h4>
         <div class="code"><div class="code-head"><span>URL 格式</span><button class="copy" type="button">复制</button></div><pre>{
   "created": 1781837823,
   "data": [
-    { "url": "https://example.com/generated-image.png" }
+    {
+      "url": "https://example.com/generated-image.png"
+    }
   ]
 }</pre></div>
         <div class="code"><div class="code-head"><span>Base64 格式</span><button class="copy" type="button">复制</button></div><pre>{
   "created": 1781837823,
   "data": [
-    { "b64_json": "iVBORw0KGgoAAAANSUhEUg..." }
+    {
+      "b64_json": "iVBORw0KGgoAAAANSUhEUg..."
+    }
   ]
 }</pre></div>
       </section>
@@ -179,47 +186,125 @@ Content-Type: application/json</pre></div>
         <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
           <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>图像编辑模型名。</td></tr>
           <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>编辑要求；多图时可用“第一张 / 第二张”指代。</td></tr>
-          <tr><td><code>images</code></td><td class="required">是</td><td>array</td><td>参考图数组，每项为 <code>{ "image_url": "..." }</code>。支持可访问 URL 或正确 MIME 的 Data URL。</td></tr>
+          <tr><td><code>images</code></td><td class="required">是</td><td>array</td><td>参考图数组，每项为 <code>{ "image_url": "..." }</code>。每个 URL 必须可被上游直接访问。</td></tr>
           <tr><td><code>mask</code></td><td class="optional">否</td><td>object</td><td><code>{ "image_url": "..." }</code>；蒙版白色区域允许编辑，黑色区域保留。模型不支持时请省略。</td></tr>
           <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>输出尺寸；省略时由模型或参考图决定。</td></tr>
           <tr><td><code>n</code></td><td class="optional">否</td><td>integer</td><td>建议传 <code>1</code>。</td></tr>
           <tr><td><code>response_format</code></td><td class="optional">否</td><td>string</td><td><code>url</code> 或 <code>b64_json</code>。</td></tr>
+                  <tr><td><code>quality</code></td><td class="optional">否</td><td>string</td><td>如 <code>medium</code>、<code>high</code>，不支持时省略。</td></tr>
+          <tr><td><code>background</code></td><td class="optional">否</td><td>string</td><td>模型支持时可用 <code>transparent</code>。</td></tr>
+          <tr><td><code>output_format</code></td><td class="optional">否</td><td>string</td><td>当前项目发送 <code>png</code>。</td></tr>
+          <tr><td><code>async</code></td><td class="optional">否</td><td>boolean</td><td>传 <code>true</code> 创建异步任务，查询方式与文生图一致。</td></tr>
         </tbody></table></div>
         <h4>请求</h4>
-        <div class="code"><div class="code-head"><span>单张参考图</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/edits" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "将背景替换成赛博朋克城市夜景，保留人物姿势",
-    "images": [
-      { "image_url": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..." }
-    ],
-    "size": "1024x1024",
-    "n": 1,
-    "response_format": "url"
-  }'</pre></div>
-        <div class="code"><div class="code-head"><span>多图与蒙版</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/images/edits" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "gpt-image-2",
-    "prompt": "把第一张人物放入第二张背景，只修改蒙版指定的背景区域",
-    "images": [
-      { "image_url": "https://example.com/person.jpg" },
-      { "image_url": "https://example.com/background.png" }
-    ],
-    "mask": { "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg..." },
-    "n": 1
-  }'</pre></div>
-        <div class="notice">本页记录的是当前画布使用的 JSON 兼容请求结构。不要将 JPEG 二进制伪装成 <code>data:image/png</code>；Data URL 前缀、请求中的 MIME 字段和实际文件内容必须一致。</div>
+        <div class="code"><div class="code-head"><span>单张参考图（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "gpt-image-2",
+  "prompt": "将背景替换成赛博朋克城市夜景，保留人物姿势",
+  "images": [
+    {
+      "image_url": "https://example.com/person.jpg"
+    }
+  ],
+  "size": "1024x1024",
+  "n": 1,
+  "response_format": "url",
+  "output_format": "png"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>多图与蒙版（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "gpt-image-2",
+  "prompt": "把第一张人物放入第二张背景，只修改蒙版指定的背景区域",
+  "images": [
+    {
+      "image_url": "https://example.com/person.jpg"
+    },
+    {
+      "image_url": "https://example.com/background.png"
+    }
+  ],
+  "mask": {
+    "image_url": "https://example.com/mask.png"
+  },
+  "n": 1,
+  "output_format": "png"
+}</pre></div>
+        <div class="notice">参考图为 <code>images: [{ "image_url": "https://..." }]</code>，蒙版为 <code>mask: { "image_url": "https://..." }</code>。同步响应结构与文生图一致；异步创建及查询见下一节。</div>
+      </section>
+
+      <section id="image-async">
+        <span class="tag">IMAGE ASYNC</span><h2>图片异步调用与查询</h2>
+        <p class="muted">OpenAI 兼容文生图、图生图在原 JSON 请求中加入布尔值 <code>async: true</code>。这是网关扩展，是否支持以上游为准。创建响应已返回图片时直接使用；返回任务 ID 时再查询，避免重复提交生成请求。</p>
+        <h4>异步文生图</h4>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/images/generations</code></div></div>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "gpt-image-2",
+  "prompt": "湖蓝色山谷，清晨薄雾",
+  "size": "1024x1024",
+  "n": 1,
+  "output_format": "png",
+  "response_format": "url",
+  "async": true
+}</pre></div>
+        <h4>异步图生图</h4>
+        <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/images/edits</code></div></div>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "gpt-image-2",
+  "prompt": "保留人物，将背景替换成海边日落",
+  "images": [
+    {
+      "image_url": "https://example.com/person.jpg"
+    }
+  ],
+  "n": 1,
+  "output_format": "png",
+  "response_format": "url",
+  "async": true
+}</pre></div>
+        <div class="code"><div class="code-head"><span>创建响应（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "created_at": 1792650048,
+  "model": "gpt-image-2",
+  "status": "queued",
+  "task_id": "task_jqvPI9cwUyM08jN9TYWdDG9Zw44ie4FY"
+}</pre></div>
+        <p class="muted">保存实际返回的任务 ID。当前项目识别 <code>task_id</code>、<code>taskId</code>、<code>task</code>、<code>id</code> 及封装在 <code>data</code>、<code>result</code> 等字段中的任务。<code>poll_url</code> 可选；如返回，优先 GET 该 URL，否则使用下方查询接口。</p>
+        <h4>查询图片任务</h4>
+        <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/images/tasks/{task_id}</code></div></div>
+        <p class="muted">无需请求体，携带 Bearer 鉴权头。建议每 5 秒查询一次，成功或失败后停止轮询；不要因耗时较长重新创建任务。成功响应中的图片列表位于 <code>data.data[]</code>；读取每项的 <code>url</code>，<code>revised_prompt</code> 为上游返回的修订提示词。</p>
+        <div class="code"><div class="code-head"><span>处理中响应（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_jqvPI9cwUyM08jN9TYWdDG9Zw44ie4FY",
+  "status": "processing",
+  "progress": "42%"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>成功响应（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "created_at": 1792650048,
+  "data": {
+    "created": 1792650081,
+    "data": [
+      {
+        "revised_prompt": "生成一个漫画风的猫娘",
+        "url": "https://example.com/generated-image.png"
+      }
+    ]
+  },
+  "model": "gpt-image-2",
+  "progress": "100%",
+  "status": "succeeded",
+  "task_id": "task_jqvPI9cwUyM08jN9TYWdDG9Zw44ie4FY"
+}</pre></div>
+        <div class="code"><div class="code-head"><span>失败响应（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "task_id": "task_jqvPI9cwUyM08jN9TYWdDG9Zw44ie4FY",
+  "status": "failed",
+  "error": {
+    "message": "上游返回的具体失败原因"
+  }
+}</pre></div>
+        <p class="muted"><code>queued / running / processing</code> 表示继续等待；<code>completed / succeeded / success / done / finished</code> 表示完成并读取图片；<code>failed / error / cancelled / expired</code> 表示失败。即使状态为 completed，也要检查图片及拒绝消息。</p>
       </section>
 
       <section id="gemini-image">
         <span class="tag">GEMINI NATIVE</span>
         <h2>Gemini 原生图像接口</h2>
         <h3><span>04</span>文生图与参考图编辑</h3>
-        <p class="muted">Gemini 模型使用原生 <code class="inline">generateContent</code> 协议。模型名位于 URL 中，参考图放入 <code class="inline">contents[].parts[].inlineData</code>。</p>
+        <p class="muted">另携带 <code class="inline">x-goog-api-key: &lt;API_KEY&gt;</code> 请求头。Gemini 模型使用原生 <code class="inline">generateContent</code> 协议。模型名位于 URL 中，参考图放入 <code class="inline">contents[].parts[].inlineData</code>。</p>
         <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1beta/models/{model}:generateContent</code></div></div>
         <h4>请求参数</h4>
         <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>说明</th></tr></thead><tbody>
@@ -230,15 +315,14 @@ Content-Type: application/json</pre></div>
           <tr><td><code>generationConfig.imageConfig</code></td><td class="optional">否</td><td>可传 <code>aspectRatio</code> 与 <code>imageSize</code>，以模型能力为准。</td></tr>
         </tbody></table></div>
         <h4>请求</h4>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1beta/models/gemini-image-model:generateContent" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -H "x-goog-api-key: &lt;API_KEY&gt;" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [{
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "contents": [
+    {
       "role": "user",
       "parts": [
-        { "text": "保留人物主体，将背景改为沙漠日落" },
+        {
+          "text": "保留人物主体，将背景改为沙漠日落"
+        },
         {
           "inlineData": {
             "mimeType": "image/jpeg",
@@ -246,55 +330,94 @@ Content-Type: application/json</pre></div>
           }
         }
       ]
-    }],
-    "generationConfig": {
-      "responseModalities": ["TEXT", "IMAGE"],
-      "imageConfig": { "aspectRatio": "16:9", "imageSize": "1K" }
     }
-  }'</pre></div>
+  ],
+  "generationConfig": {
+    "responseModalities": [
+      "TEXT",
+      "IMAGE"
+    ],
+    "imageConfig": {
+      "aspectRatio": "16:9",
+      "imageSize": "1K"
+    }
+  }
+}</pre></div>
         <h4>响应中的图片位置</h4>
         <div class="table"><table><thead><tr><th>返回模式</th><th>图片数据位置</th></tr></thead><tbody>
           <tr><td><code>["IMAGE"]</code></td><td><code>candidates[0].content.parts[].inlineData.data</code></td></tr>
           <tr><td><code>["TEXT"]</code></td><td><code>candidates[0].content.parts[].fileData.fileUri</code>（模型支持时）</td></tr>
           <tr><td><code>["TEXT", "IMAGE"]</code></td><td>遍历 <code>parts[]</code>，分别读取 <code>inlineData</code> 与 <code>fileData</code>。</td></tr>
         </tbody></table></div>
+              <div class="code"><div class="code-head"><span>响应示例（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "candidates": [
+    {
+      "content": {
+        "role": "model",
+        "parts": [
+          {
+            "inlineData": {
+              "mimeType": "image/png",
+              "data": "iVBORw0KGgoAAAANSUhEUg..."
+            }
+          }
+        ]
+      },
+      "finishReason": "STOP"
+    }
+  ]
+}</pre></div>
       </section>
 
       <section id="video-create">
          <span class="tag">OPENAI VIDEO</span>
          <h2>OPENAI 视频接口</h2>
         <h3><span>05</span>创建视频任务</h3>
-        <p class="muted">视频生成是异步任务：先创建任务并保存返回的 <code class="inline">id</code>，再轮询任务状态。参考图使用 multipart 文件字段上传，当前最多建议传 7 张。</p>
+        <p class="muted">使用 JSON 创建异步任务，保存返回的 <code>id</code> 后查询进度。参考图片、视频和音频分别使用 URL 数组；文生视频省略参考字段。</p>
         <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/videos</code></div></div>
         <h4>请求参数</h4>
         <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
           <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>视频模型名。</td></tr>
           <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>视频提示词。</td></tr>
-          <tr><td><code>seconds</code></td><td class="required">是</td><td>integer</td><td>时长（秒）。当前画布发送范围为 1–20 秒，最终以模型限制为准。</td></tr>
-          <tr><td><code>aspect_ratio</code></td><td class="required">是</td><td>string</td><td>如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code>。</td></tr>
-          <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>像素尺寸，如 <code>1280x720</code>；上游不需要时可省略。</td></tr>
-          <tr><td><code>resolution_name</code></td><td class="required">是</td><td>string</td><td>如 <code>480p</code>、<code>720p</code>、<code>1080p</code>，以模型能力为准。</td></tr>
-          <tr><td><code>preset</code></td><td class="optional">否</td><td>string</td><td>预设档位；默认 <code>normal</code>。</td></tr>
-          <tr><td><code>input_reference[]</code></td><td class="optional">否</td><td>file</td><td>可重复传入的参考图文件。</td></tr>
+          <tr><td><code>seconds</code></td><td class="required">是</td><td>string</td><td>秒数字符串，例如 <code>"10"</code>。当前项目发送 1–20 秒，以模型限制为准。</td></tr>
+          <tr><td><code>duration</code></td><td class="required">是</td><td>integer</td><td>整数秒数，例如 <code>10</code>；与 <code>seconds</code> 保持一致。</td></tr>
+          <tr><td><code>aspect_ratio</code></td><td class="required">是</td><td>string</td><td>宽高比，例如 <code>16:9</code>、<code>9:16</code>。</td></tr>
+          <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>像素尺寸，例如 <code>1280x720</code>；自动尺寸时省略。</td></tr>
+          <tr><td><code>n</code></td><td class="optional">否</td><td>integer</td><td>当前项目发送 <code>1</code>。</td></tr>
+          <tr><td><code>images</code></td><td class="optional">否</td><td>string[]</td><td>参考图 URL 数组，当前项目最多发送 7 张。</td></tr>
+          <tr><td><code>reference_videos</code></td><td class="optional">否</td><td>string[]</td><td>参考视频 URL 数组，当前项目最多发送 3 项；以模型支持情况为准。</td></tr>
+          <tr><td><code>reference_audios</code></td><td class="optional">否</td><td>string[]</td><td>参考音频 URL 数组，当前项目最多发送 3 项；以模型支持情况为准。</td></tr>
         </tbody></table></div>
-        <h4>请求</h4>
-        <div class="code"><div class="code-head"><span>文生视频</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -F "model=your-video-model" \
-  -F "prompt=镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感" \
-  -F "seconds=10" \
-  -F "aspect_ratio=16:9" \
-  -F "size=1280x720" \
-  -F "resolution_name=720p" \
-  -F "preset=normal"</pre></div>
-        <div class="code"><div class="code-head"><span>参考图生视频</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -F "model=your-video-model" \
-  -F "prompt=让图中的角色自然转身并向镜头微笑" \
-  -F "seconds=6" \
-  -F "aspect_ratio=9:16" \
-  -F "resolution_name=720p" \
-  -F "input_reference[]=@character.jpg;type=image/jpeg"</pre></div>
+        <h4>文生视频请求</h4>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "your-video-model",
+  "prompt": "镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感",
+  "seconds": "10",
+  "duration": 10,
+  "aspect_ratio": "16:9",
+  "size": "1280x720",
+  "n": 1
+}</pre></div>
+        <h4>参考素材生视频请求</h4>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "your-video-model",
+  "prompt": "让图中角色按照参考视频的动作自然转身",
+  "seconds": "6",
+  "duration": 6,
+  "aspect_ratio": "9:16",
+  "size": "720x1280",
+  "n": 1,
+  "images": [
+    "https://example.com/character.jpg"
+  ],
+  "reference_videos": [
+    "https://example.com/motion.mp4"
+  ],
+  "reference_audios": [
+    "https://example.com/voice.mp3"
+  ]
+}</pre></div>
+        <p class="muted">仅需参考图时省略视频、音频字段。以上为当前项目 JSON 分支的字段；该分支不发送 <code>resolution_name</code> 或 <code>preset</code>。</p>
         <h4>创建响应</h4>
         <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
   "id": "video_01JQEXAMPLE",
@@ -309,8 +432,7 @@ Content-Type: application/json</pre></div>
         <h3><span>06</span>查询视频任务</h3>
         <p class="muted">建议每 2–5 秒轮询一次，直到任务进入成功或失败的终态。服务可能将数据直接返回在顶层，也可能包在 <code class="inline">data</code> 字段内；客户端应兼容两种形式。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}</code></div></div>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/videos/video_01JQEXAMPLE" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <p class="muted">GET 请求无需请求体，携带鉴权头访问上述 URL。</p>
         <div class="code"><div class="code-head"><span>进行中响应</span><button class="copy" type="button">复制</button></div><pre>{
   "id": "video_01JQEXAMPLE",
   "status": "processing",
@@ -333,28 +455,26 @@ Content-Type: application/json</pre></div>
         <h3><span>07</span>下载视频内容</h3>
         <p class="muted">当查询接口未直接返回视频 URL，但状态已完成时，可请求视频二进制内容。调用方应按流保存为 <code class="inline">.mp4</code>，并检查响应 Content-Type 不是 JSON 错误对象。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}/content</code></div></div>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -L "{{base_url}}/v1/videos/video_01JQEXAMPLE/content" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -o output.mp4</pre></div>
+        <p class="muted">GET 请求无需请求体，携带鉴权头访问上述 URL。</p>
       </section>
 
       <section id="minimax-video-create">
         <span class="tag">MINIMAX VIDEO</span>
         <h2>MiniMax 视频接口</h2>
         <h3><span>08</span>创建视频任务</h3>
-        <p class="muted">MiniMax 视频生成是异步任务：先创建任务并保存返回的 <code class="inline">task_id</code>，再轮询任务状态。请求使用 <code class="inline">multipart/form-data</code>；参考图、参考视频和参考音频均使用可重复的文件字段上传。</p>
+        <p class="muted">使用 JSON 创建异步任务，保存响应中的 <code>task_id</code>（部分服务返回 <code>id</code>），再查询状态。参考图片、视频和音频均使用公网 URL 数组。</p>
         <div class="endpoint"><div><span class="method">POST</span><code data-path>/v1/videos</code></div></div>
         <h4>请求参数</h4>
         <div class="table"><table><thead><tr><th>参数</th><th>必填</th><th>类型</th><th>说明</th></tr></thead><tbody>
           <tr><td><code>model</code></td><td class="required">是</td><td>string</td><td>MiniMax 视频模型名。</td></tr>
           <tr><td><code>prompt</code></td><td class="required">是</td><td>string</td><td>视频提示词。</td></tr>
-          <tr><td><code>seconds</code></td><td class="required">是</td><td>integer</td><td>视频时长（秒），当前项目按 1–15 秒发送，最终以模型限制为准。</td></tr>
-          <tr><td><code>workflow_id</code></td><td class="required">是</td><td>string</td><td>工作流：<code>text-to-video</code>、<code>fl2v</code>、<code>multi-reference</code>、<code>cf-fl2v</code> 或 <code>cf-multi-reference</code>。</td></tr>
+          <tr><td><code>seconds</code></td><td class="required">是</td><td>string</td><td>秒数字符串，例如 <code>"10"</code>，当前项目按 1–15 秒发送，最终以模型限制为准。</td></tr>
+          <tr><td><code>workflow_id</code></td><td class="required">是</td><td>string</td><td>工作流：<code>text-to-video</code>、<code>fl2v</code>、<code>multi-reference</code>、<code>cf-fl2v</code> 、<code>cf-multi-reference</code> 或 <code>cf-mj</code>。</td></tr>
           <tr><td><code>size</code></td><td class="required">是</td><td>string</td><td>普通工作流使用像素尺寸，例如 <code>1376x768</code>；CF 工作流使用 <code>2K</code> 或 <code>4K</code>。</td></tr>
           <tr><td><code>aspect_ratio</code></td><td class="optional">CF 必填</td><td>string</td><td>CF 工作流的画幅比例，例如 <code>16:9</code>、<code>9:16</code>、<code>1:1</code>。</td></tr>
-          <tr><td><code>images</code></td><td class="optional">否</td><td>file</td><td>参考图片文件。需要多张时重复传入该字段。</td></tr>
-          <tr><td><code>reference_videos</code></td><td class="optional">否</td><td>file</td><td>参考视频文件。需要多个时重复传入该字段。</td></tr>
-          <tr><td><code>reference_audios</code></td><td class="optional">否</td><td>file</td><td>参考音频文件。需要多个时重复传入该字段。</td></tr>
+          <tr><td><code>images</code></td><td class="optional">否</td><td>string[]</td><td>参考图 URL 数组，最多 9 张。</td></tr>
+          <tr><td><code>reference_videos</code></td><td class="optional">否</td><td>string[]</td><td>参考视频 URL 数组，最多 3 项。</td></tr>
+          <tr><td><code>reference_audios</code></td><td class="optional">否</td><td>string[]</td><td>参考音频 URL 数组，最多 3 项。</td></tr>
         </tbody></table></div>
         <h4>工作流 ID 与参考素材</h4>
         <div class="table"><table><thead><tr><th>工作流</th><th>参考素材</th><th>尺寸</th></tr></thead><tbody>
@@ -364,6 +484,7 @@ Content-Type: application/json</pre></div>
           <tr><td><code>cf-multi-reference</code></td><td>可选；提供时图片最多 9 张，视频和音频最多各 3 项</td><td><code>size</code> 必须为 <code>2K</code> 或 <code>4K</code>；画幅比例由 <code>aspect_ratio</code> 控制</td></tr>
           <tr><td><code>cf-fl2v</code></td><td>1-2 张图片；两张按顺序作为首帧、尾帧</td><td><code>size</code> 必须为 <code>2K</code> 或 <code>4K</code>；画幅比例由 <code>aspect_ratio</code> 控制</td></tr>
         </tbody></table></div>
+        <p class="muted"><code>cf-mj</code> 也是当前项目可选的 CF 工作流，具体素材和模型限制以上游为准。2K / 4K 使用 CF 工作流并同时传 <code>aspect_ratio</code>；普通工作流传下表的像素尺寸。当前项目 720P 选项使用 768P 一列；自定义尺寸可直接传 <code>宽x高</code>。</p>
         <h4>比例与尺寸</h4>
         <div class="table"><table><thead><tr><th>比例</th><th>480P</th><th>768P</th><th>1080P</th></tr></thead><tbody>
           <tr><td>16:9</td><td><code>864x480</code></td><td><code>1376x768</code></td><td><code>1920x1088</code></td></tr>
@@ -376,25 +497,43 @@ Content-Type: application/json</pre></div>
           <tr><td>21:9</td><td><code>992x416</code></td><td><code>1568x672</code></td><td><code>2208x960</code></td></tr>
         </tbody></table></div>
         <h4>文生视频请求</h4>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -F "model=minimax-video-model" \
-  -F "prompt=镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感" \
-  -F "seconds=10" \
-  -F "workflow_id=text-to-video" \
-  -F "size=1376x768"</pre></div>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "minimax-video-model",
+  "prompt": "镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感",
+  "seconds": "10",
+  "workflow_id": "text-to-video",
+  "size": "1376x768"
+}</pre></div>
         <h4>多参考素材请求</h4>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -X POST "{{base_url}}/v1/videos" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -F "model=minimax-video-model" \
-  -F "prompt=让角色按照参考素材自然运动" \
-  -F "seconds=8" \
-  -F "workflow_id=multi-reference" \
-  -F "size=768x1376" \
-  -F "images=@character.png;type=image/png" \
-  -F "images=@style.jpg;type=image/jpeg" \
-  -F "reference_videos=@motion.mp4;type=video/mp4" \
-  -F "reference_audios=@voice.mp3;type=audio/mpeg"</pre></div>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "minimax-video-model",
+  "prompt": "让角色按照参考素材自然运动",
+  "seconds": "8",
+  "workflow_id": "multi-reference",
+  "size": "768x1376",
+  "images": [
+    "https://example.com/character.png",
+    "https://example.com/style.jpg"
+  ],
+  "reference_videos": [
+    "https://example.com/motion.mp4"
+  ],
+  "reference_audios": [
+    "https://example.com/voice.mp3"
+  ]
+}</pre></div>
+        <h4>2K / 4K 请求</h4>
+        <div class="code"><div class="code-head"><span>请求体（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "model": "minimax-video-model",
+  "prompt": "保留主体，生成电影感镜头",
+  "seconds": "10",
+  "workflow_id": "cf-multi-reference",
+  "size": "2K",
+  "aspect_ratio": "16:9",
+  "images": [
+    "https://example.com/character.png"
+  ]
+}</pre></div>
         <h4>创建响应</h4>
         <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
   "task_id": "task_01JQMINIMAX",
@@ -407,8 +546,7 @@ Content-Type: application/json</pre></div>
         <h3><span>09</span>查询视频任务</h3>
         <p class="muted">建议每 5 秒轮询一次，直到任务进入成功或失败的终态。任务 ID 使用创建响应中的 <code class="inline">task_id</code>；部分服务也会兼容返回 <code class="inline">id</code>。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}</code></div></div>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl "{{base_url}}/v1/videos/task_01JQMINIMAX" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;"</pre></div>
+        <p class="muted">GET 请求无需请求体，携带鉴权头访问上述 URL。</p>
         <div class="code"><div class="code-head"><span>进行中响应</span><button class="copy" type="button">复制</button></div><pre>{
   "task_id": "task_01JQMINIMAX",
   "status": "processing",
@@ -431,15 +569,13 @@ Content-Type: application/json</pre></div>
         <h3><span>10</span>下载视频内容</h3>
         <p class="muted">当查询接口返回成功但没有视频 URL 时，可请求视频二进制内容。调用方应按流保存为 <code class="inline">.mp4</code>，并检查响应 Content-Type 不是 JSON 错误对象。</p>
         <div class="endpoint"><div><span class="method get">GET</span><code data-path>/v1/videos/{task_id}/content</code></div></div>
-        <div class="code"><div class="code-head"><span>cURL</span><button class="copy" type="button">复制</button></div><pre data-template>curl -L "{{base_url}}/v1/videos/task_01JQMINIMAX/content" \
-  -H "Authorization: Bearer &lt;API_KEY&gt;" \
-  -o output.mp4</pre></div>
+        <p class="muted">GET 请求无需请求体，携带鉴权头访问上述 URL。</p>
       </section>
 
       <section id="errors">
         <span class="tag">ERRORS</span>
         <h2>错误处理</h2>
-        <p class="muted">失败时优先读取 <code class="inline">error.message</code>、<code class="inline">message</code>、<code class="inline">msg</code> 或封装响应中的对应字段，并保留 HTTP 状态码与完整响应体以便排查。</p>
+        <p class="muted">失败时优先读取 <code class="inline">error.message</code>、<code class="inline">message</code>、<code class="inline">msg</code> 、<code>refusal</code>、<code>fail_reason</code> 或封装响应中的对应字段，并保留 HTTP 状态码与完整响应体以便排查。</p>
         <div class="table"><table><thead><tr><th>HTTP 状态</th><th>常见原因</th><th>建议</th></tr></thead><tbody>
           <tr><td>400</td><td>参数不完整、模型不支持字段、文件格式不正确</td><td>核对字段名、枚举值以及图片真实 MIME。</td></tr>
           <tr><td>401 / 403</td><td>API Key 无效、无模型权限</td><td>检查 Authorization 头和账号套餐权限。</td></tr>
@@ -454,6 +590,15 @@ Content-Type: application/json</pre></div>
     "code": "invalid_image"
   }
 }</pre></div>
+              <h4>内容拒绝响应</h4>
+        <div class="code"><div class="code-head"><span>HTTP 成功也可能未生成图片（JSON）</span><button class="copy" type="button">复制</button></div><pre>{
+  "data": [],
+  "status": "completed",
+  "outcome": "content_refused",
+  "message": "该提示可能违反了我们的内容政策，请修改后重试。",
+  "refusal": "该提示可能违反了我们的内容政策，请修改后重试。"
+}</pre></div>
+        <p class="muted">应显示具体拒绝消息，不应只显示“没有返回图片”，也不应自动重复提交同一提示词。</p>
       </section>
 
       <footer>MoAI 统一 API 文档 · 使用前请以账户实际可用模型和上游能力为准。</footer>

@@ -65,7 +65,7 @@ description: 当前版本已实现但仍需人工验证的变更项
 
 - 图片生成记录批量删除：在图片工作台生成多条记录后点击「全选」再点击「删除」，确认弹窗中的全部记录都应被删除，刷新页面后不应重新出现。
 
-- 外部统一 API 文档：打开 `/external-api.html`，应看到「OPENAI 视频」和「MiniMax 视频」两个独立分类；MiniMax 章节应包含 `POST /v1/videos` 的 multipart 字段、参考图片/视频/音频上传、`GET /v1/videos/{task_id}` 轮询以及 `/content` 下载示例，文档站与主应用页面内容应一致。
+- 外部统一 API 文档：打开“关于 → 接口文档”或 `/external-api.html`，应看到图片异步提交、GET `/v1/images/tasks/{task_id}` 查询和可选 `poll_url` 说明；创建响应包含 `created_at/model/status/task_id`，查询成功为 `status: succeeded`，图片列表位于 `data.data[]` 并包含 `revised_prompt` 与 `url`。所有请求/响应示例应为可复制的 JSON；GET 无请求体，视频下载返回二进制。OpenAI 编辑图使用 `images[].image_url` 和 URL 蒙版；OPENAI 视频、MiniMax 的参考图片/视频/音频为 URL 数组，秒数字段类型与项目 JSON 请求一致；Gemini 仍使用 Base64。MiniMax 工作流和比例尺寸表保留，主应用与文档站内容一致，不再出现旧文件上传示例。
 
 - 视频生成记录批量删除：在视频工作台生成多条记录后点击「全选」再点击「删除」，确认弹窗中的全部记录都应被删除，刷新页面后不应重新出现；选中进行中的记录删除后，也不应继续通过轮询重新写回。
 
