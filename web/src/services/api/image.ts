@@ -326,6 +326,8 @@ async function startImagesWithAsyncFallback(input: {
             },
         };
     }
+    const reason = readTaskFailure(result.payload);
+    if (reason) throw attachImageRequestParams(responsePayloadError(reason, result.payload), result.requestParams);
     const fallback = await create(false);
     asyncUnsupported.add(input.key);
     return finishImmediate(fallback.payload, fallback.requestParams);
@@ -394,7 +396,7 @@ function imageRequestErrorText(error: unknown) {
 }
 
 function isLikelyProtocolMismatchError(error: unknown) {
-    if (isRequestCancelled(error)) return false;
+    if (isRequestCancelled(error) || isRecord(error) && error.imageContentRefused) return false;
     const status = imageRequestErrorStatus(error);
     const text = imageRequestErrorText(error);
     if (/gemini.*(?:(?:mask|蒙版).*(?:unsupported|not support|不支持)|(?:unsupported|not support|不支持).*(?:mask|蒙版))/i.test(text)) return true;
@@ -418,7 +420,7 @@ async function withImageApiFormatFallback<T>(config: AiConfig, run: (requestConf
 
 function parseRequiredImages(payload: unknown, preferred: (payload: unknown) => GeneratedImage[] | null) {
     const images = preferred(payload) || findTaskImages(payload);
-    if (!images?.length) throw new Error("接口没有返回图片");
+    if (!images?.length) throw responsePayloadError(readTaskFailure(payload) || "接口没有返回图片", payload);
     return images;
 }
 
@@ -543,7 +545,7 @@ export async function pollImageGenerationTask(config: AiConfig, task: ImageGener
         const status = imageTaskStatus(payload);
         if (images?.length && (!status || IMAGE_TASK_SUCCESS.has(status))) return { status: "completed", images, responseResult: payload };
         if (IMAGE_TASK_FAILED.has(status)) return { status: "failed", error: readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`, responseResult: payload };
-        if (IMAGE_TASK_SUCCESS.has(status)) return { status: "failed", error: "图片任务已完成，但没有返回图片", responseResult: payload };
+        if (IMAGE_TASK_SUCCESS.has(status)) return { status: "failed", error: readTaskFailure(payload) || "图片任务已完成，但没有返回图片", responseResult: payload };
         return { status: "pending", progress: imageTaskProgress(payload) };
     } catch (error) {
         throw requestError(error, "图片任务查询失败");
@@ -565,7 +567,7 @@ async function pollImageTask(config: AiConfig, task: ImageGenerationTask, prefer
             const status = imageTaskStatus(payload);
             if (images?.length && (!status || IMAGE_TASK_SUCCESS.has(status))) return images;
             if (IMAGE_TASK_FAILED.has(status)) throw responsePayloadError(readTaskFailure(payload) || `图片任务${status === "expired" ? "已过期" : "失败"}`, payload);
-            if (IMAGE_TASK_SUCCESS.has(status)) throw new Error("图片任务已完成，但没有返回图片");
+            if (IMAGE_TASK_SUCCESS.has(status)) throw responsePayloadError(readTaskFailure(payload) || "图片任务已完成，但没有返回图片", payload);
         } catch (error) {
             if (isRequestCancelled(error)) throw error;
             const status = axios.isAxiosError(error) ? error.response?.status : undefined;
@@ -585,8 +587,17 @@ async function pollImageTask(config: AiConfig, task: ImageGenerationTask, prefer
 const IMAGE_TASK_SUCCESS = new Set(["success", "successful", "succeeded", "completed", "done", "finished"]);
 const IMAGE_TASK_FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled", "expired"]);
 
+function readImageRefusal(payload: unknown): string {
+    if (!isRecord(payload)) return "";
+    const refusal = typeof payload.refusal === "string" ? payload.refusal.trim() : "";
+    if (!refusal && payload.outcome !== "content_refused") return "";
+    return (typeof payload.message === "string" ? payload.message.trim() : "") || refusal || "上游拒绝了本次图片生成请求";
+}
+
 function readPayloadError(payload: unknown) {
     if (!isRecord(payload)) return "";
+    const refusal = readImageRefusal(payload);
+    if (refusal) return refusal;
     if (typeof payload.code === "number" && payload.code !== 0) return typeof payload.msg === "string" ? payload.msg : isRecord(payload.error) && typeof payload.error.message === "string" ? payload.error.message : "请求失败";
     if (isRecord(payload.error) && typeof payload.error.message === "string") return payload.error.message;
     return "";
@@ -608,7 +619,7 @@ function readTaskFailure(payload: unknown): string {
 }
 
 function shouldFallbackWithoutAsync(error: unknown) {
-    if (isRequestCancelled(error)) return false;
+    if (isRequestCancelled(error) || isRecord(error) && error.imageContentRefused) return false;
     const status = axios.isAxiosError(error) ? error.response?.status : isRecord(error) && typeof error.status === "number" ? error.status : undefined;
     if (status && [401, 403, 429].includes(status)) return false;
     if (status && [400, 404, 405, 415, 422].includes(status)) return true;
@@ -682,6 +693,7 @@ function requestError(error: unknown, fallback: string) {
 function responsePayloadError(message: string, responseResult: unknown) {
     const error = new Error(message) as Error & { responseResult: unknown };
     error.responseResult = responseResult;
+    if (readImageRefusal(responseResult)) Object.assign(error, { imageContentRefused: true });
     return error;
 }
 
