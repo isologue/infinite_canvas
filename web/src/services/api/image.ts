@@ -587,11 +587,17 @@ async function pollImageTask(config: AiConfig, task: ImageGenerationTask, prefer
 const IMAGE_TASK_SUCCESS = new Set(["success", "successful", "succeeded", "completed", "done", "finished"]);
 const IMAGE_TASK_FAILED = new Set(["failed", "failure", "error", "cancelled", "canceled", "expired"]);
 
-function readImageRefusal(payload: unknown): string {
-    if (!isRecord(payload)) return "";
+function readImageRefusal(payload: unknown, depth = 0): string {
+    if (!isRecord(payload) || depth > 4) return "";
     const refusal = typeof payload.refusal === "string" ? payload.refusal.trim() : "";
-    if (!refusal && payload.outcome !== "content_refused") return "";
-    return (typeof payload.message === "string" ? payload.message.trim() : "") || refusal || "上游拒绝了本次图片生成请求";
+    const refused = Boolean(refusal) || payload.outcome === "content_refused";
+    const message = refused ? (typeof payload.message === "string" ? payload.message.trim() : "") || refusal : "";
+    if (message) return message;
+    for (const key of ["result", "data", "response", "finalResponse", "task"]) {
+        const nestedMessage = readImageRefusal(payload[key], depth + 1);
+        if (nestedMessage) return nestedMessage;
+    }
+    return refused ? "上游拒绝了本次图片生成请求" : "";
 }
 
 function readPayloadError(payload: unknown) {
