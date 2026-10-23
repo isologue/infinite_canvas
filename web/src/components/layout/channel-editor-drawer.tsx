@@ -87,7 +87,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
     const removeModel = (name: string) => setModels(draft.models.filter((model) => model.name !== name));
 
     const save = () => {
-        onSave({ ...draft, name: draft.name.trim() || "未命名渠道", baseUrl: canManageUrl ? draft.baseUrl : lockedBaseUrlOptions[0] || draft.baseUrl, models: normalizeChannelModels(draft.models) });
+        onSave({ ...draft, name: draft.name.trim() || "未命名渠道", baseUrl: canManageUrl || lockedBaseUrlOptions.includes(draft.baseUrl) ? draft.baseUrl : lockedBaseUrlOptions[0] || draft.baseUrl, models: normalizeChannelModels(draft.models) });
         onClose();
     };
 
