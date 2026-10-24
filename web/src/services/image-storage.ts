@@ -17,7 +17,6 @@ export type UploadedImage = {
 };
 
 const objectUrls = new Map<string, string>();
-const publicUrls = new Map<string, string>();
 
 export async function uploadImage(input: string | Blob, options?: ResourceUploadOptions & { compress?: boolean }): Promise<UploadedImage> {
     options = { ...options, source: options?.source || (input instanceof File ? "upload" : "generated") };
@@ -58,7 +57,6 @@ async function importImageFromServer(url: string, options?: ResourceUploadOption
         data?: { storageKey?: string; bytes?: number; mimeType?: string; width?: number; height?: number; url?: string };
     } | null;
     if (!response.ok || payload?.code !== 0 || !payload.data?.storageKey) throw new Error(payload?.msg || `图片服务端转存失败（HTTP ${response.status}）`);
-    if (payload.data.url) publicUrls.set(payload.data.storageKey, payload.data.url);
     return {
         storageKey: payload.data.storageKey,
         bytes: Number(payload.data.bytes || 0),
@@ -101,8 +99,6 @@ export async function imageToDataUrl(image: { url?: string; dataUrl?: string; st
 
 export async function ensurePublicImageUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
     if (image.storageKey) {
-        const cached = publicUrls.get(image.storageKey);
-        if (cached) return cached;
         const response = await fetch("/api/storage/images/public-url", {
             method: "POST",
             headers: { "content-type": "application/json" },
@@ -111,7 +107,6 @@ export async function ensurePublicImageUrl(image: { url?: string; dataUrl?: stri
         const payload = await response.json().catch(() => null) as { code?: number; msg?: string; data?: { url?: string } } | null;
         const url = payload?.data?.url || "";
         if (!response.ok || payload?.code !== 0 || !/^https?:\/\//i.test(url)) throw new Error(payload?.msg || "参考图无法转为公网 URL");
-        publicUrls.set(image.storageKey, url);
         return url;
     }
     const directUrl = image.url || image.dataUrl || "";
@@ -119,6 +114,18 @@ export async function ensurePublicImageUrl(image: { url?: string; dataUrl?: stri
     if (!directUrl) throw new Error("参考图读取失败，请重新上传");
     const uploaded = await uploadImage(directUrl, { source: "reference-upload" });
     return ensurePublicImageUrl(uploaded);
+}
+
+export function createPublicImageUrlResolver() {
+    const urls = new Map<string, Promise<string>>();
+    return (image: { url?: string; dataUrl?: string; storageKey?: string }) => {
+        const key = image.storageKey || image.dataUrl || image.url || "";
+        const cached = urls.get(key);
+        if (cached) return cached;
+        const request = ensurePublicImageUrl(image);
+        urls.set(key, request);
+        return request;
+    };
 }
 
 export async function createVideoThumbnail(videoUrl: string, title = "??") {
@@ -179,11 +186,8 @@ export function collectImageStorageKeys(value: unknown, keys = new Set<string>()
 }
 
 async function uploadFile(storageKey: string, blob: Blob, options: ResourceUploadOptions | undefined, uploadId: string | undefined) {
-    const payload = await uploadResourceFile(storageKey, blob, options, uploadId);
+    await uploadResourceFile(storageKey, blob, options, uploadId);
     // 公网地址只供上游引用；页面预览始终读取本地 Blob 或本站存储。
-    const publicUrl = payload?.data?.url;
-    if (publicUrl) publicUrls.set(storageKey, publicUrl);
-    else publicUrls.delete(storageKey);
 }
 
 async function downloadFile(storageKey: string) {

@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import { dataUrlToFile } from "@/lib/image-utils";
 import { ensurePublicMediaUrl, getMediaBlob, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
-import { ensurePublicImageUrl, imageToDataUrl } from "@/services/image-storage";
+import { createPublicImageUrlResolver, imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, generationDurationSeconds, prepareAiLogValue, reportAiCall } from "@/services/ai-call-log";
 import { buildAiProxyUrl, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
@@ -210,6 +210,7 @@ export async function storeGeneratedVideo(result: VideoGenerationResult, title =
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams, requestFormat = config.referenceImageRequestFormat): Promise<VideoGenerationTaskHandle> {
+    const resolvePublicImageUrl = createPublicImageUrlResolver();
     if (requestFormat === "json") {
         const seconds = normalizeVideoSeconds(config.videoSeconds);
         let images: string[];
@@ -217,7 +218,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
         let referenceAudios: string[];
         try {
             [images, referenceVideos, referenceAudios] = await Promise.all([
-                Promise.all(references.slice(0, 7).map(ensurePublicImageUrl)),
+                Promise.all(references.slice(0, 7).map(resolvePublicImageUrl)),
                 Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
                 Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
             ]);
@@ -284,6 +285,7 @@ function formDataRequestParams(formData: FormData) {
 }
 
 async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams, requestFormat = config.referenceImageRequestFormat): Promise<VideoGenerationTaskHandle> {
+    const resolvePublicImageUrl = createPublicImageUrlResolver();
     const quality = miniMaxModelResolution(model) || config.vquality;
     const highResolution = isMiniMaxHighResolution(quality);
     const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length, highResolution);
@@ -296,7 +298,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
         let referenceAudios: string[];
         try {
             [images, referenceVideos, referenceAudios] = await Promise.all([
-                Promise.all(references.slice(0, 9).map(ensurePublicImageUrl)),
+                Promise.all(references.slice(0, 9).map(resolvePublicImageUrl)),
                 Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
                 Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
             ]);
@@ -352,9 +354,10 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
 }
 
 async function createSdVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], videoReferences: ReferenceVideo[], audioReferences: ReferenceAudio[], options?: RequestOptions, captureRequestParams?: CaptureRequestParams): Promise<VideoGenerationTaskHandle> {
+    const resolvePublicImageUrl = createPublicImageUrlResolver();
     try {
         const [images, videos, audios] = await Promise.all([
-            Promise.all(references.slice(0, 9).map(ensurePublicImageUrl)),
+            Promise.all(references.slice(0, 9).map(resolvePublicImageUrl)),
             Promise.all(videoReferences.slice(0, 3).map(ensurePublicMediaUrl)),
             Promise.all(audioReferences.slice(0, 3).map(ensurePublicMediaUrl)),
         ]);

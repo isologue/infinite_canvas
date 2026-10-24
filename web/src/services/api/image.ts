@@ -5,7 +5,7 @@ import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { buildImageReferencePromptText } from "@/lib/image-reference-prompt";
 import { dataUrlToFile, normalizeImageSource } from "@/lib/image-utils";
-import { ensurePublicImageUrl, imageToDataUrl } from "@/services/image-storage";
+import { createPublicImageUrlResolver, imageToDataUrl } from "@/services/image-storage";
 import { buildAiErrorResponseResult, buildReferenceAssetLogParams, generationDurationSeconds, prepareAiLogValue, reportAiCall, type AiCallLogKind } from "@/services/ai-call-log";
 import type { ReferenceImage } from "@/types/image";
 
@@ -1238,10 +1238,11 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
 
     let refs: string[];
     let maskUrl: string | undefined;
+    const resolvePublicImageUrl = createPublicImageUrlResolver();
     try {
         [refs, maskUrl] = await Promise.all([
-            Promise.all(references.map(ensurePublicImageUrl)),
-            mask ? ensurePublicImageUrl(mask) : Promise.resolve(undefined),
+            Promise.all(references.map(resolvePublicImageUrl)),
+            mask ? resolvePublicImageUrl(mask) : Promise.resolve(undefined),
         ]);
     } catch (error) {
         if (options?.signal?.aborted) throw error;
