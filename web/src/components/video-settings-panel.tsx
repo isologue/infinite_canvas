@@ -56,7 +56,7 @@ export const videoSecondOptions = secondOptions.map((value) => String(value));
 type VideoSettingsPanelProps = {
     model?: string;
     config: AiConfig;
-    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoWorkflowId" | "videoGenerateAudio" | "videoWatermark", value: string) => void;
+    onConfigChange: (key: "vquality" | "size" | "videoSeconds" | "videoWorkflowId" | "videoGenerateAudio" | "videoWatermark" | "videoMode", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -83,6 +83,7 @@ export function VideoSettingsPanel({ model, config, onConfigChange, theme, showT
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
+                <div className="space-y-2.5"><div className="text-sm font-medium" style={{ color: theme.node.muted }}>参考模式</div><div className="grid grid-cols-2 gap-2.5">{[{ value: "reference", label: "全能参考" }, { value: "frames", label: "首尾帧" }].map((item) => <OptionPill key={item.value} selected={(config.videoMode || "reference") === item.value} theme={theme} onClick={() => onConfigChange("videoMode", item.value)}>{item.label}</OptionPill>)}</div></div>
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {availableResolutions.map((item) => (
@@ -359,3 +360,5 @@ function readSizeDimensions(size: string) {
     const match = size.match(/^(\d+)x(\d+)$/);
     return { width: Number(match?.[1]) || 1280, height: Number(match?.[2]) || 720 };
 }
+
+export function videoModeLabel(value: string) { return value === "reference" ? "全能参考" : "首尾帧"; }

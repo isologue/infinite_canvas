@@ -7,6 +7,11 @@ import { createCanvasProject, deleteCanvasProjects, fetchCanvasProjects, renameC
 
 export type { CanvasProject, CanvasProjectSummary } from "@/services/api/canvas-projects";
 
+export type CanvasDeletedProject = {
+    id: string;
+    deletedAt: string;
+};
+
 type CanvasStore = {
     hydrated: boolean;
     loading: boolean;

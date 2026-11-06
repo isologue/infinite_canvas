@@ -1,3 +1,4 @@
+import { previewUrlFor } from "@/services/image-storage";
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
@@ -37,6 +38,13 @@ type AssetStore = {
     replaceAssets: (assets: Asset[]) => void;
     cleanupImages: (extra?: unknown) => void;
 };
+
+// 卡片用缩略图渲染，自定义封面（远程地址或单独上传的封面）保持原样。
+export function assetCoverUrl(asset: Asset) {
+    const own = asset.kind === "image" ? asset.data.dataUrl : "";
+    const cover = asset.coverUrl || own;
+    return asset.kind === "image" && cover === own ? previewUrlFor(asset.data.storageKey) || cover : cover;
+}
 
 const ASSET_STORE_KEY = "infinite-canvas:asset_store";
 let assetPersistSuspended = false;

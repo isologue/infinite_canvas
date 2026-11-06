@@ -1,6 +1,9 @@
 "use client";
 
+import localforage from "localforage";
+
 import { nanoid } from "nanoid";
+import { createImageThumbnail } from "@/lib/image-thumbnail";
 
 import { resolveImageMimeType } from "@/lib/image-mime";
 import { compressImageIfLarge, readImageMeta } from "@/lib/image-utils";
@@ -9,14 +12,24 @@ import { markUploadProcessing, trackResourceUpload, uploadResourceFile, type Res
 
 export type UploadedImage = {
     url: string;
-    storageKey: string;
+    storageKey?: string;
     width: number;
     height: number;
     bytes: number;
     mimeType: string;
 };
 
+
 const objectUrls = new Map<string, string>();
+
+const previewStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_previews" });
+const previewUrls = new Map<string, string>();
+const previewListeners = new Set<() => void>();
+const previewPending = new Set<string>();
+let previewRevision = 0;
+let previewQueue: Promise<unknown> = Promise.resolve();
+const IMAGE_PREVIEW_VERSION = 1;
+type StoredImagePreview = { version: number; blob?: Blob };
 
 export async function uploadImage(input: string | Blob, options?: ResourceUploadOptions & { compress?: boolean }): Promise<UploadedImage> {
     options = { ...options, source: options?.source || (input instanceof File ? "upload" : "generated") };
@@ -37,6 +50,7 @@ export async function uploadImage(input: string | Blob, options?: ResourceUpload
                 metadata: { ...(options?.metadata || {}), width: meta.width, height: meta.height, mimeType: blob.type || meta.mimeType, bytes: blob.size },
             }, uploadId);
             objectUrls.set(storageKey, localUrl);
+            void storeImagePreview(storageKey, blob);
             return { url: localUrl, storageKey, width: meta.width, height: meta.height, bytes: blob.size, mimeType: blob.type || meta.mimeType };
         } catch (error) {
             URL.revokeObjectURL(localUrl);
@@ -68,6 +82,7 @@ async function importImageFromServer(url: string, options?: ResourceUploadOption
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
+    void ensureImagePreview(storageKey);
     if (!storageKey) return fallback;
     const cached = objectUrls.get(storageKey);
     if (cached) return cached;
@@ -81,9 +96,11 @@ export async function getImageBlob(storageKey: string) {
 export async function setImageBlob(storageKey: string, blob: Blob, options?: ResourceUploadOptions) {
     return trackResourceUpload(blob, "image", options, async (uploadId) => {
         const normalized = await normalizeImageBlobMimeType(blob);
+        await deleteImagePreview(storageKey);
         await uploadFile(storageKey, normalized, options, uploadId);
         const url = URL.createObjectURL(normalized);
         objectUrls.set(storageKey, url);
+        void storeImagePreview(storageKey, normalized);
         return url;
     });
 }
@@ -171,7 +188,7 @@ export async function createVideoThumbnail(videoUrl: string, title = "??") {
 }
 
 export async function deleteStoredImages(keys: Iterable<string>) {
-    void keys;
+    await Promise.all(Array.from(new Set(keys)).map(deleteImagePreview));
 }
 
 export async function cleanupUnusedImages(usedData: unknown) {
@@ -221,4 +238,67 @@ function blobToDataUrl(blob: Blob) {
         reader.onerror = () => reject(new Error("读取图片失败"));
         reader.readAsDataURL(blob);
     });
+}
+
+// 缩略图按图片的 storageKey 另存一份 WebP，只放在本地 IndexedDB 里，不写进节点数据，也不参与导出和 WebDAV 同步。
+export function previewUrlFor(storageKey?: string) {
+    return storageKey ? previewUrls.get(storageKey) : undefined;
+}
+
+// 缩略图在后台补，生成完成后再让用到它的界面重渲染一次。
+export function subscribeImagePreviews(listener: () => void) {
+    previewListeners.add(listener);
+    return () => {
+        previewListeners.delete(listener);
+    };
+}
+
+export function getImagePreviewRevision() {
+    return previewRevision;
+}
+
+export async function ensureImagePreview(storageKey?: string) {
+    if (!storageKey) return undefined;
+    const cached = previewUrls.get(storageKey);
+    if (cached) return cached;
+    const stored = await previewStore.getItem<StoredImagePreview>(storageKey).catch(() => null);
+    if (stored?.version === IMAGE_PREVIEW_VERSION) return stored.blob ? cacheImagePreview(storageKey, stored.blob) : undefined;
+    queueImagePreview(storageKey);
+    return undefined;
+}
+
+// 缩略图生成排成一队，避免一次打开大量图片时同时解码。
+function queueImagePreview(storageKey: string) {
+    if (previewPending.has(storageKey)) return;
+    previewPending.add(storageKey);
+    previewQueue = previewQueue
+        .then(async () => {
+            const original = await getImageBlob(storageKey);
+            if (original) await storeImagePreview(storageKey, original);
+        })
+        .catch(() => undefined)
+        .finally(() => previewPending.delete(storageKey));
+}
+
+async function storeImagePreview(storageKey: string, original: Blob) {
+    const preview = await createImageThumbnail(original).catch(() => undefined);
+    await previewStore.setItem<StoredImagePreview>(storageKey, { version: IMAGE_PREVIEW_VERSION, blob: preview }).catch(() => undefined);
+    return preview ? cacheImagePreview(storageKey, preview) : undefined;
+}
+
+function cacheImagePreview(storageKey: string, preview: Blob) {
+    const cached = previewUrls.get(storageKey);
+    if (cached) return cached;
+    const url = URL.createObjectURL(preview);
+    previewUrls.set(storageKey, url);
+    previewRevision += 1;
+    previewListeners.forEach((listener) => listener());
+    return url;
+}
+
+async function deleteImagePreview(storageKey: string) {
+    const url = previewUrls.get(storageKey);
+    if (url) URL.revokeObjectURL(url);
+    previewUrls.delete(storageKey);
+    await previewStore.removeItem(storageKey).catch(() => undefined);
 }

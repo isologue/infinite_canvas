@@ -5,10 +5,13 @@ import { Cloud, Download, Pencil, Plus, RefreshCw, Trash2, Upload, Wifi } from "
 import { useEffect, useRef, useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
+import { videoResolutionOptions } from "@/components/video-settings-panel";
 import { ChannelEditorDrawer } from "@/components/layout/channel-editor-drawer";
+import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
 import { audioFormatOptions, audioVoiceOptions, normalizeAudioSpeedValue } from "@/lib/audio-generation";
+import { computeMediaSize, inferMediaRatio, inferMediaScale, mediaScaleOptions, parseVideoResolution } from "@/lib/media-size";
 import { createModelChannel, modelOptionsFromChannels, normalizeModelOptionValue, selectableModelsByCapability, useConfigStore, type AiConfig, type ApiCallFormat, type ConfigTabKey, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { useUserStore } from "@/stores/use-user-store";
 
@@ -211,6 +214,11 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                         ),
                     },
                     {
+                        key: "local-proxy",
+                        label: "本地代理",
+                        children: <ConfigLocalProxy />,
+                    },
+                    {
                         key: "preferences",
                         label: "偏好设置",
                         children: (
@@ -225,6 +233,10 @@ export function AppConfigPanel({ showDoneButton = false, initialTab = "channels"
                                 </div>
                                 <div className="mb-2 text-sm font-semibold">生成偏好</div>
                                 <div className="grid gap-4 md:grid-cols-4">
+                                    <Form.Item label="默认生图分辨率" className="mb-4"><Select value={config.resolution} options={[{ value: "auto", label: "自动" }, ...["1K", "2K", "4K"].map((value) => ({ value, label: value }))]} onChange={(value) => updateConfig("resolution", value)} /></Form.Item>
+                                    <Form.Item label="默认视频分辨率" className="mb-4"><Select value={config.vquality} options={videoResolutionOptions} onChange={(value) => updateConfig("vquality", value)} /></Form.Item>
+                                    <Form.Item label="已有图片节点再次生成" className="mb-4"><Select value={config.nodeRegenerateBehavior} options={[{ value: "overwrite", label: "原地重新生成" }, { value: "new-node", label: "新建节点" }]} onChange={(value) => updateConfig("nodeRegenerateBehavior", value)} /></Form.Item>
+                                    <Form.Item label="选中节点自动居中" className="mb-4"><Checkbox checked={config.autoFocusOnSelect} onChange={(event) => updateConfig("autoFocusOnSelect", event.target.checked)}>启用</Checkbox></Form.Item>
                                     <Form.Item label="画布默认生图张数" extra="新建画布生图和配置节点默认使用，单个节点仍可单独覆盖。" className="mb-4">
                                         <Input
                                             type="number"

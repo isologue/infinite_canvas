@@ -4,6 +4,8 @@ import { nanoid } from "nanoid";
 import { storageFileUrl } from "@/services/storage-url";
 import { markUploadProcessing, trackResourceUpload, uploadResourceFile, type ResourceUploadOptions } from "@/services/api/resource-upload";
 
+import { withLocalProxy } from "@/stores/use-config-store";
+
 export type UploadedFile = { url: string; storageKey: string; bytes: number; mimeType: string; width?: number; height?: number; durationMs?: number };
 
 const objectUrls = new Map<string, string>();

@@ -1,3 +1,6 @@
+import { useSyncExternalStore } from "react";
+import { pickImageSource } from "@/lib/image-thumbnail";
+import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { ChevronRight, Group, Image as ImageIcon, Music2, Puzzle, RefreshCw, Star, Video } from "lucide-react";
@@ -68,6 +71,7 @@ type NodeContentRendererProps = {
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
+    scale: number;
     batchOpening: boolean;
     batchRecovering: boolean;
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
@@ -413,6 +417,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         isBatchRoot={isBatchRoot}
                         batchCount={batchCount}
                         batchExpanded={batchExpanded}
+                            scale={scale}
                         batchOpening={batchOpening}
                         batchRecovering={batchRecovering}
                         renderNodeContent={renderNodeContent}
@@ -644,6 +649,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             isBatchRoot={props.isBatchRoot}
             batchCount={props.batchCount}
             batchExpanded={props.batchExpanded}
+            scale={props.scale}
             batchOpening={props.batchOpening}
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
@@ -681,7 +687,7 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
                 <span className="text-sm">空视频节点</span>
             </div>
         );
-    return <video src={node.metadata.content} controls preload="metadata" onError={() => setMissing(true)} className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
+    return <video data-canvas-video={node.id} src={node.metadata.content} controls preload="metadata" onError={() => setMissing(true)} className="h-full w-full rounded-[18px] bg-black object-contain" data-canvas-no-zoom />;
 }
 
 function AudioNodeContent({ node, theme }: NodeContentRendererProps) {
@@ -711,6 +717,7 @@ function ImageContent({
     isBatchRoot,
     batchCount,
     batchExpanded,
+    scale,
     batchOpening,
     batchRecovering,
     onToggleBatch,
@@ -720,6 +727,7 @@ function ImageContent({
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
+    scale: number;
     batchOpening: boolean;
     batchRecovering: boolean;
     onToggleBatch?: () => void;
@@ -727,7 +735,9 @@ function ImageContent({
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
-    const imageUrl = node.metadata?.storageKey && !node.metadata.content?.startsWith("blob:") ? storageImagePreviewUrl(node.metadata.storageKey) : node.metadata!.content!;
+    useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision, getImagePreviewRevision);
+    const originalUrl = node.metadata!.content!;
+    const imageUrl = pickImageSource({ previewUrl: previewUrlFor(node.metadata?.storageKey), originalUrl, naturalWidth: node.metadata?.naturalWidth, naturalHeight: node.metadata?.naturalHeight, renderedWidth: node.width, renderedHeight: node.height, scale });
     const [missing, setMissing] = useState(false);
     useEffect(() => setMissing(false), [imageUrl]);
 

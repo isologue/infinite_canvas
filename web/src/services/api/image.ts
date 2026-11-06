@@ -1,3 +1,5 @@
+import { assertModelAvailable } from "@/stores/use-config-store";
+import { imageSizePresets, inferMediaScale } from "@/lib/media-size";
 import axios from "axios";
 
 import { buildAiProxyUrl, buildApiUrl, inferModelApiFormat, modelOptionName, resolveModelRequestConfig, resolveModelScript, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
@@ -99,18 +101,7 @@ type GeminiStreamState = { buffer: string; text: string; toolCalls: ResponseTool
 type RequestOptions = { signal?: AbortSignal };
 type OpenAiImagePollPath = "/images/edits" | "/images/generations";
 
-const QUALITY_BASE: Record<string, number> = {
-    low: 1024,
-    medium: 2048,
-    high: 2880,
-    standard: 1024,
-    hd: 2048,
-};
-const QUALITY_ALIASES: Record<string, string> = {
-    "1k": "low",
-    "2k": "medium",
-    "4k": "high",
-};
+const IMAGE_QUALITY_VALUES = ["low", "medium", "high", "xhigh", "max", "standard", "hd"];
 const DEFAULT_IMAGE_SHORT_SIDE = 1024;
 const IMAGE_SIZE_STEP = 16;
 const IMAGE_MIN_PIXELS = 655360;
@@ -118,6 +109,7 @@ const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
 const IMAGE_OUTPUT_FORMAT = "png";
+const IMAGE_REQUEST_TIMEOUT_MS = 10 * 60_000;
 const IMAGE_TASK_POLL_INTERVAL_MS = 2500;
 const IMAGE_TASK_MAX_ATTEMPTS = 240;
 const IMAGE_TASK_MAX_CONSECUTIVE_ERRORS = 5;
@@ -130,12 +122,7 @@ const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1"
 
 function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
-    const normalized = QUALITY_ALIASES[value] || value;
-    return QUALITY_BASE[normalized] ? normalized : undefined;
-}
-
-function resolutionQuality(resolution?: string) {
-    return resolution ? normalizeQuality(resolution) : undefined;
+    return IMAGE_QUALITY_VALUES.includes(value) ? value : undefined;
 }
 
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
@@ -147,24 +134,15 @@ function normalizeImageResponseFormat(value: AiConfig["imageResponseFormat"]) {
     return value === "b64_json" ? "b64_json" : "url";
 }
 
-/** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". */
-function resolveSize(quality: string | undefined, ratio: string): string {
+/** Resolution and aspect ratio determine dimensions independently of quality. */
+function resolveSize(resolution: string | undefined, ratio: string): string {
     const parsedRatio = parseImageRatio(ratio);
-    const basePixels = quality ? QUALITY_BASE[quality] : undefined;
+    const preset = imageSizePresets[resolution?.toLowerCase() || ""]?.[ratio];
+    if (preset) return preset;
     const isLandscape = parsedRatio.width >= parsedRatio.height;
     const longRatio = isLandscape ? parsedRatio.width / parsedRatio.height : parsedRatio.height / parsedRatio.width;
-    let longSide: number;
-    let shortSide: number;
-
-    if (basePixels) {
-        const targetPixels = basePixels * basePixels;
-        const longSideRaw = Math.sqrt(targetPixels * longRatio);
-        longSide = Math.floor(Math.min(longSideRaw, IMAGE_MAX_EDGE) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-        shortSide = Math.round(longSide / longRatio / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    } else {
-        shortSide = DEFAULT_IMAGE_SHORT_SIDE;
-        longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
-    }
+    const shortSide = DEFAULT_IMAGE_SHORT_SIDE;
+    const longSide = Math.round((shortSide * longRatio) / IMAGE_SIZE_STEP) * IMAGE_SIZE_STEP;
 
     const width = isLandscape ? longSide : shortSide;
     const height = isLandscape ? shortSide : longSide;
@@ -202,16 +180,16 @@ function validateImageSize(width: number, height: number) {
     if (pixels < IMAGE_MIN_PIXELS || pixels > IMAGE_MAX_PIXELS) throw new Error("图像总像素需在 655360 到 8294400 之间，请调整尺寸");
 }
 
-function resolveRequestSize(quality: string | undefined, size: string, resolution?: string) {
+function resolveRequestSize(size: string, resolution?: string) {
     const value = size.trim();
-    const effectiveQuality = resolutionQuality(resolution) || quality;
-    if (!value || value.toLowerCase() === "auto") return effectiveQuality ? resolveSize(effectiveQuality, "1:1") : undefined;
+    const scale = resolution?.toLowerCase();
+    if (!value || value.toLowerCase() === "auto") return scale && scale !== "auto" ? resolveSize(scale, "1:1") : undefined;
     const dimensions = parseImageDimensions(value);
     if (dimensions) {
         validateImageSize(dimensions.width, dimensions.height);
         return `${dimensions.width}x${dimensions.height}`;
     }
-    if (value.includes(":")) return resolveSize(effectiveQuality, value);
+    if (value.includes(":")) return resolveSize(scale, value);
     throw new Error("图像尺寸格式不支持，请使用 auto、9:16 或 1024x1024");
 }
 
@@ -220,7 +198,7 @@ function resolveGeminiImageConfig(config: AiConfig) {
     const dimensions = parseImageDimensions(value);
     const ratio = dimensions ? `${dimensions.width}:${dimensions.height}` : value;
     const aspectRatio = value && value.toLowerCase() !== "auto" ? closestGeminiAspectRatio(ratio) : undefined;
-    const imageSize = resolveGeminiImageSize(config.resolution);
+    const imageSize = resolveGeminiImageSize(config.resolution === "auto" ? "auto" : config.resolution || inferMediaScale(config.size));
     const image = { ...(aspectRatio ? { aspectRatio } : {}), ...(imageSize ? { imageSize } : {}) };
     return Object.keys(image).length ? { imageConfig: image } : {};
 }
@@ -535,6 +513,7 @@ function imageTaskProgress(payload: unknown): number | undefined {
 }
 
 export async function pollImageGenerationTask(config: AiConfig, task: ImageGenerationTask, options?: RequestOptions): Promise<ImageGenerationTaskState> {
+    assertModelAvailable(config, config.model || task.model);
     const taskConfig = { ...resolveModelRequestConfig(config, task.model), apiFormat: task.provider };
     try {
         const response = await requestImageTaskStatus(taskConfig, task, options);
@@ -1156,7 +1135,7 @@ async function startGeminiImagesOnce(config: AiConfig, prompt: string, reference
     return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "gemini:generateContent"),
         config,
-        create: async (asyncMode) => (await axios.post<unknown>(geminiApiUrl(config, "generateContent"), asyncMode ? { ...body, async: true } : body, { headers: geminiHeaders(config), signal: options?.signal })).data,
+        create: async (asyncMode) => (await axios.post<unknown>(geminiApiUrl(config, "generateContent"), asyncMode ? { ...body, async: true } : body, { headers: geminiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data,
         requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseGeminiImages(payload) || tryParseOpenAiImages(payload),
     });
@@ -1174,7 +1153,7 @@ function parseGeminiImagePayload(payload: GeminiPayload) {
 
 async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number, options?: RequestOptions) {
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+    const requestSize = resolveRequestSize(config.size, config.resolution);
     const background = normalizeBackground(config.background);
     const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const body = {
@@ -1190,7 +1169,7 @@ async function startOpenAiGeneration(config: AiConfig, prompt: string, n: number
     return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "/images/generations"),
         config,
-        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/generations"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data,
         requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
         pollPath: "/images/generations",
@@ -1203,7 +1182,7 @@ async function requestOpenAiGeneration(config: AiConfig, prompt: string, n: numb
 
 async function startOpenAiEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask: ReferenceImage | undefined, n: number, options?: RequestOptions, requestFormat = config.referenceImageRequestFormat) {
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+    const requestSize = resolveRequestSize(config.size, config.resolution);
     const background = normalizeBackground(config.background);
     const responseFormat = normalizeImageResponseFormat(config.imageResponseFormat);
     const requestPrompt = withSystemPrompt(config, prompt);
@@ -1229,7 +1208,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
         return startImagesWithAsyncFallback({
             key: imageTaskKey(config, "/images/edits:multipart"),
             config,
-            create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), createBody(asyncMode), { headers: aiHeaders(config), signal: options?.signal })).data,
+            create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), createBody(asyncMode), { headers: aiHeaders(config), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data,
             requestParams: (asyncMode) => formDataRequestParams(createBody(asyncMode)),
             parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
             pollPath: "/images/edits",
@@ -1263,7 +1242,7 @@ async function startOpenAiEdit(config: AiConfig, prompt: string, references: Ref
     return startImagesWithAsyncFallback({
         key: imageTaskKey(config, "/images/edits"),
         config,
-        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data,
+        create: async (asyncMode) => (await axios.post<unknown>(aiApiUrl(config, "/images/edits"), asyncMode ? { ...body, async: true } : body, { headers: aiHeaders(config, "application/json"), signal: options?.signal, timeout: IMAGE_REQUEST_TIMEOUT_MS })).data,
         requestParams: (asyncMode) => (asyncMode ? { ...body, async: true } : body),
         parseImmediate: (payload) => tryParseOpenAiImages(payload) || tryParseGeminiImages(payload),
         pollPath: "/images/edits",
@@ -1296,11 +1275,12 @@ async function finishImageGenerationStart(config: AiConfig, start: ImageGenerati
 
 export async function createImageGenerationTask(config: AiConfig, prompt: string, references: ReferenceImage[] = [], mask?: ReferenceImage, options?: RequestOptions): Promise<ImageGenerationStart> {
     const model = config.model || config.imageModel;
+    assertModelAvailable(config, model);
     const requestConfig = { ...resolveModelRequestConfig(config, model), count: "1" };
     const script = resolveModelScript(config, model);
     if (script) {
         const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+        const requestSize = resolveRequestSize(config.size, config.resolution);
         const background = normalizeBackground(config.background);
         const requestPrompt = references.length ? buildImageReferencePromptText(prompt, references) : prompt;
         const images = references.length ? await Promise.all(references.map((image) => imageToDataUrl(image))) : [];
@@ -1342,13 +1322,14 @@ export async function createImageGenerationTask(config: AiConfig, prompt: string
 }
 
 export async function requestGeneration(config: AiConfig, prompt: string, options?: RequestOptions) {
+    assertModelAvailable(config, config.model || config.imageModel);
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(500, Math.floor(Math.abs(Number(config.count)) || 1)));
     return withGenerationLog({ ...config, model: config.model || config.imageModel, count: String(n) }, "image generation", async () => {
         const script = resolveModelScript(config, config.model || config.imageModel);
         if (script) {
             const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+            const requestSize = resolveRequestSize(config.size, config.resolution);
             const background = normalizeBackground(config.background);
             try {
                 const result = await runModelPlugin({
@@ -1377,6 +1358,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
 }
 
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], mask?: ReferenceImage, options?: RequestOptions) {
+    assertModelAvailable(config, config.model || config.imageModel);
     const requestConfig = resolveModelRequestConfig(config, config.model || config.imageModel);
     const n = Math.max(1, Math.min(500, Math.floor(Math.abs(Number(config.count)) || 1)));
     const requestPrompt = buildImageReferencePromptText(prompt, references);
@@ -1384,7 +1366,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const script = resolveModelScript(config, config.model || config.imageModel);
         if (script) {
             const quality = normalizeQuality(config.quality);
-            const requestSize = resolveRequestSize(quality, config.size, config.resolution);
+            const requestSize = resolveRequestSize(config.size, config.resolution);
             const background = normalizeBackground(config.background);
             const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
             try {

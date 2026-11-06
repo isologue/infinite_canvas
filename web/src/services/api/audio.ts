@@ -1,3 +1,4 @@
+import i18n from "@/i18n";
 import axios from "axios";
 
 import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
@@ -173,6 +174,7 @@ function readApiErrorMessage(value: unknown): string {
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
     if (axios.isAxiosError(error)) {
+        if (!error.response && error.code === "ERR_NETWORK") return apiText("requestFailed");
         const responseData = error.response?.data;
         const apiMsg = readApiErrorMessage(responseData);
         if (apiMsg) return apiMsg;
@@ -192,3 +194,5 @@ function statusMessage(status: number | undefined, fallback: string) {
     if (status === 503) return "服务繁忙（503），请稍后重试";
     return status ? `请求失败（HTTP ${status}），请检查 Base URL 和 API Key 是否正确` : fallback;
 }
+
+const apiText = (key: string, options?: Record<string, unknown>) => i18n.t(`apiErrors.${key}`, options);

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import i18n from "@/i18n";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { readAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 import { App, Button, Tooltip } from "antd";
 import dayjs from "dayjs";
 import { Bot, History, MessageSquare, PanelRightClose, PlugZap, Plus, Terminal } from "lucide-react";
+
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageMetadata } from "@/lib/canvas/canvas-node-factory";
@@ -64,6 +67,8 @@ import { AgentPanelTabs } from "./agent-panel-tabs";
 const MAX_ATTACHMENTS = 6;
 const MAX_ATTACHMENT_PAYLOAD_BYTES = 28 * 1024 * 1024;
 const DEFAULT_AGENT_URL = "http://127.0.0.1:17371";
+const rt = (key: string, options?: Record<string, unknown>) => i18n.t(`agent.runtime.${key}`, options);
+
 const AGENT_PROTOCOL_VERSION = 3;
 const HISTORY_RETRY_DELAYS_MS = [0, 150, 350, 700, 1200];
 const AGENT_REASONING_EFFORTS = new Set<AgentReasoningEffort>(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -90,6 +95,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { message, modal } = App.useApp();
     const searchParams = useSearchParams();
+    const hash = typeof window === "undefined" ? "" : window.location.hash;
     const router = useRouter();
     const navigate = useCallback((path: string) => router.push(path), [router]);
     // 逐字段 selector + useShallow：只有这些字段变化时才重渲染。
@@ -332,6 +338,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 sending: false,
                 connectError: "",
                 silentConnect: false,
+                fragmentBootstrap: false,
                 activeThreadId: nextThreadId,
                 activeTurnId,
                 messages,
@@ -519,6 +526,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 sending: false,
                 connectError: silent ? "" : text,
                 silentConnect: false,
+                fragmentBootstrap: false,
                 pendingTool: null,
                 pendingApprovals: [],
             });
@@ -855,6 +863,27 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
         setAgentState({ url: nextEndpoint, token: nextToken, enabled: true, connected: false, silentConnect: silent, activity: "连接中", connectError: "", activeTab: "setup" });
     };
 
+    useLayoutEffect(() => {
+        const bootstrap = readAgentUrlBootstrap(hash);
+        if (!bootstrap) return;
+        router.replace(`${window.location.pathname}${window.location.search}${bootstrap.remainingHash}`);
+        if (!bootstrap.url || !bootstrap.token) {
+            setAgentState({ fragmentBootstrap: false, activeTab: "setup", connectError: rt(!bootstrap.url ? "addressRequired" : "agentNotFound") });
+            useAgentStore.getState().openPanel();
+            return;
+        }
+        try {
+            const parsed = new URL(bootstrap.url);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("invalid protocol");
+        } catch {
+            setAgentState({ fragmentBootstrap: false, activeTab: "setup", connectError: rt("invalidAddress") });
+            useAgentStore.getState().openPanel();
+            return;
+        }
+        errorLoggedRef.current = false;
+        setAgentState({ url: bootstrap.url.replace(/\/$/, ""), token: bootstrap.token, enabled: true, connected: false, silentConnect: true, fragmentBootstrap: true, confirmTools: false, activity: rt("connecting"), connectError: "", activeTab: "setup" });
+    }, [hash, navigate, setAgentState]);
+
     useEffect(() => {
         if (urlAgentAutoConnect && confirmTools) setAgentState({ confirmTools: false });
     }, [confirmTools, setAgentState, urlAgentAutoConnect]);
@@ -881,6 +910,7 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
             loadingThreads: false,
             waiting: false,
             sending: false,
+            fragmentBootstrap: false,
             pendingTool: null,
             pendingApprovals: [],
             bootstrapStatus: null,

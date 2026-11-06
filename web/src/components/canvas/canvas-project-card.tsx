@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCanvasStore, type CanvasProjectSummary } from "@/stores/canvas/use-canvas-store";
 import { useCanvasUiStore } from "@/stores/canvas/use-canvas-ui-store";
 import { exportCanvasProjects } from "@/lib/canvas/canvas-export";
+import { hasAgentUrlBootstrap } from "@/lib/agent/agent-url-bootstrap";
 
 export function CanvasProjectCard({ project }: { project: CanvasProjectSummary }) {
     const router = useRouter();

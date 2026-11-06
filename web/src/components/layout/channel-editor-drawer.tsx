@@ -37,6 +37,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
     const [selectOpen, setSelectOpen] = useState(false);
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
 
+
     useEffect(() => {
         if (open && channel) setDraft(channel);
     }, [open, channel]);

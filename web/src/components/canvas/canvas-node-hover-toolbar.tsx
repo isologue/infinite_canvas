@@ -17,10 +17,10 @@ type CanvasNodeHoverToolbarProps = {
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
     onInfo: (node: CanvasNodeData) => void;
-    onEditText: (node: CanvasNodeData) => void;
     onDecreaseFont: (node: CanvasNodeData) => void;
     onIncreaseFont: (node: CanvasNodeData) => void;
     onToggleDialog: (node: CanvasNodeData) => void;
+    onEditText: (node: CanvasNodeData) => void;
     onGenerateImage: (node: CanvasNodeData) => void;
     onUpload: (node: CanvasNodeData) => void;
     onDownload: (node: CanvasNodeData) => void;
@@ -38,6 +38,7 @@ type CanvasNodeHoverToolbarProps = {
     onRunGroup: (node: CanvasNodeData) => void;
     onDissolveGroup: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
+    onUngroup?: (node: CanvasNodeData) => void;
     extraTools?: CanvasNodeToolbarItem[];
 };
 
@@ -57,10 +58,10 @@ export function CanvasNodeHoverToolbar({
     onKeep,
     onLeave,
     onInfo,
-    onEditText,
     onDecreaseFont,
     onIncreaseFont,
     onToggleDialog,
+    onEditText,
     onGenerateImage,
     onUpload,
     onDownload,
@@ -78,12 +79,13 @@ export function CanvasNodeHoverToolbar({
     onRunGroup,
     onDissolveGroup,
     onDelete,
+    onUngroup,
     extraTools = [],
 }: CanvasNodeHoverToolbarProps) {
     const [quickImageToolIds, setQuickImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
-    const [showImageToolLabels, setShowImageToolLabels] = useState(true);
+    const [showImageToolLabels, setShowImageToolLabels] = useState(false);
     const [draftImageToolIds, setDraftImageToolIds] = useState<ImageQuickToolId[]>(defaultImageQuickToolIds);
-    const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(true);
+    const [draftShowImageToolLabels, setDraftShowImageToolLabels] = useState(false);
     const [imageToolSettingsOpen, setImageToolSettingsOpen] = useState(false);
     const { message } = App.useApp();
     const copyText = useCopyText();
@@ -187,6 +189,7 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
+                data-node-toolbar={node.id}
                 data-canvas-node-toolbar
                 className="absolute z-[70] flex h-12 items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"
                 style={{ left, top, transform: `translate(-50%, -100%) scale(${viewport.k})`, transformOrigin: "bottom center" }}
@@ -198,7 +201,7 @@ export function CanvasNodeHoverToolbar({
                 onPointerDown={(event) => event.stopPropagation()}
             >
                 {toolbarTools.map((tool) => (
-                    <ToolbarAction key={tool.id} {...tool} showLabel={showImageToolLabels} />
+                    <ToolbarAction key={tool.id} {...tool} showLabel={isImage ? showImageToolLabels : true} />
                 ))}
                 {hasImage ? <ToolbarAction id="more" title="配置快捷工具" label="更多" icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
             </div>

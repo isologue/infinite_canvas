@@ -52,6 +52,7 @@ export type AiConfig = {
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
+    videoMode: string;
     systemPrompt: string;
     reasoningEffort: ReasoningEffort;
     models: string[];
@@ -61,6 +62,10 @@ export type AiConfig = {
     background: string;
     count: string;
     canvasImageCount: string;
+    proxyEnabled: boolean;
+    proxyUrl: string;
+    nodeRegenerateBehavior: "new-node" | "overwrite";
+    autoFocusOnSelect: boolean;
 };
 
 export type WebdavSyncConfig = {
@@ -75,7 +80,12 @@ export type WebdavSyncConfig = {
     passwordConfigured?: boolean;
     lastSyncedAt: string;
 };
-export type ConfigTabKey = "channels" | "preferences" | "prompt-sources" | "webdav" | "local-storage";
+export type ConfigTabKey = "channels" | "local-proxy" | "preferences" | "prompt-sources" | "webdav" | "local-storage";
+
+export type ChannelCredentialsImportResult = {
+    status: "created" | "updated" | "missing-base-url" | "invalid-base-url";
+    channelName?: string;
+};
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
@@ -83,6 +93,8 @@ const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 const MINIMAX_BASE_URL = "https://api.minimaxi.com";
 const SD_BASE_URL = "https://api.meaicc.com";
+export const LOCAL_PROXY_PACKAGE = "@basketikun/canvas-proxy";
+export const DEFAULT_LOCAL_PROXY_URL = "http://127.0.0.1:23210";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -123,6 +135,7 @@ export const defaultConfig: AiConfig = {
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
+    videoMode: "reference",
     systemPrompt: "",
     reasoningEffort: "auto",
     models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
@@ -132,6 +145,10 @@ export const defaultConfig: AiConfig = {
     background: "",
     count: "1",
     canvasImageCount: "3",
+    proxyEnabled: false,
+    proxyUrl: DEFAULT_LOCAL_PROXY_URL,
+    nodeRegenerateBehavior: "overwrite",
+    autoFocusOnSelect: false,
 };
 
 export const defaultWebdavSyncConfig: WebdavSyncConfig = {
@@ -158,6 +175,7 @@ type ConfigStore = {
     lockedBaseUrl: string;
     lockedBaseUrls: string[];
     updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
+    importChannelCredentials: (input: { baseUrl?: string | null; apiKey?: string | null }) => ChannelCredentialsImportResult;
     updateWebdavConfig: <K extends keyof WebdavSyncConfig>(key: K, value: WebdavSyncConfig[K]) => void;
     replaceSharedConfig: (payload: { config: AiConfig; webdav: WebdavSyncConfig; canManage: boolean; canManageUrl?: boolean; lockedBaseUrl?: string; lockedBaseUrls?: string[] }) => void;
     isAiConfigReady: (config: AiConfig, model: string) => boolean;
@@ -199,8 +217,13 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
     const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
     const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
-    if (currentModel && modelMatchesCapability(config, currentModel, capability)) return currentModel;
-    if (defaultModel && modelMatchesCapability(config, defaultModel, capability)) return defaultModel;
+    for (const model of [currentModel, defaultModel]) {
+        if (!model) continue;
+        const configuredCapability = modelCapabilityOf(config, model);
+        // Keep unavailable selections visible so the readiness check blocks the
+        // request. Only a known capability switch may choose another model.
+        if (!configuredCapability || configuredCapability === capability) return model;
+    }
     return fallbackModel;
 }
 
@@ -215,8 +238,8 @@ export function resolveModelScript(config: AiConfig, value: string) {
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
-    const channel = resolveModelChannel(config, model);
-    return Boolean(model.trim() && channel.baseUrl.trim() && channel.apiKey.trim());
+    const match = findChannelModel(config, model);
+    return Boolean(match && match.channel.baseUrl.trim() && match.channel.apiKey.trim());
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -239,6 +262,12 @@ export const useConfigStore = create<ConfigStore>()(
                         [key]: value,
                     },
                 })),
+            importChannelCredentials: (input) => {
+                const currentConfig = get().config;
+                const result = upsertChannelCredentials(currentConfig, input);
+                if (result.config !== currentConfig) set({ config: result.config });
+                return { status: result.status, channelName: result.channelName };
+            },
             updateWebdavConfig: (key, value) =>
                 set((state) => ({
                     webdav: {
@@ -359,6 +388,70 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
     };
 }
 
+export function upsertChannelCredentials(
+    config: AiConfig,
+    input: { baseUrl?: string | null; apiKey?: string | null },
+): ChannelCredentialsImportResult & { config: AiConfig } {
+    const rawBaseUrl = input.baseUrl?.trim() || "";
+    if (!rawBaseUrl) return { status: "missing-base-url", config };
+    if (!isHttpBaseUrl(rawBaseUrl)) return { status: "invalid-base-url", config };
+
+    const baseUrl = normalizeImportedBaseUrl(rawBaseUrl);
+    const apiKey = input.apiKey?.trim() || "";
+    const matchingIndex = config.channels.findIndex((channel) => normalizedBaseUrlKey(channel.baseUrl) === normalizedBaseUrlKey(baseUrl));
+
+    if (matchingIndex >= 0) {
+        const existing = config.channels[matchingIndex];
+        if (existing.baseUrl === baseUrl && (!apiKey || existing.apiKey === apiKey)) {
+            return { status: "updated", channelName: existing.name, config };
+        }
+        const updated = { ...existing, baseUrl, ...(apiKey ? { apiKey } : {}) };
+        const channels = config.channels.map((channel, index) => (index === matchingIndex ? updated : channel));
+        return { status: "updated", channelName: existing.name, config: { ...config, channels } };
+    }
+
+    const channel = createModelChannel({
+        name: importedChannelName(baseUrl),
+        baseUrl,
+        apiKey,
+        apiFormat: "openai",
+        models: [],
+    });
+    return { status: "created", channelName: channel.name, config: { ...config, channels: [...config.channels, channel] } };
+}
+
+function isHttpBaseUrl(baseUrl: string) {
+    try {
+        const url = new URL(baseUrl);
+        return (url.protocol === "http:" || url.protocol === "https:") && Boolean(url.hostname);
+    } catch {
+        return false;
+    }
+}
+
+function normalizedBaseUrlKey(baseUrl: string) {
+    try {
+        return stripTrailingApiVersion(normalizeImportedBaseUrl(baseUrl));
+    } catch {
+        return stripTrailingApiVersion(baseUrl.trim().replace(/\/+$/, ""));
+    }
+}
+
+function normalizeImportedBaseUrl(baseUrl: string) {
+    const url = new URL(baseUrl.trim());
+    url.hash = "";
+    return url.toString().replace(/\/+$/, "");
+}
+
+function stripTrailingApiVersion(baseUrl: string) {
+    return baseUrl.replace(/\/v1$/i, "");
+}
+
+function importedChannelName(baseUrl: string) {
+    const hostname = new URL(baseUrl).hostname;
+    return hostname.replace(/^(?:www|api)\./i, "") || i18n.t("config.channels.newName");
+}
+
 export function encodeChannelModel(channelId: string, model: string) {
     return `${channelId}${CHANNEL_MODEL_SEPARATOR}${model.trim()}`;
 }
@@ -405,6 +498,13 @@ export function resolveModelChannel(config: AiConfig, value: string) {
     const model = decoded?.model || value;
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.some((item) => item.name === model));
     return matched || config.channels[0] || createModelChannel({ id: "default", name: i18n.t("config.channels.defaultName"), baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName).map((name) => ({ name, capability: guessCapability(name) })) });
+}
+
+export function assertModelAvailable(config: AiConfig, value: string) {
+    const decoded = decodeChannelModel(value);
+    const model = modelOptionName(value);
+    const channel = decoded ? config.channels.find((item) => item.id === decoded.channelId) : config.channels.find((item) => item.models.some((entry) => entry.name === model));
+    if (!channel?.models.some((entry) => entry.name === model)) throw new Error("所选模型或渠道已不可用，请重新选择模型");
 }
 
 export function resolveModelRequestConfig(config: AiConfig, value: string) {
@@ -483,11 +583,11 @@ function uniqueModelOptions(models: string[]) {
 }
 
 function normalizeDefaultModel(value: string, options: string[]) {
-    if (options.includes(value)) return value;
-    return options[0] || value;
+    return value || options[0] || "";
 }
 
 export function buildAiProxyUrl(targetUrl: string) {
+    if (useConfigStore.getState().config.proxyEnabled) return withLocalProxy(targetUrl);
     return `/api/ai-proxy?url=${encodeURIComponent(targetUrl)}`;
 }
 
@@ -496,4 +596,19 @@ export function buildApiUrl(baseUrl: string, path: string) {
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = lowerBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
+}
+
+export function normalizeLocalProxyUrl(value: string) {
+    const trimmed = value.trim().replace(/\/+$/, "");
+    if (!trimmed) return "";
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+}
+
+/** Prefix an outgoing request with the local forwarding proxy so the browser is not blocked by CORS. */
+export function withLocalProxy(url: string) {
+    const { proxyEnabled, proxyUrl } = useConfigStore.getState().config;
+    if (!proxyEnabled || !/^https?:\/\//i.test(url)) return url;
+    const base = normalizeLocalProxyUrl(proxyUrl);
+    if (!base || url.startsWith(`${base}/`)) return url;
+    return `${base}/${url}`;
 }

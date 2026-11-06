@@ -1,3 +1,5 @@
+import { getImageBlob } from "@/services/image-storage";
+import { getMediaBlob } from "@/services/file-storage";
 import { Copy, Download, Group, PencilLine, Search, Trash2, Upload } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Card, Drawer, Empty, Form, Image, Input, Modal, Pagination, Select, Space, Tag, Typography } from "antd";
@@ -8,7 +10,7 @@ import { canvasGroupAssetSummary } from "@/lib/canvas/canvas-group-asset";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { createVideoThumbnail, uploadImage } from "@/services/image-storage";
 import { cn } from "@/lib/utils";
-import { useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
+import { assetCoverUrl, useAssetStore, type Asset, type AssetKind, type ImageAsset } from "@/stores/use-asset-store";
 import { exportAssets, readAssetPackage } from "./asset-transfer";
 
 type AssetFormValues = {
@@ -485,6 +487,7 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
 }
 
 function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | null; onClose: () => void; onCopy: (asset: Asset) => void; onDownload: (asset: Asset) => void }) {
+
     const cover = asset ? asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "") : "";
     const [missing, setMissing] = useState(false);
     const updateAsset = useAssetStore((state) => state.updateAsset);
@@ -563,6 +566,18 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
             ) : null}
         </Drawer>
     );
+}
+
+async function readAssetMediaBlob(asset: Extract<Asset, { kind: "image" | "video" }>) {
+    const storageKey = asset.data.storageKey;
+    if (storageKey) {
+        const stored = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
+        if (stored) return stored;
+    }
+    const url = asset.kind === "video" ? asset.data.url : asset.data.dataUrl || asset.coverUrl;
+    if (!url) return null;
+    const response = await fetch(url);
+    return response.ok ? response.blob() : null;
 }
 
 function assetSummary(asset: Asset) {
