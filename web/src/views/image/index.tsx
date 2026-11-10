@@ -28,7 +28,7 @@ import type { ReferenceImage } from "@/types/image";
 import { WorkbenchLogList, type WorkbenchLogRow } from "@/components/workbench-log-list";
 
 import type { GeneratedImage, GenerationResult, ImageGenerationLogItem, GenerationLog, GenerationLogConfig } from "@/types/image-generation";
-import { canPollImageItem, finalizeImageLog, normalizeImageLogItem } from "@/lib/image-generation-log";
+import { compactImageLogTraces, canPollImageItem, finalizeImageLog, normalizeImageLogItem } from "@/lib/image-generation-log";
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -916,13 +916,13 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
 }
 
 function serializeLog(log: GenerationLog): GenerationLog {
-    return {
+    return compactImageLogTraces({
         ...log,
         references: log.references.map((item) => ({ ...item, dataUrl: item.storageKey ? "" : item.dataUrl })),
         items: log.items.map((item) => ({ ...item, image: item.image ? { ...item.image, dataUrl: item.image.storageKey ? "" : item.image.dataUrl } : undefined })),
         images: log.images.map((image) => ({ ...image, dataUrl: image.storageKey ? "" : image.dataUrl })),
         thumbnails: [],
-    };
+    });
 }
 
 function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {

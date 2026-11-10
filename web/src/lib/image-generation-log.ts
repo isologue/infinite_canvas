@@ -1,4 +1,15 @@
+import { prepareAiLogValue } from "@/lib/ai-log-value";
 import type { GeneratedImage, GenerationLog, ImageGenerationLogItem } from "@/types/image-generation";
+
+// 仅压缩诊断字段，图片本身和恢复轮询所需的任务参数保持原样。
+export function compactImageLogTraces(log: GenerationLog): GenerationLog {
+    return { ...log, items: (log.items || []).map((item) => ({
+        ...item,
+        requestParams: prepareAiLogValue(item.requestParams),
+        responseResult: prepareAiLogValue(item.responseResult),
+        task: item.task ? { ...item.task, requestParams: prepareAiLogValue(item.task.requestParams), createResponse: prepareAiLogValue(item.task.createResponse) } : undefined,
+    })) };
+}
 
 export function canPollImageItem(item: ImageGenerationLogItem) {
     return Boolean(item.task && ["waiting", "creating"].includes(item.status) && !item.image && !item.error);

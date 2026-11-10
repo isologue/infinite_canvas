@@ -3,6 +3,7 @@ import { NextRequest } from "next/server";
 import { readSessionUser } from "@/lib/server/auth";
 import { readUserLogs, writeUserLogs, upsertUserLog, removeUserLogs } from "@/lib/server/user-data-db";
 
+import { compactImageLogTraces } from "@/lib/image-generation-log";
 import { restoreImageGenerationLogs } from "@/lib/server/resource-db";
 
 type Kind = "image" | "video";
@@ -13,7 +14,7 @@ export async function GET(_request: NextRequest, context: { params: Promise<{ ki
     const { kind } = await context.params;
     if (kind !== "image" && kind !== "video") return Response.json({ code: 400, msg: "无效类型" }, { status: 400 });
     const logs = await readUserLogs(user.id, kind as Kind);
-    return Response.json({ code: 0, data: { logs: kind === "image" ? await restoreImageGenerationLogs(user.id, logs) : logs } });
+    return Response.json({ code: 0, data: { logs: kind === "image" ? (await restoreImageGenerationLogs(user.id, logs)).map(compactImageLogTraces) : logs } });
 }
 
 export async function PUT(request: NextRequest, context: { params: Promise<{ kind: string }> }) {
@@ -22,7 +23,7 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ kin
     const { kind } = await context.params;
     if (kind !== "image" && kind !== "video") return Response.json({ code: 400, msg: "无效类型" }, { status: 400 });
     const body = (await request.json().catch(() => null)) as { logs?: unknown } | null;
-    await writeUserLogs(user.id, kind as Kind, body?.logs || []);
+    await writeUserLogs(user.id, kind as Kind, kind === "image" && Array.isArray(body?.logs) ? body.logs.map(compactImageLogTraces) : body?.logs || []);
     return Response.json({ code: 0, msg: "保存成功" });
 }
 
@@ -33,7 +34,7 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ k
     if (kind !== "image" && kind !== "video") return Response.json({ code: 400, msg: "无效类型" }, { status: 400 });
     const body = await request.json().catch(() => null);
     if (!body?.log || typeof body.log.id !== "string" || !body.log.id) return Response.json({ code: 400, msg: "无效记录" }, { status: 400 });
-    await upsertUserLog(user.id, kind, body.log);
+    await upsertUserLog(user.id, kind, kind === "image" ? compactImageLogTraces(body.log) : body.log);
     return Response.json({ code: 0, msg: "保存成功" });
 }
 

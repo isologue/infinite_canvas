@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { canPollImageItem, normalizeImageLogItem, restoreImageLogResources, type ImageLogResource } from "../src/lib/image-generation-log";
+import { compactImageLogTraces, canPollImageItem, normalizeImageLogItem, restoreImageLogResources, type ImageLogResource } from "../src/lib/image-generation-log";
 import type { GeneratedImage, GenerationLog, ImageGenerationLogItem } from "../src/types/image-generation";
 const image: GeneratedImage = { id: "image", dataUrl: "", storageKey: "image:result", width: 1, height: 1, bytes: 68, durationMs: 0 };
 const waiting = (): ImageGenerationLogItem => ({ id: "slot", status: "waiting", taskCreatedAt: 123, task: { id: "task", model: "test", provider: "openai" } as ImageGenerationLogItem["task"] });
@@ -44,4 +44,23 @@ test("interrupted local processing and success without result cannot become an e
         expect(item.error).toBeTruthy();
         expect(canPollImageItem(item)).toBe(false);
     }
+});
+
+test("history compacts binary traces without losing images, task identity or error details", () => {
+    const binary = "A".repeat(8192);
+    const error = "内容被拒绝：请修改提示词";
+    const original = log({ ...waiting(), image: { ...image, dataUrl: `data:image/png;base64,${binary}` },
+        requestParams: { prompt: "参考图", image: `data:image/png;base64,${binary}` },
+        responseResult: { data: [{ b64_json: binary }], error: { message: error } },
+        task: { ...waiting().task!, createResponse: { data: binary } },
+    });
+    const compact = compactImageLogTraces(original);
+    expect(compact.items[0].image).toEqual(original.items[0].image);
+    expect(compact.items[0].task?.id).toBe("task");
+    expect((compact.items[0].responseResult as any).error.message).toBe(error);
+    expect((compact.items[0].responseResult as any).data[0].b64_json).toContain("base64 内容已省略");
+    expect((compact.items[0].requestParams as any).prompt).toBe("参考图");
+    expect(JSON.stringify(compact.items[0].task)).not.toContain(binary);
+    expect((original.items[0].responseResult as any).data[0].b64_json).toBe(binary);
+    expect(compactImageLogTraces(compact)).toEqual(compact);
 });

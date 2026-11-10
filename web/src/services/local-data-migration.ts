@@ -34,15 +34,15 @@ export async function migrateLocalDataToServer(user: LocalUser): Promise<Migrati
     const marker = migrationMarker(user.id);
     if (window.localStorage.getItem(marker) === "1") return emptyResult();
 
-    const [serverProjects, serverAssets, serverImageLogs, serverVideoLogs, localProjects, localAssets, localImageLogs, localVideoLogs] = await Promise.all([
-        readRemoteArray<unknown>("/api/user/projects", "projects"),
-        readRemoteArray<Asset>("/api/user/assets", "assets"),
-        readRemoteArray<StoredLog>("/api/user/logs/image", "logs"),
-        readRemoteArray<StoredLog>("/api/user/logs/video", "logs"),
-        readLegacyProjects(),
-        readLegacyAssets(),
-        readLegacyLogs("image"),
-        readLegacyLogs("video"),
+    const [localProjects, localAssets, localImageLogs, localVideoLogs] = await Promise.all([
+        readLegacyProjects(), readLegacyAssets(), readLegacyLogs("image"), readLegacyLogs("video"),
+    ]);
+    // 只查询确实有本地数据需要迁移的类型，避免登录被整份服务端历史阻塞。
+    const [serverProjects, serverAssets, serverImageLogs, serverVideoLogs] = await Promise.all([
+        localProjects.length ? readRemoteArray<unknown>("/api/user/projects", "projects") : [],
+        localAssets.length ? readRemoteArray<Asset>("/api/user/assets", "assets") : [],
+        localImageLogs.length ? readRemoteArray<StoredLog>("/api/user/logs/image", "logs") : [],
+        localVideoLogs.length ? readRemoteArray<StoredLog>("/api/user/logs/video", "logs") : [],
     ]);
 
     const nextProjects = !serverProjects.length && localProjects.length ? sanitizeProjects(localProjects) : [];
@@ -101,9 +101,12 @@ function migrationMarker(userId: string) {
 }
 
 async function readRemoteArray<T>(url: string, field: string): Promise<T[]> {
-    const payload = (await fetch(url, { cache: "no-store" }).then((res) => (res.ok ? res.json() : null)).catch(() => null)) as { data?: Record<string, unknown> } | null;
-    const value = payload?.data?.[field];
-    return Array.isArray(value) ? (value as T[]) : [];
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`迁移前读取服务端数据失败（HTTP ${response.status}）`);
+    const payload = await response.json() as { code?: number; data?: Record<string, unknown> };
+    const value = payload.data?.[field];
+    if (payload.code !== 0 || !Array.isArray(value)) throw new Error("迁移前读取服务端数据格式错误");
+    return value as T[];
 }
 
 async function writeRemoteArray(url: string, field: string, value: unknown[]) {
