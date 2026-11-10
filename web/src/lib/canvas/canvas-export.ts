@@ -20,7 +20,7 @@ export async function exportCanvasProjects(sources: Array<CanvasProject | Canvas
             await Promise.all(
                 collectStorageKeys(project).map(async (storageKey) => {
                     const blob = storageKey.startsWith("image:") ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
-                    if (!blob) return;
+                    if (!blob?.size) throw new Error(`资源读取失败：${storageKey}，资源可能已被清理或登录已失效，请确认后重试`);
                     const path = `projects/${project.id}/files/${safeFileName(storageKey)}.${fileExtension(blob.type, storageKey)}`;
                     files.push({ storageKey, path, mimeType: blob.type || "application/octet-stream", bytes: blob.size });
                     zipFiles.push({ name: path, data: blob });
@@ -56,7 +56,8 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = "画
             const sourceId = source.storageKey || source.url;
             if (!sourceId || exportedSources.has(sourceId)) continue;
             const blob = (source.storageKey ? await readStorageBlob(source.storageKey) : null) || (allowContentUrl && source.url ? await readUrlBlob(source.url) : null);
-            if (!blob) continue;
+            if (!blob?.size) throw new Error(`“${title}”资源读取失败，资源可能已被清理或登录已失效，请确认后重试`);
+            if (blob.type.includes("text/html") || blob.type.includes("application/json")) throw new Error(`“${title}”返回了错误页面，无法打包资源`);
             const normalizedBlob = await normalizeExportBlob(blob);
             if (source.storageKey) exportedSources.add(source.storageKey);
             if (source.url) exportedSources.add(source.url);
@@ -70,6 +71,7 @@ export async function exportCanvasNodes(nodes: CanvasNodeData[], fileName = "画
         }
     }
 
+    if (!zipFiles.length) throw new Error("没有可下载的内容，请选择已生成的图片、音视频或文本");
     const zip = await createZip(zipFiles);
     saveAs(zip, `${safeFileName(fileName)}.zip`);
 }
@@ -123,7 +125,7 @@ function collectStorageKeys(value: unknown, keys = new Set<string>()) {
 }
 
 function safeFileName(value: string) {
-    return value.replace(/[\\/:*?"<>|]/g, "_");
+    return value.replace(/[\u0000-\u001f\u007f\\/:*?"<>|]/g, "_").trim().replace(/[. ]+$/g, "");
 }
 
 function fileExtension(mimeType: string, source: string) {

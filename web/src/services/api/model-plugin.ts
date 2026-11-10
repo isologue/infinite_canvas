@@ -488,7 +488,7 @@ async function generateVideo({
   form.set("prompt", prompt);
   form.set("seconds", String(seconds || 8));
   form.set("size", String(size || "1280x720"));
-  form.set("resolution_name", String(resolution || "720p"));
+  form.set("resolution", String(resolution || "720p"));
   form.set("generate_audio", String(generateAudio !== false));
   form.set("watermark", String(watermark === true));
   form.set("mode", mode);

@@ -527,6 +527,9 @@ export async function pollImageGenerationTask(config: AiConfig, task: ImageGener
         if (IMAGE_TASK_SUCCESS.has(status)) return { status: "failed", error: readTaskFailure(payload) || "图片任务已完成，但没有返回图片", responseResult: payload };
         return { status: "pending", progress: imageTaskProgress(payload) };
     } catch (error) {
+        if (axios.isAxiosError(error) && error.response && !isTransientTaskError(error)) {
+            return { status: "failed", error: readAxiosError(error, "图片任务查询失败"), responseResult: error.response.data };
+        }
         throw requestError(error, "图片任务查询失败");
     }
 }

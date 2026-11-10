@@ -382,6 +382,7 @@
           <tr><td><code>seconds</code></td><td class="required">是</td><td>string</td><td>秒数字符串，例如 <code>"10"</code>。当前项目发送 1–20 秒，以模型限制为准。</td></tr>
           <tr><td><code>duration</code></td><td class="required">是</td><td>integer</td><td>整数秒数，例如 <code>10</code>；与 <code>seconds</code> 保持一致。</td></tr>
           <tr><td><code>aspect_ratio</code></td><td class="required">是</td><td>string</td><td>宽高比，例如 <code>16:9</code>、<code>9:16</code>。</td></tr>
+          <tr><td><code>resolution</code></td><td class="optional">否</td><td>string</td><td>视频清晰度，例如 <code>720p</code>、<code>1080p</code>；当前项目按所选清晰度发送，自动使用 <code>720p</code>。</td></tr>
           <tr><td><code>size</code></td><td class="optional">否</td><td>string</td><td>像素尺寸，例如 <code>1280x720</code>；自动尺寸时省略。</td></tr>
           <tr><td><code>n</code></td><td class="optional">否</td><td>integer</td><td>当前项目发送 <code>1</code>。</td></tr>
           <tr><td><code>images</code></td><td class="optional">否</td><td>string[]</td><td>参考图 URL 数组，当前项目最多发送 7 张。</td></tr>
@@ -394,6 +395,7 @@
   "prompt": "镜头缓慢推进，海边悬崖上的灯塔，黄昏电影感",
   "seconds": "10",
   "duration": 10,
+  "resolution": "1080p",
   "aspect_ratio": "16:9",
   "size": "1280x720",
   "n": 1
@@ -404,6 +406,7 @@
   "prompt": "让图中角色按照参考视频的动作自然转身",
   "seconds": "6",
   "duration": 6,
+  "resolution": "720p",
   "aspect_ratio": "9:16",
   "size": "720x1280",
   "n": 1,
@@ -417,7 +420,7 @@
     "https://example.com/voice.mp3"
   ]
 }</pre></div>
-        <p class="muted">仅需参考图时省略视频、音频字段。以上为当前项目 JSON 分支的字段；该分支不发送 <code>resolution_name</code> 或 <code>preset</code>。</p>
+        <p class="muted">仅需参考图时省略视频、音频字段。JSON 和 multipart 均使用 <code>resolution</code> 字段，不发送旧字段 <code>resolution_name</code>；JSON 分支不发送 <code>preset</code>。</p>
         <h4>创建响应</h4>
         <div class="code"><div class="code-head"><span>响应示例</span><button class="copy" type="button">复制</button></div><pre>{
   "id": "video_01JQEXAMPLE",

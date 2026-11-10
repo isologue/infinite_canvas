@@ -1741,7 +1741,7 @@ function InfiniteCanvasPage() {
             exitSelectionMode();
         } catch (error) {
             console.error(error);
-            message.error("批量下载失败，请重试");
+            message.error(error instanceof Error ? error.message : "批量下载失败，请重试");
         } finally {
             hide();
             setBatchDownloading(false);

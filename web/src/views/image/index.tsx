@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { getImagePreviewRevision, previewUrlFor, subscribeImagePreviews } from "@/services/image-storage";
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, RefreshCw, SlidersHorizontal, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Progress, Tag, Tooltip, Typography } from "antd";
 import { saveAs } from "file-saver";
 
@@ -25,72 +25,10 @@ import { createUserLogStore } from "@/services/user-log-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useWorkbenchAgentStore } from "@/stores/use-workbench-agent-store";
 import type { ReferenceImage } from "@/types/image";
+import { WorkbenchLogList, type WorkbenchLogRow } from "@/components/workbench-log-list";
 
-type GeneratedImage = {
-    id: string;
-    dataUrl: string;
-    storageKey?: string;
-    durationMs: number;
-    width: number;
-    height: number;
-    bytes: number;
-    mimeType?: string;
-};
-
-type GenerationResult = {
-    id: string;
-    logId?: string;
-    itemId?: string;
-    status: "pending" | "success" | "failed";
-    phase?: "creating" | "waiting" | "rendering";
-    progress?: number;
-    taskCreatedAt?: number;
-    resultReceivedAt?: number;
-    waitingDurationMs?: number;
-    renderDurationMs?: number;
-    image?: GeneratedImage;
-    error?: string;
-};
-
-type ImageGenerationLogItem = {
-    id: string;
-    status: "creating" | "waiting" | "rendering" | "success" | "failed";
-    task?: ImageGenerationTask;
-    progress?: number;
-    taskCreatedAt?: number;
-    resultReceivedAt?: number;
-    waitingDurationMs?: number;
-    renderDurationMs?: number;
-    image?: GeneratedImage;
-    error?: string;
-    requestParams?: unknown;
-    responseResult?: unknown;
-};
-
-type GenerationLog = {
-    id: string;
-    createdAt: number;
-    title: string;
-    prompt: string;
-    time: string;
-    model: string;
-    config: GenerationLogConfig;
-    references: ReferenceImage[];
-    durationMs: number;
-    successCount: number;
-    failCount: number;
-    imageCount: number;
-    size: string;
-    quality: string;
-    resolution: string;
-    status: "生成中" | "成功" | "失败";
-    items: ImageGenerationLogItem[];
-    images: GeneratedImage[];
-    thumbnails: string[];
-    agentTaskId?: string;
-};
-
-type GenerationLogConfig = Pick<AiConfig, "model" | "imageModel" | "quality" | "resolution" | "size" | "count">;
+import type { GeneratedImage, GenerationResult, ImageGenerationLogItem, GenerationLog, GenerationLogConfig } from "@/types/image-generation";
+import { canPollImageItem, finalizeImageLog, normalizeImageLogItem } from "@/lib/image-generation-log";
 
 type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
 
@@ -108,7 +46,6 @@ export default function ImagePage() {
     const pollTimersRef = useRef<Map<string, number>>(new Map());
     const generationControllersRef = useRef<Map<string, AbortController>>(new Map());
     const canceledItemKeysRef = useRef<Set<string>>(new Set());
-    const logWriteQueuesRef = useRef<Map<string, Promise<void>>>(new Map());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -224,14 +161,11 @@ export default function ImagePage() {
     const saveLog = useCallback((log: GenerationLog) => {
         const normalized = finalizeImageLog(log);
         setLogState([normalized, ...logsRef.current.filter((item) => item.id !== normalized.id)]);
-        const previous = logWriteQueuesRef.current.get(normalized.id) || Promise.resolve();
-        const next = previous.catch(() => undefined).then(() => logStore.setItem(normalized.id, serializeLog(normalized))).then(() => undefined);
-        logWriteQueuesRef.current.set(normalized.id, next);
-        void next.finally(() => {
-            if (logWriteQueuesRef.current.get(normalized.id) === next) logWriteQueuesRef.current.delete(normalized.id);
+        void logStore.setItem(normalized.id, serializeLog(normalized)).catch((error) => {
+            message.error(error instanceof Error ? error.message : "生成记录保存失败，请重试");
         });
         return normalized;
-    }, [setLogState]);
+    }, [message, setLogState]);
 
     const updateLog = useCallback((logId: string, updater: (log: GenerationLog) => GenerationLog) => {
         const current = logsRef.current.find((item) => item.id === logId);
@@ -240,7 +174,7 @@ export default function ImagePage() {
     }, [saveLog]);
 
     const updateLogItem = useCallback((logId: string, itemId: string, patch: Partial<ImageGenerationLogItem>) => {
-        const next = updateLog(logId, (log) => ({ ...log, items: log.items.map((item) => (item.id === itemId ? { ...item, ...patch } : item)) }));
+        const next = updateLog(logId, (log) => ({ ...log, items: log.items.map((item) => (item.id === itemId ? (["success", "failed"].includes(patch.status || "") ? normalizeImageLogItem({ ...item, ...patch }) : { ...item, ...patch }) : item)) }));
         if (next && next.status !== "生成中" && next.agentTaskId) {
             updateAgentTask(next.agentTaskId, {
                 status: next.successCount ? "succeeded" : "failed",
@@ -277,7 +211,7 @@ export default function ImagePage() {
         const taskCreatedAt = item.taskCreatedAt || log.createdAt;
         updateLogItem(logId, itemId, { status: "rendering", progress: 100, resultReceivedAt, waitingDurationMs: Math.max(0, resultReceivedAt - taskCreatedAt), error: undefined });
         try {
-            const stored = await uploadImage(rawImage.dataUrl, { title: log.prompt.slice(0, 80), source: "generated" });
+            const stored = await uploadImage(rawImage.dataUrl, { title: log.prompt.slice(0, 80), source: "generated", metadata: { logId, itemId, imageId: rawImage.id, taskCreatedAt: item.taskCreatedAt } });
             const renderCompletedAt = Date.now();
             const image: GeneratedImage = {
                 id: rawImage.id,
@@ -317,7 +251,7 @@ export default function ImagePage() {
         if (canceledItemKeysRef.current.has(key) || activeItemKeysRef.current.has(key)) return;
         const log = logsRef.current.find((entry) => entry.id === logId);
         const item = log?.items.find((entry) => entry.id === itemId);
-        if (!log || !item?.task || !["waiting", "creating"].includes(item.status)) return;
+        if (!log || !item?.task || !canPollImageItem(item)) return;
         activeItemKeysRef.current.add(key);
         if (manual) setRefreshingItemKeys((value) => (value.includes(key) ? value : [...value, key]));
         try {
@@ -577,7 +511,9 @@ export default function ImagePage() {
         void readStoredLogs().then((stored) => {
             if (disposed) return;
             setLogState(stored);
-            stored.forEach((log) => log.items.filter((item) => item.task && (item.status === "waiting" || item.status === "creating")).forEach((item) => scheduleItemPoll(log.id, item.id, 200)));
+            stored.forEach((log) => log.items.filter((item) => canPollImageItem(item)).forEach((item) => scheduleItemPoll(log.id, item.id, 200)));
+        }).catch((error) => {
+            if (!disposed) message.error(error instanceof Error ? error.message : "生成记录读取失败");
         });
         return () => {
             disposed = true;
@@ -586,12 +522,12 @@ export default function ImagePage() {
             generationControllersRef.current.forEach((controller) => controller.abort());
             generationControllersRef.current.clear();
         };
-    }, [scheduleItemPoll, setLogState]);
+    }, [message, scheduleItemPoll, setLogState]);
 
     return (
         <div className="flex h-full flex-col overflow-hidden bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
             <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[300px_minmax(0,1fr)] lg:overflow-hidden xl:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="thin-scrollbar hidden min-h-0 overflow-y-auto rounded-lg border border-stone-200 bg-card p-4 shadow-sm dark:border-stone-800 lg:block">
+                <aside className="thin-scrollbar hidden min-h-0 flex-col overflow-hidden rounded-lg border border-stone-200 bg-card p-3 shadow-sm dark:border-stone-800 lg:flex">
                     <LogPanel
                         logs={logs}
                         selectedLogIds={selectedLogIds}
@@ -727,7 +663,9 @@ export default function ImagePage() {
                         {results.length ? (
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
-                                    result.status === "success" && result.image ? (
+                                    result.status === "success" && result.image?.resourceDeleted ? (
+                                        <div key={result.id} className="flex aspect-square items-center justify-center rounded-lg border border-stone-200 text-sm text-stone-500 dark:border-stone-800 dark:text-stone-400">资源已被清理</div>
+                                    ) : result.status === "success" && result.image ? (
                                         <ResultImageCard key={result.id} result={result} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
                                     ) : result.status === "failed" ? (
                                         <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
@@ -915,106 +853,28 @@ function LogPanel({
     onDeleteSelected: () => void;
     onPreviewLog: (log: GenerationLog) => void;
 }) {
-    const allSelected = Boolean(logs.length) && selectedLogIds.length === logs.length;
-    const toggleAll = () => onSelectedLogIdsChange(allSelected ? [] : logs.map((log) => log.id));
-
-    return (
-        <>
-            <div className="mb-3 flex items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-base font-semibold">生成记录</h2>
-                </div>
-                <Tag className="m-0">{logs.length}</Tag>
-            </div>
-            <div className="mb-4 flex flex-wrap gap-2">
-                <Button size="small" icon={<Plus className="size-3.5" />} onClick={onCreateSession}>
-                    新建
-                </Button>
-                <Button size="small" icon={<CheckSquare className="size-3.5" />} disabled={!logs.length} onClick={toggleAll}>
-                    {allSelected ? "取消" : "全选"}
-                </Button>
-                <Button size="small" danger icon={<Trash2 className="size-3.5" />} disabled={!selectedLogIds.length} onClick={onDeleteSelected}>
-                    删除
-                </Button>
-            </div>
-            <div className="space-y-3">
-                {logs.map((log) => (
-                    <LogCard
-                        key={log.id}
-                        log={log}
-                        selected={selectedLogIds.includes(log.id)}
-                        active={activeLogId === log.id}
-                        onSelectedChange={(checked) => onSelectedLogIdsChange(checked ? [...selectedLogIds, log.id] : selectedLogIds.filter((id) => id !== log.id))}
-                        onClick={() => onPreviewLog(log)}
-                    />
-                ))}
-                {!logs.length ? <div className="flex min-h-48 items-center justify-center rounded-lg border border-dashed border-stone-300 text-center text-sm text-stone-500 dark:border-stone-700">暂无生成记录</div> : null}
-            </div>
-        </>
-    );
-}
-
-function LogCard({ log, selected, active, onSelectedChange, onClick }: { log: GenerationLog; selected: boolean; active: boolean; onSelectedChange: (checked: boolean) => void; onClick: () => void }) {
-    const thumbnails = (log.thumbnails || []).filter(Boolean).slice(0, 4);
-
-    return (
-        <button
-            type="button"
-            className={`block w-full rounded-lg border p-2 text-left transition ${active ? "border-stone-900 bg-blue-50 dark:border-stone-100 dark:bg-blue-950/20" : "border-stone-200 bg-background hover:bg-stone-50 dark:border-stone-800 dark:hover:bg-stone-900"}`}
-            onClick={onClick}
-        >
-            <div className="grid grid-cols-[minmax(128px,1fr)_auto] gap-2">
-                <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2">
-                    <Checkbox className="mt-0.5" checked={selected} onClick={(event) => event.stopPropagation()} onChange={(event) => onSelectedChange(event.target.checked)} />
-                    <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold leading-5">{log.title}</div>
-                        {thumbnails.length ? (
-                            <div className="mt-2 flex gap-1 overflow-hidden">
-                                {thumbnails.map((image, index) => (
-                                    <img key={`${log.id}-${index}`} src={image} alt="" className="size-8 shrink-0 rounded-md object-cover" />
-                                ))}
-                            </div>
-                        ) : null}
-                    </div>
-                </div>
-                <div className="grid justify-items-end gap-2">
-                    <div className="flex gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="blue">
-                            成功 {log.successCount ?? log.imageCount}
-                        </Tag>
-                        {log.failCount ? (
-                            <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="red">
-                                失败 {log.failCount}
-                            </Tag>
-                        ) : null}
-                    </div>
-                    <div className="flex flex-wrap justify-end gap-1">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.imageCount} 张</Tag>
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none" color="green">
-                            {formatDuration(log.durationMs)}
-                        </Tag>
-                    </div>
-                    <div className="flex justify-end">
-                        <Tag className="m-0 flex h-6 items-center rounded-md px-1.5 text-xs leading-none">{log.time}</Tag>
-                    </div>
-                </div>
-            </div>
-        </button>
-    );
+    const rows = useMemo<WorkbenchLogRow[]>(() => logs.map((log) => ({
+        id: log.id,
+        title: log.title,
+        status: log.failCount ? `成功 ${log.successCount ?? log.imageCount} · 失败 ${log.failCount}` : `成功 ${log.successCount ?? log.imageCount}`,
+        statusTone: log.failCount ? "error" : "success",
+        detail: `${log.imageCount} 张 · ${formatDuration(log.durationMs)}`,
+        time: log.time,
+        thumbnails: (log.thumbnails || []).filter(Boolean),
+    })), [logs]);
+    const handleSelect = useCallback((id: string) => {
+        const log = logs.find((item) => item.id === id);
+        if (log) onPreviewLog(log);
+    }, [logs, onPreviewLog]);
+    return <WorkbenchLogList logs={rows} selectedIds={selectedLogIds} activeId={activeLogId} onSelectedIdsChange={onSelectedLogIdsChange} onCreate={onCreateSession} onDelete={onDeleteSelected} onSelect={handleSelect} />;
 }
 
 async function readStoredLogs() {
     if (typeof window === "undefined") return [];
-    try {
-        const values: GenerationLog[] = [];
-        await logStore.iterate((value) => {
-            values.push(value);
-        });
-        const logs = await Promise.all(values.map(normalizeLog));
-        return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-    } catch {
-        return [];
-    }
+    const values: GenerationLog[] = [];
+    await logStore.iterate((value) => { values.push(value); });
+    const logs = await Promise.all(values.map(normalizeLog));
+    return logs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
 async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog> {
@@ -1025,13 +885,13 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         })),
     );
     const images = await Promise.all(
-        (log.images || []).map(async (item) => ({
+        [...new Map([...(log.images || []), ...(log.items || []).flatMap((item) => item.image ? [item.image] : [])].map((image) => [image.id, image])).values()].map(async (item) => ({
             ...item,
-            dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl),
+            dataUrl: item.resourceDeleted ? "" : await resolveImageUrl(item.storageKey, item.dataUrl),
         })),
     );
     const config = normalizeLogConfig(log);
-    return {
+    return finalizeImageLog({
         id: log.id || nanoid(),
         createdAt: log.createdAt || Date.now(),
         title: log.title || log.model || "未命名",
@@ -1048,11 +908,11 @@ async function normalizeLog(log: Partial<GenerationLog>): Promise<GenerationLog>
         quality: log.quality || config.quality || "",
         resolution: log.resolution || config.resolution || "",
         status: log.status || "成功",
-        items: (log.items?.length ? log.items : images.map((image) => ({ id: image.id, status: "success" as const, image }))).map((item) => ({ ...item, image: item.image ? images.find((image) => image.id === item.image?.id) || item.image : undefined })),
+        items: (log.items?.length ? log.items : images.map((image) => ({ id: image.id, status: "success" as const, image }))).map((item) => normalizeImageLogItem({ ...item, image: item.image ? images.find((image) => image.id === item.image?.id) || item.image : undefined })),
         images,
         thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
         agentTaskId: log.agentTaskId,
-    };
+    });
 }
 
 function serializeLog(log: GenerationLog): GenerationLog {
@@ -1090,25 +950,6 @@ function logItemToResult(item: ImageGenerationLogItem, logId?: string): Generati
         renderDurationMs: item.renderDurationMs,
         image: item.image,
         error: item.error,
-    };
-}
-
-function finalizeImageLog(log: GenerationLog): GenerationLog {
-    const items = log.items || [];
-    const images = items.map((item) => item.image).filter((image): image is GeneratedImage => Boolean(image));
-    const successCount = items.filter((item) => item.status === "success").length;
-    const failCount = items.filter((item) => item.status === "failed").length;
-    const pending = items.some((item) => !["success", "failed"].includes(item.status));
-    return {
-        ...log,
-        items,
-        images,
-        thumbnails: images.map((image) => image.dataUrl).filter(Boolean),
-        successCount,
-        failCount,
-        imageCount: items.length || log.imageCount,
-        status: pending ? "生成中" : successCount ? "成功" : "失败",
-        durationMs: Math.max(log.durationMs || 0, ...items.map((item) => (item.waitingDurationMs || 0) + (item.renderDurationMs || 0)), 0),
     };
 }
 

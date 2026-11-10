@@ -1,10 +1,13 @@
 import { randomUUID } from "node:crypto";
 
+import { restoreImageLogResources, type ImageLogResource } from "@/lib/image-generation-log";
+import type { GenerationLog } from "@/types/image-generation";
 import { getPgPool } from "@/lib/server/postgres";
 import { ensureUserDataTables } from "@/lib/server/user-data-db";
 
 export type ResourceKind = "image" | "video" | "audio" | "text";
 export type RetentionSettings = { imageDays: number; videoDays: number; audioDays: number; textDays: number; lastRunAt: string | null; lastResult: unknown };
+
 
 const BACKFILL_LOCK_ID = 482031948;
 const CLEANUP_LOCK_ID = 482031949;
@@ -36,6 +39,23 @@ export async function saveUserFileResource(userId: string, input: { storageKey: 
     } finally {
         client.release();
     }
+}
+
+export async function restoreImageGenerationLogs(userId: string, value: unknown) {
+    if (!Array.isArray(value) || !value.length) return [];
+    const logs = value as GenerationLog[];
+    const keys = logs.flatMap((log) => [...(log.images || []), ...(log.items || []).flatMap((item) => item.image ? [item.image] : [])].flatMap((image) => image.storageKey ? [image.storageKey] : []));
+    await ensureUserDataTables();
+    const result = await getPgPool().query<ImageLogResource>(
+        `SELECT r.storage_key AS "storageKey", r.deleted_at IS NOT NULL AS deleted,
+                EXISTS (SELECT 1 FROM user_files f WHERE f.user_id = r.user_id AND f.storage_key = r.storage_key) AS "hasFile",
+                r.bytes, r.mime_type AS "mimeType", r.metadata_json AS metadata
+         FROM user_resources r WHERE r.user_id = $1 AND r.kind = 'image'
+           AND (r.storage_key = ANY($2::text[]) OR r.metadata_json->>'logId' = ANY($3::text[]))
+         ORDER BY r.created_at DESC`,
+        [userId, keys, logs.map((log) => log.id)],
+    );
+    return restoreImageLogResources(logs, result.rows);
 }
 
 export async function restoreCanvasProjectImageResults<T extends { id: string; nodes: unknown[] }>(userId: string, project: T): Promise<T> {

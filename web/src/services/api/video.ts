@@ -248,6 +248,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
             ...(referenceAudios.length ? { reference_audios: referenceAudios } : {}),
             ...(size ? { size } : {}),
             aspect_ratio: normalizeVideoAspectRatio(config.size),
+            resolution: normalizeVideoResolution(config.vquality),
             duration: Number(seconds),
             seconds,
             n: 1,
@@ -269,7 +270,7 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     body.append("seconds", seconds);
     body.append("duration", seconds);
     if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
+    body.append("resolution", normalizeVideoResolution(config.vquality));
     body.append("preset", "normal");
     const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("input_reference[]", file));

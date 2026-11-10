@@ -280,6 +280,30 @@ export async function writeUserLogs(userId: string, kind: LogKind, logs: unknown
     );
 }
 
+// 单条原子更新，避免不同页面或记录的保存覆盖其他记录的终态。
+export async function upsertUserLog(userId: string, kind: LogKind, log: { id: string }) {
+    await ensureUserDataTables();
+    await getPgPool().query(
+        `INSERT INTO user_generation_logs (user_id, kind, data_json, updated_at)
+         VALUES ($1, $2, jsonb_build_array($3::jsonb), NOW())
+         ON CONFLICT (user_id, kind) DO UPDATE SET
+             data_json = jsonb_build_array($3::jsonb) || COALESCE(
+                 (SELECT jsonb_agg(item) FROM jsonb_array_elements(user_generation_logs.data_json) item WHERE item->>'id' <> $4), '[]'::jsonb),
+             updated_at = NOW()`,
+        [userId, kind, JSON.stringify(log), log.id],
+    );
+}
+
+export async function removeUserLogs(userId: string, kind: LogKind, ids: string[]) {
+    await ensureUserDataTables();
+    await getPgPool().query(
+        `UPDATE user_generation_logs SET data_json = COALESCE(
+             (SELECT jsonb_agg(item) FROM jsonb_array_elements(data_json) item WHERE NOT (item->>'id' = ANY($3::text[]))), '[]'::jsonb),
+             updated_at = NOW() WHERE user_id = $1 AND kind = $2`,
+        [userId, kind, ids],
+    );
+}
+
 export async function upsertUserFile(userId: string, input: { storageKey: string; mimeType: string; bytes: number; content: Buffer }) {
     await ensureUserDataTables();
     const db = getPgPool();

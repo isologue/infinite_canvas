@@ -98,10 +98,36 @@ test("content refusal shows the upstream cause without protocol or sync retries"
 });
 test("OpenAI video retains JSON numeric duration and original aspect_ratio", async () => {
     respond = () => ({ id: "video-task" });
-    await createVideoGenerationTask({ ...config("video"), videoSeconds: "12" }, "test");
-    expect(calls[0].body).toMatchObject({ model: "video-model", duration: 12, aspect_ratio: "16:9" });
+    await createVideoGenerationTask({ ...config("video"), videoSeconds: "12", vquality: "1080p" }, "test");
+    expect(calls[0].body).toMatchObject({ model: "video-model", duration: 12, aspect_ratio: "16:9", resolution: "1080p" });
     expect(calls[0].body).not.toHaveProperty("first_frame");
 });
+test("OpenAI multipart uses resolution and records the actual field name", async () => {
+    respond = () => ({ id: "video-task" });
+    for (const [quality, resolution] of [["1080p", "1080p"], ["720p", "720p"], ["auto", "720p"]]) {
+        const cfg = config("video");
+        cfg.channels[0].referenceImageRequestFormat = "form-data";
+        const task = await createVideoGenerationTask({ ...cfg, vquality: quality }, "test");
+        const body = calls.at(-1)!.body as FormData;
+        expect(body.get("resolution")).toBe(resolution);
+        expect(body.has("resolution_name")).toBe(false);
+        expect(task.logParams).toMatchObject({ resolution });
+        expect(task.logParams).not.toHaveProperty("resolution_name");
+    }
+});
+
+test("OpenAI JSON reference upload fallback retains resolution in multipart", async () => {
+    respond = () => ({ id: "video-task" });
+    globalThis.fetch = mock(async () => { throw new Error("DAV unavailable"); }) as typeof fetch;
+    const ref = { id: "a", name: "a.png", type: "image/png", dataUrl: png };
+    const task = await createVideoGenerationTask({ ...config("video"), vquality: "1080p" }, "test", [ref]);
+    const body = calls.at(-1)!.body as FormData;
+    expect(body.get("resolution")).toBe("1080p");
+    expect(body.has("resolution_name")).toBe(false);
+    expect(body.get("input_reference[]")).toBeInstanceOf(File);
+    expect(task.logParams).toMatchObject({ resolution: "1080p" });
+});
+
 test("OpenAI explicit frame mode adds URLs without removing legacy fields", async () => {
     respond = () => ({ id: "video-task" });
     const ref = { id: "a", name: "a.png", type: "image/png", storageKey: "image:a", dataUrl: png };
@@ -152,4 +178,27 @@ test("removed channels cannot be used to recover video tasks", async () => {
     const cfg = { ...config("video"), model: "deleted::video-model" };
     await expect(pollVideoGenerationTask(cfg, { id: "old-task", provider: "openai", model: "video-model", createdAt: 0 })).rejects.toThrow("不可用");
     expect(calls).toHaveLength(0);
+});
+
+test("finished image task failures and permanent HTTP errors stop polling with the actual reason", async () => {
+    const cfg = config();
+    const task = { id: "finished-task", provider: "openai", model: cfg.model } as Parameters<typeof pollImageGenerationTask>[1];
+    respond = () => ({ status: "failed", error: { message: "图片内容被拒绝" } });
+    const failed = await pollImageGenerationTask(cfg, task);
+    expect(failed.status).toBe("failed");
+    if (failed.status === "failed") expect(failed.error).toBe("图片内容被拒绝");
+    for (const status of [401, 404, 410]) {
+        respond = () => { throw { isAxiosError: true, response: { status, data: { message: status === 410 ? "资源已被清理" : "任务查询被拒绝" } } }; };
+        const state = await pollImageGenerationTask(cfg, task);
+        expect(state.status).toBe("failed");
+        if (state.status === "failed") expect(state.error).toBe(status === 410 ? "资源已被清理" : "任务查询被拒绝");
+    }
+});
+test("temporary image task query failures remain retryable instead of becoming terminal failures", async () => {
+    const cfg = config();
+    const task = { id: "running-task", provider: "openai", model: cfg.model } as Parameters<typeof pollImageGenerationTask>[1];
+    for (const status of [429, 502, 503]) {
+        respond = () => { throw { isAxiosError: true, response: { status, data: { message: "temporary failure" } } }; };
+        await expect(pollImageGenerationTask(cfg, task)).rejects.toThrow("temporary failure");
+    }
 });

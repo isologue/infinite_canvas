@@ -228,7 +228,7 @@ function CanvasNodesTab({ nodes, selectedNodeIds, onFocusNode, onPreviewNode, on
             exitSelect();
         } catch (error) {
             console.error(error);
-            message.error("导出失败，请重试");
+            message.error(error instanceof Error ? error.message : "导出失败，请重试");
         } finally {
             hide();
             setExporting(false);
