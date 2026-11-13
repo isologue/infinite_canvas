@@ -16,7 +16,7 @@ import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
 type VideoResponse = { id: string; status?: string; progress?: number | string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
-type MiniMaxVideoResponse = { task_id?: string; id?: string; status?: string; progress?: number | string; fail_reason?: string; error?: { message?: string } | string; url?: string; video_url?: string; result_url?: string; content?: { video_url?: string; url?: string } | null };
+type MiniMaxVideoResponse = { task_id?: string; id?: string; message?: string; status?: string; progress?: number | string; fail_reason?: string; error?: { message?: string } | string; url?: string; video_url?: string; result_url?: string; content?: { video_url?: string; url?: string } | null };
 type SdVideoResponse = { task_id?: string; id?: string; object?: string; status?: string; progress?: number | string; created_at?: number; seconds?: number };
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
@@ -97,14 +97,17 @@ export async function requestVideoGeneration(
                 } catch (error) {
                     await settleVideoTaskCredits(task, "failed", {
                         errorMessage: error instanceof Error ? error.message : String(error),
-                        result: buildAiErrorResponseResult(error),
+                        result: { upstreamResponse: state.result.responseResult ?? null, localError: buildAiErrorResponseResult(error) },
                         upstreamDurationSeconds: generationDurationSeconds(task.createdAt, resultReceivedAt),
                         localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt),
                     });
                     throw error;
                 }
                 await settleVideoTaskCredits(task, "success", {
-                    ...(stored ? { result: stored } : {}),
+                    result: {
+                        upstreamResponse: state.result.responseResult ?? null,
+                        ...(stored ? { localResult: stored } : {}),
+                    },
                     upstreamDurationSeconds: generationDurationSeconds(task.createdAt, resultReceivedAt),
                     ...(onStored ? { localProcessingDurationSeconds: generationDurationSeconds(resultReceivedAt) } : {}),
                 });
@@ -307,7 +310,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
     const resolvePublicImageUrl = createPublicImageUrlResolver();
     const quality = miniMaxModelResolution(model) || config.vquality;
     const highResolution = isMiniMaxHighResolution(quality);
-    const workflowId = resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length, highResolution);
+    const workflowId = config.supportsWorkflowId ? resolveMiniMaxWorkflow(config.videoWorkflowId, references.length, videoReferences.length, audioReferences.length, highResolution) : "";
     const size = normalizeMiniMaxSize(config.size, quality);
     const aspectRatio = highResolution ? normalizeMiniMaxAspectRatio(config.size) : undefined;
     const seconds = String(Math.max(1, Math.min(15, Number(normalizeVideoSeconds(config.videoSeconds)))));
@@ -329,7 +332,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
             model: modelOptionName(model),
             prompt,
             seconds,
-            workflow_id: workflowId,
+            ...(workflowId ? { workflow_id: workflowId } : {}),
             size,
             ...(aspectRatio ? { aspect_ratio: aspectRatio } : {}),
             ...(images.length ? { images } : {}),
@@ -340,7 +343,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
         try {
             const response = await axios.post<MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config, "application/json"), signal: options?.signal });
             const created = unwrapMiniMaxResponse(response.data);
-            const id = created.task_id || created.id;
+            const id = miniMaxTaskId(created);
             if (!id) throw new Error("MiniMax H3 视频接口没有返回任务 ID");
             return { id, provider: "minimax", model };
         } catch (error) {
@@ -351,7 +354,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
     body.append("seconds", seconds);
-    body.append("workflow_id", workflowId);
+    if (workflowId) body.append("workflow_id", workflowId);
     body.append("size", size);
     if (aspectRatio) body.append("aspect_ratio", aspectRatio);
     const imageFiles = await Promise.all(references.slice(0, 9).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
@@ -364,7 +367,7 @@ async function createMiniMaxVideoTask(config: AiConfig, model: string, prompt: s
     try {
         const response = await axios.post<MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal });
         const created = unwrapMiniMaxResponse(response.data);
-        const id = created.task_id || created.id;
+        const id = miniMaxTaskId(created);
         if (!id) throw new Error("MiniMax H3 接口没有返回任务 ID");
         return { id, provider: "minimax", model };
     } catch (error) {
@@ -408,15 +411,16 @@ async function createSdVideoTask(config: AiConfig, model: string, prompt: string
 async function pollMiniMaxTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const response = await axios.get<MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}`), { headers: aiHeaders(config), signal: options?.signal });
-        const state = unwrapMiniMaxResponse(response.data);
+        const rawResponse = response.data;
+        const state = unwrapMiniMaxResponse(rawResponse);
         const url = videoResultUrl(state as VideoResponse);
-        if (url) return { status: "completed", result: { url, mimeType: "video/mp4" } };
+        if (url) return { status: "completed", result: { url, mimeType: "video/mp4", responseResult: rawResponse } };
         if (state.status === "completed" || state.status === "succeeded") {
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${encodeURIComponent(task.id)}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
-            return { status: "completed", result: { blob: content.data } };
+            return { status: "completed", result: { blob: content.data, mimeType: content.data.type || "video/mp4", responseResult: rawResponse } };
         }
-        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: readApiErrorMessage(state.fail_reason || state.error) || `MiniMax H3 视频生成${state.status === "expired" ? "超时" : "失败"}`, responseResult: state };
+        if (state.status === "failed" || state.status === "cancelled" || state.status === "expired") return { status: "failed", error: readApiErrorMessage(state.fail_reason || state.error) || `MiniMax H3 视频生成${state.status === "expired" ? "超时" : "失败"}`, responseResult: rawResponse };
         return { status: "pending", progress: normalizeProgress(state.progress) };
     } catch (error) {
         throw videoResponseError(readAxiosError(error, "MiniMax H3 视频任务查询失败"), buildAiErrorResponseResult(error));
@@ -443,6 +447,7 @@ async function referenceMediaFile(storageKey: string | undefined, url: string | 
 }
 
 function resolveMiniMaxWorkflow(value: string, imageCount: number, videoCount: number, audioCount: number, highResolution = false) {
+    if (!value || value === "none") return "";
     const workflow = value && value !== "auto" ? value : videoCount || audioCount || imageCount > 2 ? "multi-reference" : imageCount ? "fl2v" : "text-to-video";
     if (highResolution) return ["cf-multi-reference", "cf-fl2v", "cf-mj"].includes(workflow) ? workflow : "cf-multi-reference";
     return workflow;
@@ -483,8 +488,28 @@ function normalizeMiniMaxAspectRatio(value: string) {
 }
 
 function unwrapMiniMaxResponse(payload: MiniMaxVideoResponse | { data?: MiniMaxVideoResponse }) {
-    if (payload && typeof payload === "object" && "data" in payload && payload.data) return payload.data;
-    return payload as MiniMaxVideoResponse;
+    let response = payload as MiniMaxVideoResponse & { data?: unknown; task?: unknown; result?: unknown };
+    for (let depth = 0; depth < 5; depth += 1) {
+        if (response.status || response.task_id || response.id || response.result_url || response.video_url || response.url) return response;
+        let nested = response.data || response.task || response.result;
+        if (!nested && typeof response.message === "string") {
+            try { nested = JSON.parse(response.message); } catch { return response; }
+        }
+        if (!nested || typeof nested !== "object") return response;
+        response = nested as typeof response;
+    }
+    return response;
+}
+
+function miniMaxTaskId(payload: MiniMaxVideoResponse) {
+    const visit = (value: unknown, depth = 0): string => {
+        if (!value || typeof value !== "object" || depth > 4) return "";
+        const record = value as Record<string, unknown>;
+        if (typeof record.task_id === "string" && record.task_id) return record.task_id;
+        if (typeof record.id === "string" && record.id) return record.id;
+        return visit(record.data, depth + 1) || visit(record.task, depth + 1) || visit(record.result, depth + 1);
+    };
+    return visit(payload);
 }
 
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {

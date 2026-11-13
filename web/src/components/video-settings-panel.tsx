@@ -28,7 +28,7 @@ const sizeOptions = [
 const secondOptions = [6, 10, 12, 16, 20];
 const miniMaxResolutionOptions = ["480", "768", "1080", "2K", "4K"];
 const miniMaxRatioOptions = ["16:9", "9:16", "1:1", "2:3", "3:2", "3:4", "4:3", "21:9"];
-const miniMaxHighResolutionWorkflows = new Set(["cf-multi-reference", "cf-fl2v", "cf-mj"]);
+const miniMaxHighResolutionWorkflows = new Set(["none", "cf-multi-reference", "cf-fl2v", "cf-mj"]);
 const miniMaxSizes: Record<string, Record<string, string>> = {
     "16:9": { "480": "864x480", "768": "1376x768", "1080": "1920x1088" },
     "9:16": { "480": "480x864", "768": "768x1376", "1080": "1088x1920" },
@@ -40,6 +40,7 @@ const miniMaxSizes: Record<string, Record<string, string>> = {
     "21:9": { "480": "992x416", "768": "1568x672", "1080": "2208x960" },
 };
 const miniMaxWorkflowOptions = [
+    { value: "none", label: "无" },
     { value: "auto", label: "自动" },
     { value: "text-to-video", label: "文生视频" },
     { value: "fl2v", label: "首尾帧" },
@@ -67,7 +68,7 @@ export function VideoSettingsPanel({ model, config, onConfigChange, theme, showT
     const selectedModel = model || config.videoModel || config.model;
     const requestConfig = resolveModelRequestConfig(config, selectedModel);
     if (requestConfig.apiFormat === "minimax") {
-        return <MiniMaxVideoSettingsPanel model={selectedModel} config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
+        return <MiniMaxVideoSettingsPanel model={selectedModel} config={requestConfig} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
     const availableResolutions = requestConfig.apiFormat === "sd" ? sdResolutionOptions : resolutionOptions;
     const seconds = config.videoSeconds || "6";
@@ -145,10 +146,10 @@ function MiniMaxVideoSettingsPanel({ model, config, onConfigChange, theme, showT
     const customSize = !highResolution && /^\d+x\d+$/i.test(config.size || "");
     const dimensions = readSizeDimensions(customSize ? config.size : miniMaxSizeFor(ratio, resolution));
     const seconds = String(Math.max(1, Math.min(15, Math.floor(Number(config.videoSeconds) || 6))));
-    const workflowId = config.videoWorkflowId || "auto";
+    const workflowId = config.videoWorkflowId || "none";
     useEffect(() => {
         if (modelResolution && config.vquality !== modelResolution) onConfigChange("vquality", modelResolution);
-        if (isMiniMaxHighResolution(resolution) && !miniMaxHighResolutionWorkflows.has(workflowId)) onConfigChange("videoWorkflowId", "cf-multi-reference");
+        if (config.supportsWorkflowId && isMiniMaxHighResolution(resolution) && !miniMaxHighResolutionWorkflows.has(workflowId)) onConfigChange("videoWorkflowId", "cf-multi-reference");
     }, [config.vquality, modelResolution, onConfigChange, resolution, workflowId]);
     const selectWorkflow = (value: string) => {
         if (highResolution && !miniMaxHighResolutionWorkflows.has(value) && modelResolution) return;
@@ -156,7 +157,7 @@ function MiniMaxVideoSettingsPanel({ model, config, onConfigChange, theme, showT
         if (highResolution && !miniMaxHighResolutionWorkflows.has(value)) onConfigChange("vquality", "1080");
     };
     const selectResolution = (value: string) => {
-        if (isMiniMaxHighResolution(value) && !miniMaxHighResolutionWorkflows.has(workflowId)) onConfigChange("videoWorkflowId", "cf-multi-reference");
+        if (config.supportsWorkflowId && isMiniMaxHighResolution(value) && !miniMaxHighResolutionWorkflows.has(workflowId)) onConfigChange("videoWorkflowId", "cf-multi-reference");
         onConfigChange("vquality", value);
     };
     const updateDimension = (key: "width" | "height", value: number | null) => {
@@ -168,7 +169,7 @@ function MiniMaxVideoSettingsPanel({ model, config, onConfigChange, theme, showT
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(event) => event.stopPropagation()}>
                 {showTitle ? <div className="text-lg font-semibold">{t("settingsPanels.video.title")}</div> : null}
-                <SettingGroup title="MiniMax 工作流" color={theme.node.muted}>
+                {config.supportsWorkflowId ? <SettingGroup title="MiniMax 工作流" color={theme.node.muted}>
                     <div className="grid grid-cols-2 gap-2.5">
                         {miniMaxWorkflowOptions.map((item) => (
                             <OptionPill key={item.value} selected={workflowId === item.value} disabled={highResolution && !miniMaxHighResolutionWorkflows.has(item.value)} theme={theme} onClick={() => selectWorkflow(item.value)}>
@@ -176,7 +177,7 @@ function MiniMaxVideoSettingsPanel({ model, config, onConfigChange, theme, showT
                             </OptionPill>
                         ))}
                     </div>
-                </SettingGroup>
+                </SettingGroup> : null}
                 <SettingGroup title={t("settingsPanels.video.quality")} color={theme.node.muted}>
                     <div className="grid grid-cols-3 gap-2.5">
                         {miniMaxResolutionOptions.map((value) => (

@@ -394,6 +394,7 @@ function withChannels(config: AiConfig, channels: ModelChannel[]): AiConfig {
         videoModel: pickDefaultModel(next, "video", config.videoModel),
         textModel: pickDefaultModel(next, "text", config.textModel),
         audioModel: pickDefaultModel(next, "audio", config.audioModel),
+        fileModel: pickDefaultModel(next, "file", config.fileModel),
     };
 }
 

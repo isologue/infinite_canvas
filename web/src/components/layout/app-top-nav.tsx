@@ -1,6 +1,6 @@
 "use client";
 
-import { Bot, Database, Menu, ScrollText, Users } from "lucide-react";
+import { Bot, Database, FileStack, Menu, ScrollText, Users } from "lucide-react";
 import { Button, Tooltip } from "antd";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -29,7 +29,7 @@ export function AppTopNav() {
     const panelOpen = useAgentStore((state) => state.panelOpen);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
     const slug = pathname.split("/").filter(Boolean)[0];
-    const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
+    const activeToolSlug = slug === "files" ? "files" : navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
 
     useEffect(() => {
         if (autoConnectRef.current || agentEnabled || agentConnected || !agentToken.trim()) return;
@@ -84,6 +84,16 @@ export function AppTopNav() {
                                         </Link>
                                     );
                                 })}
+                                <Link
+                                    href="/files"
+                                    className={cn(
+                                        "relative flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
+                                        activeToolSlug === "files" ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100" : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
+                                    )}
+                                >
+                                    <FileStack className="size-4" />
+                                    <span className="truncate">文件工作台</span>
+                                </Link>
                                 {user?.role === "admin" ? (
                                     <Link
                                         href="/admin/resources"

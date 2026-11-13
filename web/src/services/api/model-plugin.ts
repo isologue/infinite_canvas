@@ -194,6 +194,7 @@ export function getPluginVariables() {
 }
 
 export const PLUGIN_RETURNS: Record<ModelCapability, string> = {
+    file: "不支持通过模型调用脚本生成 PPTX、PSD 或 SVG；请使用文件工作台的异步文件接口",
     image: "文生图（images 为空）和图生图（images 有参考图）接口不同，脚本需自行区分；返回图片 URL 或 dataURL 字符串，也可返回它们的数组，或 [{ dataUrl }] / [{ url }] / [{ b64_json }]",
     video: "脚本内部完成轮询，返回 { url } 或 { blob } 或视频 URL 字符串",
     audio: "返回 Blob，或 base64 / dataURL 字符串，或 { b64_json } / { data } / { url }",
@@ -233,6 +234,7 @@ export type PluginTemplate = { label: string; script: string };
 
 export function getPluginTemplates(): Record<ModelCapability, PluginTemplate[]> {
     return {
+    file: [],
     image: [
         {
             label: i18n.t("modelPlugin.templates.openai"),

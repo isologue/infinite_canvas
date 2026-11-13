@@ -4,7 +4,7 @@ import { nanoid } from "nanoid";
 import { create } from "zustand";
 
 export type UploadKind = "image" | "video" | "audio" | "file";
-export type UploadStatus = "preparing" | "uploading" | "processing" | "success" | "error";
+export type UploadStatus = "preparing" | "downloading" | "uploading" | "processing" | "success" | "error";
 export type UploadRecord = {
     id: string;
     name: string;
@@ -13,14 +13,17 @@ export type UploadRecord = {
     progress: number;
     bytes: number;
     error?: string;
+    direction?: "upload" | "download";
+    receivedBytes?: number;
+    totalKnown?: boolean;
 };
 
 type UploadStore = {
     records: UploadRecord[];
     collapsed: boolean;
     hidden: boolean;
-    start: (name: string, kind: UploadKind, bytes: number) => string;
-    update: (id: string, patch: Partial<Pick<UploadRecord, "status" | "progress" | "bytes" | "error">>) => void;
+    start: (name: string, kind: UploadKind, bytes: number, direction?: "upload" | "download") => string;
+    update: (id: string, patch: Partial<Pick<UploadRecord, "status" | "progress" | "bytes" | "error" | "receivedBytes" | "totalKnown">>) => void;
     setCollapsed: (collapsed: boolean) => void;
     setHidden: (hidden: boolean) => void;
     clearFinished: () => void;
@@ -35,9 +38,9 @@ export const useUploadStore = create<UploadStore>((set) => ({
     records: [],
     collapsed: false,
     hidden: false,
-    start: (name, kind, bytes) => {
+    start: (name, kind, bytes, direction = "upload") => {
         const id = nanoid();
-        set((state) => ({ records: [{ id, name, kind, bytes, progress: 0, status: "preparing" }, ...state.records], hidden: false }));
+        set((state) => ({ records: [{ id, name, kind, bytes, direction, progress: 0, status: "preparing" }, ...state.records], hidden: false }));
         return id;
     },
     update: (id, patch) => set((state) => ({

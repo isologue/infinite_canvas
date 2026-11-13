@@ -420,7 +420,7 @@ export default function VideoPage() {
                     clearPollTimer(log.id);
                     generationControllersRef.current.delete(log.id);
                     await saveLog({ ...renderingLog, status: "失败", durationMs: waitingDurationMs + renderDurationMs, renderDurationMs, error: `上游已生成视频，但本地转存或处理失败：${errorMessage}` });
-                    await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: buildAiErrorResponseResult(error), upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 });
+                    await settleVideoTaskCredits(log.task, "failed", { errorMessage, result: { upstreamResponse: state.result.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 });
                     setResults([{ id: log.id, logId: log.id, status: "failed", error: `上游已生成视频，但本地转存或处理失败：${errorMessage}` }]);
                     message.error(`上游已生成视频，但本地处理失败：${errorMessage}`);
                     return;
@@ -442,7 +442,7 @@ export default function VideoPage() {
                 if (agentTaskId) updateAgentTask(agentTaskId, { status: "succeeded", successCount: 1, failCount: 0, error: undefined });
                 await saveLog({ ...renderingLog, status: "成功", durationMs: nextVideo.durationMs, waitingDurationMs, renderDurationMs, video: nextVideo, error: undefined });
                 await settleVideoTaskCredits(log.task, "success", {
-                    result: { storageKey: nextVideo.storageKey, mimeType: nextVideo.mimeType, width: nextVideo.width, height: nextVideo.height, bytes: nextVideo.bytes, durationMs: nextVideo.durationMs },
+                    result: { upstreamResponse: state.result.responseResult ?? null, localResult: { storageKey: nextVideo.storageKey, mimeType: nextVideo.mimeType, width: nextVideo.width, height: nextVideo.height, bytes: nextVideo.bytes, durationMs: nextVideo.durationMs } },
                     upstreamDurationSeconds: waitingDurationMs / 1000,
                     localProcessingDurationSeconds: renderDurationMs / 1000,
                 });
@@ -980,7 +980,7 @@ function normalizeLogConfig(log: Partial<GenerationLog>): GenerationLogConfig {
         size: log.config?.size || log.size || "",
         vquality: normalizeResolution(log.config?.vquality || log.resolution || ""),
         videoSeconds: log.config?.videoSeconds || log.seconds || "",
-        videoWorkflowId: log.config?.videoWorkflowId || "auto",
+        videoWorkflowId: log.config?.videoWorkflowId || "none",
         videoGenerateAudio: log.config?.videoGenerateAudio || "true",
         videoWatermark: log.config?.videoWatermark || "false",
     };

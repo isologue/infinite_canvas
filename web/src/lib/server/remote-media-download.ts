@@ -6,7 +6,7 @@ export const REMOTE_MEDIA_TIMEOUT_MS = 600_000;
 
 const MAX_REDIRECTS = 5;
 
-export type RemoteMediaKind = "image" | "video" | "audio";
+export type RemoteMediaKind = "image" | "video" | "audio" | "file";
 
 export function parseRemoteMediaUrl(value: unknown) {
     if (typeof value !== "string" || value.length > 4096) return null;
@@ -22,12 +22,12 @@ export function parseRemoteMediaUrl(value: unknown) {
 export async function downloadRemoteMedia(initialUrl: URL, kind: RemoteMediaKind) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REMOTE_MEDIA_TIMEOUT_MS);
-    const label = kind === "image" ? "图片" : kind === "video" ? "视频" : "音频";
+    const label = kind === "image" ? "图片" : kind === "video" ? "视频" : kind === "audio" ? "音频" : "文件";
     try {
         let url = initialUrl;
         for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
             await assertPublicUrl(url);
-            const response = await fetch(url, { signal: controller.signal, redirect: "manual", cache: "no-store", headers: { accept: `${kind}/*` } });
+            const response = await fetch(url, { signal: controller.signal, redirect: "manual", cache: "no-store", headers: { accept: kind === "file" ? "*/*" : `${kind}/*` } });
             const location = response.headers.get("location");
             if ([301, 302, 303, 307, 308].includes(response.status) && location) {
                 await response.body?.cancel().catch(() => undefined);

@@ -28,12 +28,17 @@ type AiCallLog = {
     updatedAt: string;
 };
 
+function callKindLabel(log: AiCallLog) {
+    const kind = (log.requestParams as { fileKind?: string } | null)?.fileKind;
+    return log.kind === "other" && (kind === "ppt" || kind === "psd" || kind === "svg") ? (kind === "ppt" ? "PPTX" : kind.toUpperCase()) + " 文件" : KIND_META[log.kind].label;
+}
+
 const KIND_META: Record<AiCallKind, { label: string; color: string }> = {
     image: { label: "图片", color: "blue" },
     video: { label: "视频", color: "purple" },
     audio: { label: "音频", color: "cyan" },
     text: { label: "文本", color: "geekblue" },
-    other: { label: "其他", color: "default" },
+    other: { label: "其他（含文件）", color: "default" },
 };
 
 const STATUS_META: Record<AiCallStatus, { label: string; color: string }> = {
@@ -88,7 +93,7 @@ export default function AdminAiLogsPage() {
             dataIndex: "kind",
             key: "kind",
             width: 90,
-            render: (value: AiCallKind) => <Tag color={KIND_META[value].color}>{KIND_META[value].label}</Tag>,
+            render: (value: AiCallKind, log: AiCallLog) => <Tag color={KIND_META[value].color}>{callKindLabel(log)}</Tag>,
         },
         { title: "模型", dataIndex: "model", key: "model", ellipsis: true, render: (value: string) => value || <span className="text-stone-400">—</span> },
         {
@@ -199,7 +204,7 @@ export default function AdminAiLogsPage() {
                         <div className="flex flex-col gap-3 text-sm">
                             <DetailRow label="时间" value={new Date(detail.createdAt).toLocaleString("zh-CN")} />
                             <DetailRow label="用户" value={detail.username} />
-                            <DetailRow label="类型" value={KIND_META[detail.kind].label} />
+                            <DetailRow label="类型" value={callKindLabel(detail)} />
                             <DetailRow label="模型" value={detail.model || "—"} />
                             <DetailRow label="状态" value={STATUS_META[detail.status].label} />
                             <DetailRow label="上游结果耗时" value={displayDurationSeconds(detail.upstreamDurationSeconds)} />

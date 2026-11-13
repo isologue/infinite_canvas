@@ -1,5 +1,5 @@
 import { Drawer } from "antd";
-import { Database, Users } from "lucide-react";
+import { Database, FileStack, Users } from "lucide-react";
 import Link from "next/link";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -8,7 +8,7 @@ import { useUserStore } from "@/stores/use-user-store";
 
 type MobileNavDrawerProps = {
     open: boolean;
-    activeToolSlug?: NavigationToolSlug;
+    activeToolSlug?: NavigationToolSlug | "files";
     onClose: () => void;
 };
 
@@ -36,6 +36,17 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                         </Link>
                     );
                 })}
+                <Link
+                    href="/files"
+                    onClick={onClose}
+                    className={cn(
+                        "flex items-center gap-3 rounded-lg px-3 py-3 text-base transition",
+                        activeToolSlug === "files" ? "bg-stone-100 font-medium text-stone-950 dark:bg-stone-800 dark:text-stone-100" : "text-stone-600 hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100",
+                    )}
+                >
+                    <FileStack className="size-5" />
+                    <span>文件工作台</span>
+                </Link>
                 {user?.role === "admin" ? (
                     <Link
                         href="/admin/resources"

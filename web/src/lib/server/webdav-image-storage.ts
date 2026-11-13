@@ -88,6 +88,10 @@ function safeSegment(value: string) {
 }
 
 function extensionForMimeType(mimeType: string) {
+    if (mimeType === "application/vnd.openxmlformats-officedocument.presentationml.presentation") return "pptx";
+    if (mimeType === "image/vnd.adobe.photoshop") return "psd";
+    if (mimeType === "image/svg+xml") return "svg";
+    if (mimeType === "application/zip") return "zip";
     if (mimeType === "image/jpeg") return "jpg";
     if (mimeType === "image/webp") return "webp";
     if (mimeType === "image/gif") return "gif";

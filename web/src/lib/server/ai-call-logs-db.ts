@@ -57,6 +57,8 @@ export async function ensureAiCallLogsTable() {
 // 前端在一次生成结束后统一上报完整日志（参数 + 结果引用 + 成败）。
 // 不依赖点数流程，免费模型也会记录。用户身份由服务端从 session 取，前端无法伪造。
 export async function recordAiCall(input: {
+    id?: string;
+    createdAt?: Date;
     userId: string;
     kind: AiCallKind;
     model: string;
@@ -71,11 +73,12 @@ export async function recordAiCall(input: {
 }) {
     await ensureAiCallLogsTable();
     const db = getPgPool();
-    const id = randomUUID();
+    const id = input.id || randomUUID();
     await db.query(
         `
-        INSERT INTO ai_call_logs (id, user_id, kind, model, status, reason, request_params, response_result, error_message, duration_seconds, upstream_duration_seconds, local_processing_duration_seconds)
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12)
+        INSERT INTO ai_call_logs (id, user_id, kind, model, status, reason, request_params, response_result, error_message, duration_seconds, upstream_duration_seconds, local_processing_duration_seconds, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, COALESCE($13, NOW()))
+        ON CONFLICT (id) DO NOTHING
         `,
         [
             id,
@@ -90,6 +93,7 @@ export async function recordAiCall(input: {
             input.durationSeconds ?? null,
             input.upstreamDurationSeconds ?? null,
             input.localProcessingDurationSeconds ?? null,
+            input.createdAt ?? null,
         ],
     );
     return id;

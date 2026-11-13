@@ -1,3 +1,5 @@
+import type { PoolClient } from "pg";
+
 import { getPgPool } from "@/lib/server/postgres";
 import { createAdminUserIfMissing } from "@/lib/server/auth";
 
@@ -51,6 +53,16 @@ async function createUserDataTables() {
             PRIMARY KEY (user_id, kind)
         )
         `);
+        await client.query(`
+        CREATE TABLE IF NOT EXISTS user_file_generation_logs (
+            user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+            log_id TEXT NOT NULL,
+            data_json JSONB NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (user_id, log_id)
+        )
+        `);
+        await client.query(`CREATE INDEX IF NOT EXISTS idx_user_file_generation_logs_updated ON user_file_generation_logs (user_id, updated_at DESC)`);
         await client.query(`
         CREATE TABLE IF NOT EXISTS user_files (
             user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
@@ -265,6 +277,23 @@ export async function readUserLogs(userId: string, kind: LogKind) {
     return result.rows[0]?.data_json || [];
 }
 
+export async function readUserFileGenerationLogs(userId: string) {
+    await ensureUserDataTables();
+    const result = await getPgPool().query<{ data_json: unknown }>(`SELECT data_json FROM user_file_generation_logs WHERE user_id = $1 ORDER BY updated_at DESC`, [userId]);
+    return result.rows.map((row) => row.data_json);
+}
+
+export async function upsertUserFileGenerationLog(userId: string, log: { id: string }) {
+    await ensureUserDataTables();
+    await getPgPool().query(`INSERT INTO user_file_generation_logs (user_id, log_id, data_json, updated_at) VALUES ($1, $2, $3::jsonb, NOW()) ON CONFLICT (user_id, log_id) DO UPDATE SET data_json = EXCLUDED.data_json || jsonb_strip_nulls(jsonb_build_object('files', user_file_generation_logs.data_json->'files', 'storageError', user_file_generation_logs.data_json->'storageError')), updated_at = NOW()`, [userId, log.id, JSON.stringify(log)]);
+}
+
+export async function removeUserFileGenerationLogs(userId: string, ids: string[]) {
+    if (!ids.length) return;
+    await ensureUserDataTables();
+    await getPgPool().query(`DELETE FROM user_file_generation_logs WHERE user_id = $1 AND log_id = ANY($2::text[])`, [userId, ids]);
+}
+
 export async function writeUserLogs(userId: string, kind: LogKind, logs: unknown) {
     await ensureUserDataTables();
     const db = getPgPool();
@@ -304,9 +333,8 @@ export async function removeUserLogs(userId: string, kind: LogKind, ids: string[
     );
 }
 
-export async function upsertUserFile(userId: string, input: { storageKey: string; mimeType: string; bytes: number; content: Buffer }) {
+export async function upsertUserFile(userId: string, input: { storageKey: string; mimeType: string; bytes: number; content: Buffer }, db: Pick<PoolClient, "query"> = getPgPool()) {
     await ensureUserDataTables();
-    const db = getPgPool();
     await db.query(
         `
         INSERT INTO user_files (user_id, storage_key, mime_type, bytes, content, updated_at)
@@ -321,9 +349,8 @@ export async function upsertUserFile(userId: string, input: { storageKey: string
     );
 }
 
-export async function readUserFile(userId: string, storageKey: string) {
+export async function readUserFile(userId: string, storageKey: string, db: Pick<PoolClient, "query"> = getPgPool()) {
     await ensureUserDataTables();
-    const db = getPgPool();
     const result = await db.query<{ mime_type: string; bytes: string; content: Buffer; updated_at: Date | string }>(
         `SELECT mime_type, bytes, content, updated_at FROM user_files WHERE user_id = $1 AND storage_key = $2 LIMIT 1`,
         [userId, storageKey],

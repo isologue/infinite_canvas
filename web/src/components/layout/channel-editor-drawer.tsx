@@ -1,4 +1,4 @@
-import { Button, Drawer, Input, Modal, Segmented, Select, Space } from "antd";
+import { Button, Drawer, Input, Modal, Segmented, Select, Space, Switch } from "antd";
 import { ListPlus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -18,6 +18,7 @@ const capabilityOptions: Array<{ label: string; value: ModelCapability }> = [
     { label: "视频", value: "video" },
     { label: "文本", value: "text" },
     { label: "音频", value: "audio" },
+    { label: "文件", value: "file" },
 ];
 
 const imageResponseFormatOptions: Array<{ label: string; value: ImageResponseFormat }> = [
@@ -130,6 +131,10 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                     <Select className="w-full" value={draft.imageResponseFormat} options={imageResponseFormatOptions} onChange={(imageResponseFormat: ImageResponseFormat) => patch({ imageResponseFormat })} />
                     <span className="mt-1 block text-xs text-stone-500">图片接口默认发送 response_format=url。</span>
                 </label>
+                {draft.apiFormat === "minimax" ? <label className="flex items-center justify-between gap-3 border-y border-stone-200 py-3 dark:border-stone-800 md:col-span-2">
+                    <span className="text-sm font-medium">支持工作流（workflow_id）</span>
+                    <Switch checked={draft.supportsWorkflowId} onChange={(supportsWorkflowId) => patch({ supportsWorkflowId })} />
+                </label> : null}
                 {draft.apiFormat === "openai" || draft.apiFormat === "minimax" || draft.apiFormat === "sd" ? <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">参考素材请求格式</span>
                     <Select className="w-full" value={draft.apiFormat === "sd" ? "json" : draft.referenceImageRequestFormat} options={draft.apiFormat === "sd" ? referenceImageRequestFormatOptions.filter((item) => item.value === "json") : referenceImageRequestFormatOptions} onChange={(referenceImageRequestFormat: ReferenceImageRequestFormat) => patch({ referenceImageRequestFormat })} />
@@ -156,7 +161,7 @@ export function ChannelEditorDrawer({ open, channel, canManageUrl = true, locked
                             </span>
                             <div className="flex shrink-0 items-center gap-2">
                                 <Segmented size="small" value={model.capability} options={capabilityOptions} onChange={(value) => setCapability(model.name, value as ModelCapability)} />
-                                <Button size="small" type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
+                                <Button size="small" disabled={model.capability === "file"} type={model.script ? "primary" : "default"} ghost={Boolean(model.script)} onClick={() => setScriptTarget({ name: model.name, capability: model.capability, value: model.script || "" })}>
                                     {model.script ? "脚本已设" : "调用脚本"}
                                 </Button>
                                 <Button size="small" danger type="text" icon={<Trash2 className="size-3.5" />} onClick={() => removeModel(model.name)} />

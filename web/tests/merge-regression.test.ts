@@ -139,7 +139,66 @@ test("MiniMax remains independently routed", async () => {
     const task = await createVideoGenerationTask(config("video", "minimax", "minimax_h3"), "test");
     expect(task.provider).toBe("minimax");
     expect(decodeURIComponent(calls[0].url)).toContain("/v1/videos");
-    expect(calls[0].body).toHaveProperty("workflow_id");
+    expect(defaultConfig.videoWorkflowId).toBe("none");
+    expect(calls[0].body).not.toHaveProperty("workflow_id");
+});
+test("MiniMax accepts id and task_id in direct or nested task responses", async () => {
+    const responses = [
+        { id: "direct-id", status: "succeeded", result_url: "https://media.example.com/video.mp4" },
+        { data: { id: "data-id", status: "succeeded", result_url: "https://media.example.com/video.mp4" } },
+        { data: { task: { id: "nested-task-id", status: "succeeded", result_url: "https://media.example.com/video.mp4" } } },
+        { result: { task_id: "nested-task-id-field" } },
+        { message: JSON.stringify({ id: "message-json-id", object: "video", status: "queued" }) },
+    ];
+    for (const response of responses) {
+        respond = () => response;
+        const task = await createVideoGenerationTask(config("video", "minimax", "minimax_h3"), "test");
+        expect(task.id).toBe(response.id || response.data?.id || response.data?.task?.id || response.result?.task_id || "message-json-id");
+    }
+});
+test("MiniMax parses message JSON task IDs and accepts the completed result URL", async () => {
+    const cfg = config("video", "minimax", "minimax_h3");
+    respond = (method) => method === "POST"
+        ? { message: JSON.stringify({ id: "task_71fae039-38d3-4204-82e1-a501b29d8486", object: "video", model: "minimax-h3", status: "queued", progress: 0, created_at: 1794501702, result_url: null, error: null }) }
+        : { id: "52058ecb-48ee-4044-8273-b6fd32f36e2a", error: null, model: "minimax-h3", status: "succeeded", progress: 100, created_at: "2026-11-12T16:30:30.984621+00:00", result_url: "https://xysnai.cn/v1/videos/public/task_52058ecb-48ee-4044-8273-b6fd32f36e2a", completed_at: "2026-11-12T16:32:27.049608+00:00" };
+    for (const format of ["json", "form-data"] as const) {
+        cfg.channels[0].referenceImageRequestFormat = format;
+        const task = await createVideoGenerationTask(cfg, "test");
+        expect(task.id).toBe("task_71fae039-38d3-4204-82e1-a501b29d8486");
+        const result = await pollVideoGenerationTask(cfg, task);
+        expect(result).toMatchObject({ status: "completed", result: { url: "https://xysnai.cn/v1/videos/public/task_52058ecb-48ee-4044-8273-b6fd32f36e2a", mimeType: "video/mp4" } });
+        expect(result.status === "completed" && result.result.responseResult).toEqual({ id: "52058ecb-48ee-4044-8273-b6fd32f36e2a", error: null, model: "minimax-h3", status: "succeeded", progress: 100, created_at: "2026-11-12T16:30:30.984621+00:00", result_url: "https://xysnai.cn/v1/videos/public/task_52058ecb-48ee-4044-8273-b6fd32f36e2a", completed_at: "2026-11-12T16:32:27.049608+00:00" });
+    }
+});
+test("MiniMax no workflow omits the field in JSON and multipart even for high resolution models", async () => {
+    respond = () => ({ task_id: "minimax-task" });
+    for (const format of ["json", "form-data"] as const) {
+        for (const workflow of ["none", ""] as const) {
+            for (const model of ["minimax_h3", "minimax_h3_2K", "minimax_h3_4K"]) {
+                const cfg = { ...config("video", "minimax", model), videoWorkflowId: workflow, supportsWorkflowId: true };
+                cfg.channels[0].supportsWorkflowId = true;
+                cfg.channels[0].referenceImageRequestFormat = format;
+                const task = await createVideoGenerationTask(cfg, "test", [{ id: "ref", name: "ref.png", type: "image/png", dataUrl: png }]);
+                const body = calls.at(-1)!.body;
+                if (body instanceof FormData) expect(body.has("workflow_id")).toBe(false);
+                else expect(body).not.toHaveProperty("workflow_id");
+                expect(task.logParams).not.toHaveProperty("workflow_id");
+            }
+        }
+    }
+});
+test("MiniMax explicit automatic and selected workflows retain their existing request behavior", async () => {
+    respond = () => ({ task_id: "minimax-task" });
+    for (const format of ["json", "form-data"] as const) {
+        for (const [workflow, model, expected] of [["auto", "minimax_h3", "text-to-video"], ["auto", "minimax_h3_4K", "cf-multi-reference"], ["cf-mj", "minimax_h3_4K", "cf-mj"], ["fl2v", "minimax_h3", "fl2v"]]) {
+            const cfg = { ...config("video", "minimax", model), videoWorkflowId: workflow, supportsWorkflowId: true };
+            cfg.channels[0].supportsWorkflowId = true;
+            cfg.channels[0].referenceImageRequestFormat = format;
+            await createVideoGenerationTask(cfg, "test");
+            const body = calls.at(-1)!.body;
+            expect(body instanceof FormData ? body.get("workflow_id") : body.workflow_id).toBe(expected);
+        }
+    }
 });
 test("Gemini native video creates and polls an operation through the server proxy", async () => {
     respond = (method) => method === "POST" ? { name: "operations/test-video" } : { done: true, response: { generateVideoResponse: { generatedSamples: [{ video: { uri: "https://media.example.com/video.mp4" } }] } } };

@@ -9,7 +9,7 @@ export type ApiCallFormat = "openai" | "gemini" | "minimax" | "sd";
 export type ApiFormatMode = "auto" | "manual";
 export type ImageResponseFormat = "url" | "b64_json";
 export type ReferenceImageRequestFormat = "form-data" | "json";
-export type ModelCapability = "image" | "video" | "text" | "audio";
+export type ModelCapability = "image" | "video" | "text" | "audio" | "file";
 export type ReasoningEffort = "auto" | "low" | "medium" | "high" | "xhigh";
 
 export type ChannelModel = {
@@ -27,6 +27,7 @@ export type ModelChannel = {
     apiFormatMode: ApiFormatMode;
     imageResponseFormat: ImageResponseFormat;
     referenceImageRequestFormat: ReferenceImageRequestFormat;
+    supportsWorkflowId: boolean;
     models: ChannelModel[];
 };
 
@@ -43,12 +44,14 @@ export type AiConfig = {
     videoModel: string;
     textModel: string;
     audioModel: string;
+    fileModel: string;
     audioVoice: string;
     audioFormat: string;
     audioSpeed: string;
     audioInstructions: string;
     videoSeconds: string;
     videoWorkflowId: string;
+    supportsWorkflowId: boolean;
     vquality: string;
     videoGenerateAudio: string;
     videoWatermark: string;
@@ -113,6 +116,7 @@ export const defaultConfig: AiConfig = {
             apiFormatMode: "auto",
             imageResponseFormat: "url",
             referenceImageRequestFormat: "json",
+            supportsWorkflowId: false,
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
@@ -126,12 +130,14 @@ export const defaultConfig: AiConfig = {
     videoModel: "default::grok-imagine-video",
     textModel: "default::gpt-5.5",
     audioModel: "default::gpt-4o-mini-tts",
+    fileModel: "",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
     videoSeconds: "6",
-    videoWorkflowId: "auto",
+    videoWorkflowId: "none",
+    supportsWorkflowId: false,
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
@@ -215,8 +221,8 @@ export function modelMatchesCapability(config: AiConfig, value: string, capabili
 }
 
 export function resolveModelForCapability(config: AiConfig, currentModel: string | undefined, capability: ModelCapability) {
-    const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : config.textModel;
-    const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : defaultConfig.textModel;
+    const defaultModel = capability === "image" ? config.imageModel : capability === "video" ? config.videoModel : capability === "audio" ? config.audioModel : capability === "file" ? config.fileModel : config.textModel;
+    const fallbackModel = capability === "image" ? defaultConfig.imageModel : capability === "video" ? defaultConfig.videoModel : capability === "audio" ? defaultConfig.audioModel : capability === "file" ? defaultConfig.fileModel : defaultConfig.textModel;
     for (const model of [currentModel, defaultModel]) {
         if (!model) continue;
         const configuredCapability = modelCapabilityOf(config, model);
@@ -384,6 +390,7 @@ export function createModelChannel(channel?: Partial<ModelChannel>): ModelChanne
         apiFormatMode,
         imageResponseFormat: normalizeImageResponseFormat(channel?.imageResponseFormat),
         referenceImageRequestFormat: apiFormat === "sd" ? "json" : normalizeReferenceImageRequestFormat(channel?.referenceImageRequestFormat),
+        supportsWorkflowId: channel?.supportsWorkflowId === true,
         models,
     };
 }
@@ -517,6 +524,7 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
         apiFormat: channel.apiFormat,
         imageResponseFormat: channel.imageResponseFormat,
         referenceImageRequestFormat: channel.referenceImageRequestFormat,
+        supportsWorkflowId: channel.supportsWorkflowId,
     };
 }
 
@@ -539,6 +547,7 @@ function normalizeConfig(config: AiConfig) {
         videoModel: normalizeDefaultModel(config.videoModel, selectableModelsByCapability(normalized, "video")),
         textModel: normalizeDefaultModel(config.textModel, selectableModelsByCapability(normalized, "text")),
         audioModel: normalizeDefaultModel(config.audioModel, selectableModelsByCapability(normalized, "audio")),
+        fileModel: normalizeDefaultModel(config.fileModel, selectableModelsByCapability(normalized, "file")),
     };
 }
 
@@ -560,7 +569,7 @@ function normalizeChannels(config: AiConfig) {
                 baseUrl: config.baseUrl || defaultConfig.baseUrl,
                 apiKey: config.apiKey || "",
                 apiFormat: config.apiFormat || defaultConfig.apiFormat,
-                models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel].map(modelOptionName)),
+                models: normalizeChannelModels([config.model, config.imageModel, config.videoModel, config.textModel, config.audioModel, config.fileModel].map(modelOptionName)),
             }),
         );
     }

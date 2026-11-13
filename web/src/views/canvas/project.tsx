@@ -612,7 +612,7 @@ function InfiniteCanvasPage() {
                     await settleVideoTaskCredits(
                         { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, createdAt: task.createdAt, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
                         "failed",
-                        { errorMessage, result: buildAiErrorResponseResult(error), upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: (Date.now() - resultReceivedAt) / 1000 },
+                        { errorMessage, result: { upstreamResponse: state.result.responseResult ?? null, localError: buildAiErrorResponseResult(error) }, upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: (Date.now() - resultReceivedAt) / 1000 },
                     );
                     throw new Error(`上游已生成视频，但本地转存或处理失败：${errorMessage}`);
                 }
@@ -634,7 +634,7 @@ function InfiniteCanvasPage() {
                 await settleVideoTaskCredits(
                     { id: task.id, provider: task.provider as VideoGenerationTask["provider"], model: task.model, createdAt: task.createdAt, logModel: task.logModel, logParams: task.logParams, logReported: task.logReported },
                     "success",
-                    { result: { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs }, upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 },
+                    { result: { upstreamResponse: state.result.responseResult ?? null, localResult: { storageKey: video.storageKey, width: video.width, height: video.height, bytes: video.bytes, mimeType: video.mimeType, durationMs: video.durationMs } }, upstreamDurationSeconds: waitingDurationMs / 1000, localProcessingDurationSeconds: renderDurationMs / 1000 },
                 );
                 finishCanvasTask(nodeId, video);
             } catch (error) {

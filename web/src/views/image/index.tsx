@@ -860,7 +860,6 @@ function LogPanel({
         statusTone: log.failCount ? "error" : "success",
         detail: `${log.imageCount} 张 · ${formatDuration(log.durationMs)}`,
         time: log.time,
-        thumbnails: (log.thumbnails || []).filter(Boolean),
     })), [logs]);
     const handleSelect = useCallback((id: string) => {
         const log = logs.find((item) => item.id === id);

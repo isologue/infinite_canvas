@@ -10,7 +10,7 @@ import { AppTopNav } from "@/components/layout/app-top-nav";
 
 export default function UserLayout({ children }: { children: ReactNode }) {
     const pathname = usePathname();
-    const needAuth = pathname === "/assets" || pathname === "/image" || pathname === "/video" || pathname === "/canvas" || pathname.startsWith("/canvas/");
+    const needAuth = pathname === "/assets" || pathname === "/image" || pathname === "/video" || pathname === "/files" || pathname === "/canvas" || pathname.startsWith("/canvas/");
 
     return (
         <div className="flex h-dvh overflow-hidden bg-background text-foreground">

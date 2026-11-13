@@ -38,7 +38,11 @@ description: 当前项目的 Postgres 持久化结构
 - `user_generation_logs`
   - 每个用户的生成记录
   - 当前 `kind` 支持：`image`、`video`
+- `user_file_generation_logs`
+  - 每行保存一个用户的 PPTX、PSD 或 SVG 文件生成任务记录（`data_json`）
+  - 以 `(user_id, log_id)` 为主键，并按用户和更新时间建立索引；与图片、视频生成记录分开存储
 - `ai_call_logs`
+  - 文件工作台终态调用复用 `kind=other`，以用户和文件历史 ID 确定唯一日志 ID；`request_params.fileKind` 区分 PPTX、PSD、SVG，`response_result` 保存文件任务结果链接，不保存文件正文
   - 管理后台调用日志，保存实际请求参数、返回结果和成功/失败状态
   - `duration_seconds` 记录从生成请求开始到最终成功或失败的总耗时，单位为秒
   - `upstream_duration_seconds` 记录从请求发出到拿到上游最终结果的耗时，`local_processing_duration_seconds` 记录结果到达后本地转存、读取元数据和预览准备的耗时，单位均为秒
@@ -149,6 +153,17 @@ CREATE TABLE IF NOT EXISTS user_generation_logs (
   PRIMARY KEY (user_id, kind)
 );
 
+CREATE TABLE IF NOT EXISTS user_file_generation_logs (
+  user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+  log_id TEXT NOT NULL,
+  data_json JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, log_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_file_generation_logs_updated
+  ON user_file_generation_logs (user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS ai_call_logs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
@@ -245,6 +260,8 @@ CREATE TABLE IF NOT EXISTS prompt_resources (
 ```
 
 ## 资源生命周期
+
+- 文件工作台的主文件与素材 ZIP 二进制保存在 `user_files`；对应 `user_file_generation_logs.data_json.files.primary/zip` 保存 `storageKey`、MIME、字节数和可选 DAV 公开地址，`storageError` 单独记录转存失败原因，不改变上游任务状态。文件正文不写入任务 JSON，DAV 凭据仅服务端使用。
 
 - 媒体上传、生成或导入成功后写入 `user_files`，并同步登记 `user_resources`；外部 URL 生成结果会先下载，不作为长期存储地址。
 - `preview:image:...` 仅是图片预览缓存，不单独登记资源。
